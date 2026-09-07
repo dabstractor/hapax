@@ -107,21 +107,21 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Secret-leak hardening (BUG-003)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Close the multi-segment secret leakage: structural key shapes are masked out of raw text before tokenization, and token-level entropy rules catch residue fragments, so realistic API keys never become candidates.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Raw-text secret masking pass (pre-segmentation)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Add a masking function over raw segment text that neutralizes structured key windows (AWS, Slack, JWT, OpenAI, GitHub, Google shapes) before tokenize() can fragment them, wired into the write path in src/pi/ingest.ts.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "maskSecrets() window scan wired into #admitSegment",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/external_deps.md §3 and system_context.md BUG-003. Root cause: prefix rules (src/core/shapeGate.ts SECRET_PREFIXES ~L78) never match after src/core/segment.ts tokenize splits keys at '/','-','.'; base64 rule requires '+/' which base64url never contains; digit+symbol ratio rarely >0.4 for mixed-case payloads. Gating is WRITE-time only (passesShape at ingest.ts:314; read path trusts the store), so any gate gap is a direct leak. Raw un-tokenized segment strings are available in IngestPipeline.#admitSegment (~ingest.ts:330) — the natural masking seam.\n2. INPUT: Raw segment string (newline-free) inside #admitSegment before tokenize(segment).\n3. LOGIC: Add exported maskSecrets(segment: string): string to src/core/shapeGate.ts (secret rules stay always-on, non-configurable) that replaces matched windows with an inert placeholder (e.g. spaces) so tokenize() never emits key bytes. Regex inventory (gitleaks-derived; validate each against the PRD's probe keys before landing): AWS 40-char run `[0-9a-zA-Z/+]{40}` (context-optional bare run); AKIA-class IDs `(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}`; Slack `xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9]*`; JWT `eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]*` (also gitleaks' stricter ey..ey.. variant); OpenAI legacy `sk-[a-zA-Z0-9]{20}T3BlbkFJ[a-zA-Z0-9]{20}` and modern `sk-(proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}`; GitHub `ghp_[A-Za-z0-9]{36}`, `github_pat_[A-Za-z0-9_]{36,}`; Google `AIza[0-9A-Za-z_-]{35}`. Wire `segment = maskSecrets(segment)` at the top of #admitSegment. Unit tests: each realistic PRD format (AWS wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY, xoxb tail, JWT with dots, sk-proj-4t7RX2bQ9wLm3vN8xKpZ6dJh1cA5eFgH0iU) fully masked → zero CandidateDrafts from the masked span; false-positive guards: normal prose, URLs, zendesk/lwlock fixture vocabulary must pass through unmasked. Mock nothing — pure function over strings.\n4. OUTPUT: maskSecrets() export in src/core/shapeGate.ts + the ingest seam, for consumption by P1.M2.T2.S1 (token rules layer under it) and P1.M5.T1.S2 e2e probes.\n5. DOCS: [Mode A] JSDoc on maskSecrets enumerating the rule inventory and its always-on status. README security posture rides with the final changeset sweep.",
@@ -138,14 +138,14 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "Token-level high-entropy secret rules",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Extend isSecretShaped with base64url-run and charset-relative entropy rules so residue fragments that survive masking (standalone high-entropy tokens with no structural prefix) are still rejected.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "base64url run + charset-relative entropy rules in isSecretShaped",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1"
@@ -180,7 +180,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T1.S1",
                   "title": "Expose lazy-dictionary failure state + per-segment disable gate in IngestPipeline",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See system_context.md BUG-004. createLazyDictionary (src/pi/index.ts ~L79-130) has sticky failure (onLoadError fired exactly once, later lookups null) but exposes NO failure state — no getter, no throw. The `disabled` flag is set in onLoadError but checked only in session_start/message_end; at session_start the lazy dict hasn't loaded yet, so restore always starts. Lookup never throws (Dictionary contract), so gating must come from an explicit failure probe.\n2. INPUT: None from other subtasks — this is the enabling seam.\n3. LOGIC: (a) Add a failure probe to the lazy dictionary object (e.g. `get failed(): boolean`, or an optional field on the Dictionary shape in src/core/types.ts kept backward-compatible) — true once the load threw, never resets. (b) Add an optional constructor option `isDisabled?: () => boolean` to IngestPipeline (src/pi/ingest.ts), checked at the TOP of processText AND per segment inside #admitSegment's admission loop, so failure observed mid-message stops admissions within that message (otherwise every lookup in message 1 returns null → all its words admitted as group 0 — exactly the bug). Wire it in src/pi/index.ts factory: `isDisabled: () => disabled` (closure already holds `disabled`). Mock nothing — unit-test with a real createLazyDictionary on a nonexistent path.\n4. OUTPUT: Observable failure state + per-segment gate, consumed by P1.M3.T1.S2's restore abort and testable directly (processText with a failed dict stores nothing).\n5. DOCS: [Mode A] JSDoc on the new probe/option. No user-facing/config surface change (option is internal wiring, not config).",

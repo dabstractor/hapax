@@ -1,0 +1,26 @@
+# Research notes — P1.M2.T1.S1 (bugfix 001_9e0f97150b68): maskSecrets() window scan
+
+## Verified codebase facts
+- `src/core/shapeGate.ts` (read in full): `passesShape(draft)` at L103; private `isSecretShaped(display)` at L143–~191; `SECRET_PREFIXES` at L62 (sk-, sk_, ghp_, gho_, github_pat_, xox[baprs]-, akia, aiza, eyj). Module is pure: type-only imports from ./segment.js (CandidateDraft) and ./types.js (GateResult); no runtime imports. Header doc-comment style is extensive — maskSecrets needs matching JSDoc.
+- `src/pi/ingest.ts` `#admitSegment(segment, ordinal, fromUser)` (~L306): iterates `tokenize(segment)` → `expandCandidates` → `passesShape` → `admit` → `store.upsert`, returning admitted whole-token keys (feeds phrase hook). Raw newline-free segment string is the first param — the masking seam. Insert `segment = maskSecrets(segment)` before the `for (const token of tokenize(segment))` loop.
+- Root cause chain (BUG-003, verified by the probe): tokenize splits at `/`, `-`, `.`, `@` (BASE_RE `[A-Za-z][A-Za-z0-9_]{0,63}` excludes them) so prefix rules never fire on split fragments; base64 rule requires `+`/`/` (base64url never has them); digit+symbol ratio ≤0.4 for mixed-case. Gating is write-time only (`passesShape` at ingest; `rankMatches` trusts the store) → gate gap = direct leak.
+- Probe reproductions from bug_hunt_result.json / h3.2: `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` → typing 'wjal' suggests 'wJalrXUtnFEMI'; Slack tail `abcdefghijklmnopqrstuvwx` suggested on 'abc'; JWT signature fragments stored; `sk-proj-4t7RX2bQ9wLm3vN8xKpZ6dJh1cA5eFgH0iU` passes gate.
+- Test conventions: flat `test/` dir, vitest, ESM `.js` import extensions, real pipelines (no mocks where avoidable) — see test/ingest-pipeline.test.ts, test/shapeGate.test.ts. Validation: `npm run check` (tsc --noEmit), `npm test` (vitest --run).
+- IngestPipeline constructor takes dictionary + store (+ hooks); tests construct real pipeline with shipped dict (see shipped-dict.test.ts / calibration pattern from P1.M1.T2.S2).
+- Sibling boundaries: P1.M2.T2.S1 adds TOKEN-level base64url/entropy rules to `isSecretShaped` (residue fragments that survive masking). Do NOT add those here — this task is the raw-text window layer only. P1.M5.T1.S2 adds e2e probes consuming maskSecrets.
+- P1.M1.T2.S2 (parallel) touches only score-band constants + calibration tests — no file conflicts (shapeGate.ts, ingest.ts untouched by it).
+
+## Regex inventory (from architecture/external_deps.md §3, gitleaks-derived; must validate against PRD probe keys)
+- AWS secret 40-char run: `[0-9a-zA-Z/+]{40}` — bare, context-optional (covers wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY; note `/` splits it today).
+- AWS key IDs: `(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}`.
+- Slack: `xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9]*` — the trailing `[a-zA-Z0-9]*` covers the leaked tail `abcdefghijklmnopqrstuvwx`.
+- JWT looser three-segment (catches sig-only-fragment JWTs without second `ey`): `eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*`; also gitleaks-strict `ey[a-zA-Z0-9]{17,}\.ey[a-zA-Z0-9/_-]{17,}\.(?:[a-zA-Z0-9/_-]{10,}={0,2})?`.
+- OpenAI legacy: `sk-[a-zA-Z0-9]{20}T3BlbkFJ[a-zA-Z0-9]{20}` (T3BlbkFJ marker); modern `sk-(proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}` (probe key: sk-proj-4t7RX2bQ9wLm3vN8xKpZ6dJh1cA5eFgH0iU).
+- GitHub: `ghp_[A-Za-z0-9]{36}`, `github_pat_[A-Za-z0-9_]{36,}`; Google: `AIza[0-9A-Za-z_-]{35}`.
+
+## Design decisions
+- Placeholder: replace matched window with the SAME NUMBER of spaces (length-preserving keeps no behavioral coupling; tokenize sees only whitespace). Spaces are inert — no tokens emitted from masked spans, and phrase windows see an empty gap.
+- maskSecrets is EXPORTED from src/core/shapeGate.ts (contract says so; P1.M2.T2.S1 and e2e probes consume it). Pure function over strings — keeps core's no-pi-imports invariant.
+- Order rules: try structured-prefix patterns FIRST (they bypass entropy entirely), then the AWS 40-char bare run LAST-ish so a specific rule (AKIA ID, slack) can mask before the greedy 40-char run grabs a window overlapping it. Simpler: single array executed in fixed order; masking replaces text so later regexes operate on already-masked (spacey) text and cannot re-match masked bytes.
+- False-positive risk of the bare 40-char run `[0-9a-zA-Z/+]{40}`: any 40+ alnum run masks (e.g. a 60-char base64 blob, or a long hexish commit chain `abcdef0123...`). That's acceptable: 40+ alnum-without-punctuation runs are not legitimate completion vocabulary (tokenize caps at 64 but shapeGate/admission rarely admits them anyway; and hexish ≥40 already out of hexish bounds 6–40 only partially). Guard test: fixture vocabulary (zendesk, lwlock, NREL, f3a9c2e, National, Renewable) must pass through UNMASKED — all < 40 chars.
+- `sk-(proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}`: greedy `{32,}` on `_`-including class could over-mask prose containing "sk-" followed by a long snake_case token — but sk- splits tokenization anyway; only fires for sk-prefixed 32+ runs; document and accept.

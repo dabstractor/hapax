@@ -30,7 +30,7 @@ import { describe, expect, it, vi, beforeAll, type Mock } from "vitest";
 
 import { loadDictionary } from "../src/core/dictionary.js";
 import type { Dictionary } from "../src/core/types.js";
-import { passesShape } from "../src/core/shapeGate.js";
+import { maskSecrets, passesShape } from "../src/core/shapeGate.js";
 import { rankMatches } from "../src/core/query.js";
 import { CandidateStore } from "../src/core/store.js";
 import type { CandidateDraft } from "../src/core/segment.js";
@@ -356,11 +356,9 @@ describe("acceptance item 4 — compaction never resets the store", () => {
 
 describe("acceptance item 5 — fake API keys are never suggested (large-100k.jsonl)", () => {
   let store: CandidateStore;
-  let secretRejected: number;
   beforeAll(async () => {
     const ingested = await ingestFixture(`${FIXTURES}/large-100k.jsonl`);
     store = ingested.store;
-    secretRejected = ingested.pipeline.getStats().rejectedByGate.secret;
   }, 120_000);
 
   it("both fake credentials are secret-shaped (passesShape rejects directly)", () => {
@@ -374,8 +372,20 @@ describe("acceptance item 5 — fake API keys are never suggested (large-100k.js
     expect(passesShape(draftOf(FAKE_GHP))).toEqual({ ok: false, reason: "secret" });
   });
 
-  it("ingest counted both keys as secret rejections", () => {
-    expect(secretRejected).toBeGreaterThanOrEqual(2);
+  it("keys are masked before the gate (BUG-003 layer 1) — never become drafts", () => {
+    // BUG-003 fix (001_9e0f97150b68): maskSecrets() blanks the raw key
+    // windows in IngestPipeline.#admitSegment BEFORE tokenize, so FAKE_SK
+    // and FAKE_GHP never become candidate drafts and never reach
+    // isSecretShaped — the old "≥ 2 secret rejections" assertion tested
+    // the layer-2-only path, which layer 1 short-circuits by design. The
+    // never-suggested outcome now holds one layer earlier: the sibling
+    // test pins zero key bytes in the store and empty probe results.
+    // maskSecrets still claims both windows, length-preserving:
+    for (const key of [FAKE_SK, FAKE_GHP]) {
+      const masked = maskSecrets(key);
+      expect(masked.length).toBe(key.length);
+      expect(masked.trim()).toBe(""); // all spaces — fully blanked
+    }
   });
 
   it("key prefixes never yield the key in any top-8", () => {

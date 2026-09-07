@@ -31,6 +31,12 @@
  * shaped; the 13–19 band stays gate-admitted (PRD: only dictionary/
  * admission in P1.M2.T3 can demote it).
  *
+ * maskSecrets (BUG-003 layer 1) is the sibling RAW-TEXT layer: it blanks
+ * structured secret windows in the segment string before tokenization
+ * (wired at IngestPipeline.#admitSegment), so key bytes never reach
+ * tokenize() or this gate's token rules. isSecretShaped stays the
+ * token-level layer (P1.M2.T2.S1 adds its residue rules there).
+ *
  * Pure: type-only imports, no runtime imports, no mutable state. Thresholds
  * and the secret-prefix list are baked constants (PRD: not a tuning
  * surface). Scanners are single-pass and allocation-light apart from the
@@ -213,6 +219,88 @@ function hasBase64SecretRun(display: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * gitleaks-derived raw-text secret windows (BUG-003 layer 1; patterns quoted
+ * from gitleaks.toml v8.x, each validated against the bug report's probe
+ * keys before landing). ALWAYS-ON baked constants — no config surface
+ * (PRD §08). Applied to the raw segment BEFORE tokenize, because
+ * tokenization splits keys at `/`/`-`/`.` and no token-level rule can see a
+ * whole multi-segment key.
+ *
+ * Each match is replaced by an equal-length run of SPACES: length-preserving
+ * (segment geometry and slice boundaries stay stable) and fully inert
+ * downstream — spaces terminate tokens, so tokenize() emits nothing from a
+ * masked span and phrase windows simply see fewer tokens. Masked bytes can
+ * never re-match a later rule; the fixed order only decides which rule
+ * claims a window first.
+ *
+ * Inventory, in claim order:
+ *  1. AWS access key IDs — (A3T|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA) +
+ *     16 or more
+ *  2. GitHub classic PAT — ghp_ + 36 or more
+ *  3. GitHub fine-grained PAT — github_pat_ + 36 or more
+ *  4. Google API key — AIza + 35 or more
+ *
+ *  The canonical formats above have EXACT core lengths, but the quantifiers
+ *  are open-ended on purpose: a fixed window over a longer run leaves a
+ *  masked-out tail residue that could still tokenize into a candidate
+ *  (probe-validated: a 40-char ghp_ core leaked its last 4 chars). Rules
+ *  are prefix-anchored, so the only cost is over-masking — accepted, per
+ *  the bare-40 catch-all rationale below.
+ *  5. Slack tokens — xox[baprs]-{10–13}-{10–13} plus hyphenated trailing
+ *     segments; the `(?:-[a-zA-Z0-9]+)*` tail is REQUIRED: the 24-char
+ *     secret follows a THIRD hyphen, which a plain [a-zA-Z0-9]* trailing
+ *     class cannot cross (probe-validated against the BUG-003 key
+ *     xoxb-…-…-abcdefghijklmnopqrstuvwx, whose tail leaked under the
+ *     original inventory)
+ *  6. OpenAI legacy — sk-…T3BlbkFJ… (marker in every legacy key)
+ *  7. OpenAI modern — sk-[proj-|svcacct-|admin-]+ ≥32 more chars. The class
+ *     includes '_', so a literal "sk-" followed by a ≥32-char word-ish run
+ *     masks; accepted — "sk-" is rare in prose and tokenize splits on '-'
+ *     anyway (documented gotcha)
+ *  8. JWT strict — ey…≥17.ey…≥17.sig≥10 (optionally =-padded)
+ *  9. JWT loose three-segment — eyJ… for headers the strict second-`ey`
+ *     shape misses; empty third segment allowed so a two-dot fragment masks
+ * 10. AWS secret bare run — ANY run of 40+ [0-9a-zA-Z/+] chars, greedy
+ *     catch-all, LAST (open-ended so over-long runs mask fully). Over-
+ *     masking is accepted: such runs are never legitimate completion
+ *     vocabulary (fixture-vocabulary FP test pins this).
+ */
+const SECRET_WINDOW_RES: readonly RegExp[] = [
+  /(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16,}/g,
+  /ghp_[A-Za-z0-9]{36,}/g,
+  /github_pat_[A-Za-z0-9_]{36,}/g,
+  /AIza[0-9A-Za-z_-]{35,}/g,
+  /xox[baprs]-[0-9]{10,13}-[0-9]{10,13}(?:-[a-zA-Z0-9]+)*/g,
+  /sk-[a-zA-Z0-9]{20}T3BlbkFJ[a-zA-Z0-9]{20}/g,
+  /sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}/g,
+  /ey[a-zA-Z0-9]{17,}\.ey[a-zA-Z0-9/_-]{17,}\.(?:[a-zA-Z0-9/_-]{10,}={0,2})?/g,
+  /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g,
+  /[0-9a-zA-Z/+]{40,}/g, // AWS secret bare run — greedy catch-all, LAST
+];
+
+/**
+ * Blank structured secret windows in one raw segment (BUG-003 layer 1).
+ *
+ * Runs the fixed SECRET_WINDOW_RES inventory in order over the segment,
+ * replacing every match with same-length spaces (see the inventory JSDoc
+ * for the rule list, the always-on status, and the masking semantics).
+ * The result feeds tokenize() unchanged otherwise; ordinary prose, URLs,
+ * and short identifiers pass through byte-identical.
+ *
+ * Pure: one replace() per rule over precompiled module-scope regexes
+ * (String.replace resets /g lastIndex — no shared mutable state), no
+ * per-character scanning. Wired at IngestPipeline.#admitSegment — the
+ * single funnel for live messages and restore replay. Consumed by
+ * P1.M2.T2.S1 (token-level residue layer) and P1.M5.T1.S2 (e2e probes).
+ */
+export function maskSecrets(segment: string): string {
+  for (const re of SECRET_WINDOW_RES) {
+    segment = segment.replace(re, (m) => " ".repeat(m.length));
+  }
+  return segment;
 }
 
 /** Shannon entropy of `s`'s character distribution, in bits/char:

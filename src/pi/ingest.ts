@@ -11,7 +11,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { expandCandidates, tokenize } from "../core/segment.js";
-import { passesShape } from "../core/shapeGate.js";
+import { maskSecrets, passesShape } from "../core/shapeGate.js";
 import { admit } from "../core/score.js";
 import type { CandidateStore } from "../core/store.js";
 import type {
@@ -128,8 +128,8 @@ export interface IngestPipelineOptions {
 /**
  * Background ingestion engine (PRD §05 h2.29/h2.30/h2.34): turns finalized
  * pi messages into admitted store candidates behind a 300 ms trailing
- * debounce, draining oldest-first through the core chain (tokenize →
- * expandCandidates → passesShape → admit → store.upsert) in ≤chunkBytes
+ * debounce, draining oldest-first through the core chain (maskSecrets →
+ * tokenize → expandCandidates → passesShape → admit → store.upsert) in ≤chunkBytes
  * slices with an awaited yield between slices.
  *
  * Handler discipline (h2.34): onMessageEnd is synchronous — extract,
@@ -293,17 +293,26 @@ export class IngestPipeline {
     this.#onAdmittedTokens?.(lines);
   }
 
-  /** Run one '\n'-free segment through the core chain (tokenize →
-   *  expandCandidates → passesShape → admit → store.upsert) and return
-   *  the lowercase keys of its admitted WHOLE tokens, in order. Sub-words
-   *  are stored as candidates but never enter phrase windows (PRD §06
-   *  M2). Gate/admission accounting and #stats updates are exactly the
-   *  message-loop behavior this was extracted from (P1.M3.T2.S2). */
+  /** Run one '\n'-free segment through the core chain (maskSecrets →
+   *  tokenize → expandCandidates → passesShape → admit → store.upsert) and
+   *  return the lowercase keys of its admitted WHOLE tokens, in order.
+   *  Sub-words are stored as candidates but never enter phrase windows
+   *  (PRD §06 M2). Gate/admission accounting and #stats updates are
+   *  exactly the message-loop behavior this was extracted from
+   *  (P1.M3.T2.S2). Masking (BUG-003 layer 1) runs FIRST so structured
+   *  secret windows never reach tokenize — this method is the single
+   *  funnel for live messages AND restoreFromHistory replay, so one seam
+   *  covers both paths. */
   #admitSegment(
     segment: string,
     ordinal: number,
     fromUser: boolean,
   ): string[] {
+    // Blank structured secret windows before tokenization (BUG-003 layer
+    // 1): key bytes never become tokens, hence never candidates. The
+    // token-level rules in isSecretShaped stay the layer-2 residue net
+    // (P1.M2.T2.S1) — untouched here.
+    segment = maskSecrets(segment);
     const keys: string[] = [];
     for (const token of tokenize(segment)) {
       const drafts = expandCandidates(token); // whole token first

@@ -273,14 +273,17 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     // tooLong is only reachable via subwords: tokenize caps whole tokens at
     // 64 chars, but a camelCase sub-word over 32 hits the gate's cap. The
     // "quartzT…" whole token and its "quartz" sub pass (high entropy, no
-    // runs); the 35-char "T…" sub rejects on length before any other rule.
+    // runs); the 33-char "T…" sub rejects on length before any other rule.
+    // The whole token is 39 chars — deliberately UNDER maskSecrets' bare
+    // 40-char catch-all (BUG-003 layer 1 blanks ≥40 alnum runs before the
+    // gate), so it still reaches the gate to exercise this bucket.
     h.pipeline.onMessageEnd(
       userMsg(
         "abc " + // 3 chars → tooShort
           "aabbaabb " + // entropy 1.0 < 1.5 → lowEntropy
           "rhythmjs " + // 8-consonant run (y is not a vowel) → consonantRun
           "aaaabcdee " + // 4×'a' run, entropy 2.1 → unigramRun
-          "quartzTabecidofuabecidofuabecidofuahekilo", // 35-char sub → tooLong
+          "quartzTabecidofuabecidofuabecidofuaheki", // 33-char sub → tooLong
       ),
     );
     await drainNow(h);
