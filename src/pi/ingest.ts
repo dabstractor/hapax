@@ -126,10 +126,11 @@ export interface IngestPipelineOptions {
  * enqueue, (re)arm the timer — returns void (NEVER a { message } result)
  * and never mutates the message. Message text is held only until
  * processed: queue entries are shifted BEFORE processing and nothing is
- * stashed elsewhere. Wiring belongs to index.ts (P1.M3.T5.S1); restore
- * replay (P1.M3.T2.S3) calls flush/processText directly; /acwords
- * (P1.M3.T4.S1) reads getStats; n-grams (P2.M1.T1.S1) supply
- * onAdmittedTokens.
+ * stashed elsewhere. Wiring belongs to index.ts (P1.M3.T5.S1), whose
+ * session_shutdown handler calls dispose() to drop the debounce timer and
+ * any queued-but-unprocessed text; restore replay (P1.M3.T2.S3) calls
+ * flush/processText directly; /acwords (P1.M3.T4.S1) reads getStats;
+ * n-grams (P2.M1.T1.S1) supply onAdmittedTokens.
  */
 export class IngestPipeline {
   #store: CandidateStore;
@@ -177,6 +178,20 @@ export class IngestPipeline {
       // pick these items up — never start a second one (FIFO order).
       if (this.#drain === null) this.#drain = this.#drainQueue();
     }, this.#debounceMs);
+  }
+
+  /** Tear the pipeline down (P1.M3.T5.S1 session_shutdown wiring):
+   *  cancel the armed debounce timer and empty the pending queue so no
+   *  post-shutdown drain ever fires. An in-flight #drain is deliberately
+   *  NOT cancelled — it cannot be interrupted, and needn't be: the queue
+   *  it loops over is now empty, so it exits after its current item and
+   *  touches nothing but state the caller is discarding anyway. */
+  dispose(): void {
+    if (this.#timer !== null) {
+      timers.clearTimeout(this.#timer);
+      this.#timer = null;
+    }
+    this.#pending.length = 0;
   }
 
   /** Fire the debounce immediately and await the full drain (PRD §05;
