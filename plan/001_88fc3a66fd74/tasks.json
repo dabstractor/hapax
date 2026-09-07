@@ -644,14 +644,14 @@
               "type": "Task",
               "id": "P1.M4.T1",
               "title": "Acceptance & performance gates",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Prove the M1 definition of done: integration items 1-6, performance budgets, no persistence anywhere.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M4.T1.S1",
                   "title": "Scripted integration acceptance (PRD §09 items 1-6) + session fixtures",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T5.S2"
@@ -667,7 +667,7 @@
                   "type": "Subtask",
                   "id": "P1.M4.T1.S2",
                   "title": "CI-scriptable micro-benchmarks against hard budgets",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T5.S2"
@@ -694,7 +694,7 @@
                   "type": "Subtask",
                   "id": "P1.M4.T2.S1",
                   "title": "README.md changeset sync: features, usage, architecture, security",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",
