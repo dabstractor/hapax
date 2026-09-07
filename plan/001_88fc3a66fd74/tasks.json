@@ -216,7 +216,7 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "Shape gate (src/core/shapeGate.ts)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Load-bearing filter for dictionary-absent words: entropy, repetition, secret-shape, and noise rejection, always-on, with machine-readable reject reasons.",
               "subtasks": [
                 {
@@ -238,7 +238,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S2",
                   "title": "Secret-shape rejection rules (always-on, not configurable)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T2.S1"
@@ -256,14 +256,14 @@
               "type": "Task",
               "id": "P1.M2.T3",
               "title": "Scoring (src/core/score.ts)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Admission decision (static commonness bands) and session salience (dynamic ranking) plus the eviction score and final ordering comparators.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T3.S1",
                   "title": "Admission decision: bands 220/120, subword clamp",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1",
@@ -280,7 +280,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T3.S2",
                   "title": "Salience formula, eviction score, ranking comparators",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T3.S1",

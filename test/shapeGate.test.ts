@@ -4,7 +4,8 @@
  * runs ≥ 6, hexish pass-through, reason precedence (length → entropy →
  * unigramRun → consonantRun), and the no-reason-on-ok contract.
  *
- * Secret-shape rejection is P1.M2.T2.S2 — deliberately untested here.
+ * Secret-shape rejection (P1.M2.T2.S2) is covered in the "secret rules"
+ * describe block below.
  *
  * Entropy expectations were verified against H = -Σ p_c · log2(p_c) with
  * node before the assertions were written (e.g. "blaaaah" ≈ 1.664, the
@@ -43,8 +44,10 @@ describe("passesShape — length (PRD §04 h2.23 rule 1)", () => {
   });
 
   it("accepts a 64-char whole token (upper bound)", () => {
-    // "abcd"×16: H = 2.0 bits/char, max unigram run 1, consonant runs of 3.
-    expect(passesShape(draft("abcd".repeat(16)))).toEqual({ ok: true });
+    // "aghi"×16: H = 2.0 bits/char, max unigram run 1, consonant runs of 2
+    // (vowels a/i break them). (Not "abcd"×16 — a/b/c/d are all hex chars,
+    // so that string is pure hex ≥ 20 and the secret rule rightly rejects it.)
+    expect(passesShape(draft("aghi".repeat(16)))).toEqual({ ok: true });
   });
 
   it("rejects a 3-char sub-word as tooShort", () => {
@@ -62,7 +65,7 @@ describe("passesShape — length (PRD §04 h2.23 rule 1)", () => {
   });
 
   it("accepts a 32-char sub-word (sub-word upper bound)", () => {
-    expect(passesShape(draft("abcd".repeat(8), true))).toEqual({ ok: true });
+    expect(passesShape(draft("aghi".repeat(8), true))).toEqual({ ok: true });
   });
 });
 
@@ -200,5 +203,140 @@ describe("passesShape — reason precedence (first failure wins)", () => {
       const r = passesShape(draft(key));
       if (!r.ok) expect(r.reason).not.toBe("secret");
     }
+  });
+});
+
+describe("secret rules (PRD §04 h2.23 rule 3 / §09 item 5)", () => {
+  it("rejects known key prefixes, case-insensitively on the raw display", () => {
+    const secrets = [
+      "sk-abc123DEF456ghi789",
+      "SK-Abc123def456ghi789", // uppercase prefix must match too
+      "ghp_16CHARACTERSTOKEN0000",
+      "gho_TokenAbc123def45678",
+      "github_pat_11AAAA0000bbbb0000",
+      "xoxb-1234567890123456",
+      "AKIAIOSFODNN7EXAMPLE",
+      "AIzaSyA1234567890abcdefghijklmnop",
+      "eyJhbGciOiJIUzI1NiIsInR5", // JWT body: base64(`{"`)
+    ];
+    for (const key of secrets) {
+      expect(passesShape(draft(key))).toEqual({ ok: false, reason: "secret" });
+    }
+  });
+
+  it("rejects digit+symbol ratio > 0.4 at length ≥ 16 (no prefix involved)", () => {
+    // 20 chars: 9 digits + 1 '_' = 10/20 = 0.5 > 0.4. Prefix-free and
+    // entropy-clean (20 distinct chars) so the ratio rule is what fires.
+    expect(passesShape(draft("ab12cd34ef56gh78ij9_"))).toEqual({
+      ok: false,
+      reason: "secret",
+    });
+  });
+
+  it("ratio exactly 0.4 does not fire (reject is strictly > 0.4)", () => {
+    // 20 chars, exactly 8 noisy (8 digits, no symbols) → 8/20 = 0.4, not
+    // > 0.4 — the candidate sails through the whole gate.
+    expect(passesShape(draft("a1b2c3d4e5f6g7h8ijkl"))).toEqual({ ok: true });
+  });
+
+  it("length-16+ identifier with ratio ≤ 0.4 passes (rule is not over-eager)", () => {
+    expect(
+      passesShape({
+        key: "camelcaseidentifierx9",
+        display: "camelCaseIdentifierX9",
+        properName: false,
+        isSubword: false,
+      })
+    ).toEqual({ ok: true });
+  });
+
+  it("rejects a ≥ 24 base64 run with mixed case + digit + '/'", () => {
+    // One 26-char run with all four classes; its digit+symbol ratio
+    // (8/26 ≈ 0.31) is under 0.4, so the run rule itself fires.
+    expect(passesShape(draft("abcdefghij012345ABCD+/xyzw"))).toEqual({
+      ok: false,
+      reason: "secret",
+    });
+  });
+
+  it("rejects a base64 run embedded mid-string, not just whole-string shape", () => {
+    // '_' breaks the first run; the 26-char tail run (abcdefghij0123456789
+    // ABCD+/) carries all four classes. Ratio (10 digits + 3 syms)/35 ≈ 0.37
+    // stays under 0.4 — the embedded run is what fires.
+    expect(passesShape(draft("wxyz_abcdefghij0123456789ABCD+/qrst"))).toEqual({
+      ok: false,
+      reason: "secret",
+    });
+  });
+
+  it("30-char alphanumeric-only run passes (base64 rule needs '+' or '/')", () => {
+    // ≥ 24 alnum chars with mixed case + digits but no '+'/'/' — long
+    // camelCase-style identifiers must survive.
+    expect(passesShape(draft("abcdefghij012345ABCDEFGHIJklmn"))).toEqual({
+      ok: true,
+    });
+  });
+
+  it("rejects whole-candidate pure hex ≥ 20 (private-key-shaped)", () => {
+    // All-letter hex keeps the digit ratio at 2/20 = 0.1, isolating the
+    // pure-hex rule from the ratio rule.
+    expect(passesShape(draft("abcdefabcdefabcdef01"))).toEqual({
+      ok: false,
+      reason: "secret",
+    });
+    // Uppercase hex must match too (rule tests the lowercased display).
+    expect(passesShape(draft("A1B2C3D4E5F6A7B8C9D0E1F2"))).toEqual({
+      ok: false,
+      reason: "secret",
+    });
+  });
+
+  it("admits the 13–19 hex band (reject is ≥ 20 only)", () => {
+    // 15 hexish chars — below the ratio gate (16) and the hex rule (20).
+    expect(passesShape(draft("a1b2c3d4e5f6a7b"))).toEqual({ ok: true });
+    // 19 hex chars, 4 digits → ratio 4/19 ≈ 0.21 — one short of rejection.
+    expect(passesShape(draft("abcdefabcdefabc1234"))).toEqual({ ok: true });
+  });
+
+  it("rejects '@' plus '.' (email belt-and-braces on directly-built drafts)", () => {
+    // Real segmentation never emits '@'; the gate still defends in depth.
+    expect(passesShape(draft("user.name@corp.com"))).toEqual({
+      ok: false,
+      reason: "secret",
+    });
+  });
+
+  it("length precedes secret: 3-char 'sk-' is tooShort, 65-char prefixed is tooLong", () => {
+    expect(passesShape(draft("sk-"))).toEqual({
+      ok: false,
+      reason: "tooShort",
+    });
+    expect(passesShape(draft("sk-" + "a".repeat(62)))).toEqual({
+      ok: false,
+      reason: "tooLong",
+    });
+  });
+
+  it("secret precedes entropy: 'sk-aaaa' rejects as secret, not lowEntropy", () => {
+    // H("sk-aaaa") < 1.5 would fire entropy if the prefix rule ran later.
+    expect(passesShape(draft("sk-aaaa"))).toEqual({
+      ok: false,
+      reason: "secret",
+    });
+  });
+
+  it("still admits everyday words and hexish tokens (no false positives)", () => {
+    for (const key of ["zendesk", "lwlock", "nrel", "f3a9c2e"]) {
+      expect(passesShape(draft(key))).toEqual({ ok: true });
+    }
+    // Mixed-case display must not trip the case-insensitive prefix match.
+    expect(
+      passesShape({
+        key: "nrel",
+        display: "NREL",
+        properName: true,
+        isSubword: false,
+      })
+    ).toEqual({ ok: true });
   });
 });
