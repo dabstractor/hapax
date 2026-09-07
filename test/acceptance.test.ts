@@ -25,7 +25,7 @@
 
 import { spawn } from "node:child_process";
 
-import type { AutocompleteProvider } from "@earendil-works/pi-tui";
+import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi, beforeAll, type Mock } from "vitest";
 
 import { loadDictionary } from "../src/core/dictionary.js";
@@ -43,6 +43,8 @@ import {
 } from "../src/pi/ingest.js";
 import { resolveDictPath } from "../src/pi/paths.js";
 import {
+  createChainMachine,
+  createDisplayProvider,
   createHapaxProvider,
   extractMatchState,
 } from "../src/pi/provider.js";
@@ -484,3 +486,304 @@ async function replayEntries(
   await finished;
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Item 7 (P2.M2.T3.S1, PRD §09 DoD M2): accept `National` → chain offers
+// `Renewable` → Tab → `Energy` → Tab → `Laboratory` with ZERO additional
+// typed characters — driven through the REAL provider (chain machine,
+// pending offer) against a store built from the NEW nrel.jsonl fixture via
+// the real ingest pipeline (phrase hook wired exactly like src/pi/index.ts)
+// and the SHIPPED dictionary.
+//
+// Fixture phases (the seeding-order gotcha from test/chain.test.ts, applied
+// to a real fixture): the chain bigrams recur ×4, so they are ADMITTED
+// phrases and h3.8 constituent suppression permanently shadows the bare
+// word "National" in "natio"-prefixed menus once they land. The arming
+// accept therefore happens on the EARLY (phrase-free) prefix of the
+// transcript — phase 1, messages n01–n03 — exactly like armViaTab queries
+// the menu before its bigrams are recorded; the phrase-bearing messages
+// (phase 2) replay afterwards and fill the successor index. This mirrors a
+// real session: the user accepts the word before the repeated phrase ever
+// occurs; the chain engages on the very next query with zero typing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Entries 0..PHASE1 (header + n01–n03) carry NO "National Renewable …"
+ *  adjacency; PHASE1.. carries the four verbatim phrase occurrences. */
+const NREL_PHASE1 = 4;
+
+/** Pipeline wired like src/pi/index.ts's session_start: the phrase hook
+ *  (and with it the successor index) exists ONLY under enablePhrases. */
+function makeNrelPipeline(enablePhrases: boolean): { store: CandidateStore; pipeline: IngestPipeline } {
+  const store = new CandidateStore();
+  const dictionary: Dictionary = loadDictionary(resolveDictPath());
+  const pipeline = new IngestPipeline({
+    store,
+    dictionary,
+    ...(enablePhrases
+      ? {
+          onAdmittedTokens: (lines: string[][]) =>
+            store.recordPhraseLines(lines, store.currentOrdinal()),
+        }
+      : {}),
+  });
+  return { store, pipeline };
+}
+
+/** Replay pre-parsed fixture entries through restoreFromHistory on the
+ *  GIVEN pipeline (phase splitting needs two replays into one store). */
+async function replayNrel(
+  pipeline: IngestPipeline,
+  entries: ReturnType<typeof parseSessionFixture>,
+): Promise<void> {
+  const total = entries.filter(
+    (e) => e.message !== undefined && extractText(e.message as unknown as AgentMessage) !== null,
+  ).length;
+  const real = pipeline.processText.bind(pipeline);
+  let done = 0;
+  let resolve!: () => void;
+  const finished = new Promise<void>((r) => {
+    resolve = r;
+  });
+  restoreFromHistory(
+    {
+      processText: async (text, fromUser) => {
+        await real(text, fromUser);
+        if (++done === total) resolve();
+      },
+    },
+    asSessionManager(entries) as unknown as RestoreSessionManager,
+  );
+  await finished;
+}
+
+/** Editing-harness mock: pi-shaped current provider whose applyCompletion
+ *  performs pi-tui's insertion (replace `prefix` before the cursor with
+ *  item.value) on persistent state, so the test drives ONE buffer through
+ *  accepts exactly like the editor would. `state` is the buffer. */
+function editingCurrent() {
+  const state = { lines: ["natio"], cursorLine: 0, cursorCol: 5 };
+  return {
+    state,
+    getSuggestions: vi.fn(
+      async (lines: string[], cursorLine: number, cursorCol: number, options: { signal: AbortSignal }) => null,
+    ),
+    applyCompletion: vi.fn(
+      (lines: string[], cursorLine: number, cursorCol: number, item: AutocompleteItem, prefix: string) => {
+        const line = lines[cursorLine] ?? "";
+        const before = line.slice(0, cursorCol - prefix.length);
+        const after = line.slice(cursorCol);
+        const newLines = [...lines];
+        newLines[cursorLine] = before + item.value + after;
+        state.lines = newLines;
+        state.cursorLine = cursorLine;
+        state.cursorCol = before.length + item.value.length;
+        return { lines: newLines, cursorLine, cursorCol: state.cursorCol };
+      },
+    ),
+  };
+}
+
+describe("acceptance item 7 — chained completion, zero typed characters (nrel.jsonl)", () => {
+  it("fixture sanity — real ingest builds the strictly top-ranked successor chain and admits the NREL vocabulary", async () => {
+    const { store, pipeline } = makeNrelPipeline(true);
+    const nrel = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    await replayNrel(pipeline, nrel);
+
+    // Successor chain (PRD §06 h3.9), deterministic top-1 per word:
+    expect(store.topSuccessors("national")).toEqual([
+      { next: "renewable", count: 4 },
+      { next: "license", count: 1 },
+      { next: "wind", count: 1 },
+    ]);
+    expect(store.topSuccessors("renewable")).toEqual([{ next: "energy", count: 4 }]);
+    expect(store.topSuccessors("energy")).toEqual([{ next: "laboratory", count: 4 }]);
+
+    // The vocabulary admits as word candidates (replay for the phrase
+    // bigrams also stores the tokens themselves):
+    expect(store.get("national")).toBeDefined();
+    expect(store.get("nrel")?.display).toBe("NREL"); // acronym stays a rare word
+    expect(store.phraseSize).toBeGreaterThan(0);
+
+    // Documented consequence (drives the phase-split arming below): with
+    // the phrase bigrams admitted, h3.8 suppression shadows the bare word.
+    const menu = rankMatches(store, "natio");
+    expect(menu.map((m) => m.description)).toEqual(["phrase", "phrase"]);
+  });
+
+  it("zero-typing chain — accept National → renewable → energy → laboratory with no fragment characters between accepts", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    // One pipeline instance feeding one store across both phases:
+    const { store, pipeline } = makeNrelPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(store, cfg(), current, chain);
+
+    // Phase 1: phrase-free traffic only.
+    await replayNrel(pipeline, entries.slice(0, NREL_PHASE1));
+
+    // Live menu for "natio" contains the whole-word item (no phrases yet):
+    const menu = await provider.getSuggestions(["natio"], 0, 5, opts());
+    expect(menu?.items).toEqual([
+      { value: "National", label: "National", description: expect.stringMatching(/^session x\d+$/) },
+    ]);
+    expect(menu?.prefix).toBe("natio");
+
+    // Tab accepts it → harness buffer "natio" becomes "National", cursor
+    // adjacent; the arming intercept arms the chain (T2.S1).
+    const nationalItem: AutocompleteItem = { value: "National", label: "National" };
+    provider.applyCompletion(["natio"], 0, 5, nationalItem, "natio");
+    expect(chain.state()).toEqual({ word: "national" });
+    expect(current.state.lines).toEqual(["National"]);
+    expect(current.state.cursorCol).toBe(8);
+
+    // Phase 2: the four verbatim phrase occurrences land (successor index
+    // fills) — NO keystrokes, NO chain reset in between.
+    await replayNrel(pipeline, entries.slice(NREL_PHASE1));
+
+    // ZERO typed characters: the very next getSuggestions runs on the
+    // post-accept buffer ("National", cursor 8) and the PENDING OFFER
+    // answers with the armed word's unfiltered successors at prefix "".
+    const offer1 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
+    expect(offer1?.prefix).toBe("");
+    expect(offer1?.items.map((i) => [i.label, i.value])).toEqual([
+      ["renewable", " renewable"], // leading space: pi inserts value verbatim
+      ["license", " license"],
+      ["wind", " wind"],
+    ]);
+    expect(provider.__hapaxLive()?.prefix).toBe("");
+
+    // Tab → harness inserts " renewable" (no typed characters); re-armed.
+    provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer1!.items[0]!, offer1!.prefix);
+    expect(chain.state()).toEqual({ word: "renewable" });
+    expect(current.state.lines).toEqual(["National renewable"]);
+    const colAfterRenewable = current.state.cursorCol;
+
+    const offer2 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
+    expect(offer2?.prefix).toBe("");
+    expect(offer2?.items.map((i) => i.label)).toEqual(["energy"]); // sole successor
+    provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer2!.items[0]!, offer2!.prefix);
+    expect(chain.state()).toEqual({ word: "energy" });
+    expect(current.state.lines).toEqual(["National renewable energy"]);
+
+    const offer3 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
+    expect(offer3?.items.map((i) => i.label)).toEqual(["laboratory"]);
+    provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer3!.items[0]!, offer3!.prefix);
+
+    // Full insertion sequence landed; the chain rests armed at the final
+    // word (it still has successors, so it does not disarm).
+    expect(current.state.lines).toEqual(["National renewable energy laboratory"]);
+    expect(current.state.cursorCol).toBe("National renewable energy laboratory".length);
+    expect(chain.state()).toEqual({ word: "laboratory" });
+
+    // Zero-typing proof: cursor positions between accepts came ONLY from
+    // accepts (each offer was queried exactly at the previous accept's
+    // landed cursor), and hapax answered every query — no delegation.
+    expect(colAfterRenewable).toBe("National renewable".length);
+    expect(current.getSuggestions).not.toHaveBeenCalled();
+  });
+
+  it("pending offer is one-shot and adjacency-gated — word-less queries keep T2.S1 disarm semantics", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const { store, pipeline } = makeNrelPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(store, cfg(), current, chain);
+
+    await replayNrel(pipeline, entries.slice(0, NREL_PHASE1));
+    await provider.getSuggestions(["natio"], 0, 5, opts());
+    provider.applyCompletion(["natio"], 0, 5, { value: "National", label: "National" }, "natio");
+    await replayNrel(pipeline, entries.slice(NREL_PHASE1));
+
+    // FIRST post-accept query word-less ("National ") → NOT adjacent
+    // (trailing whitespace) → T2.S1 disarm + delegate, not the offer.
+    const options = opts();
+    const result = await provider.getSuggestions(["National "], 0, 9, options);
+    expect(result).toBeNull();
+    expect(current.getSuggestions).toHaveBeenCalledOnce();
+    expect(current.getSuggestions.mock.calls[0][3]).toBe(options);
+    expect(chain.state()).toBeNull();
+
+    // The pending word was consumed by that one-shot query (it never
+    // re-fires): a later adjacency-position query takes the NORMAL path —
+    // phrase-shadowed menu at threshold — with no chain menu.
+    const normal = await provider.getSuggestions(["National"], 0, 8, opts());
+    expect(normal?.prefix).toBe("National");
+    expect(normal?.items[0]?.description).toBe("phrase");
+    expect(chain.state()).toBeNull();
+  });
+
+  it("typed fragments after an arm still filter through the T2.S1 armed branch (no pending double-fire)", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const { store, pipeline } = makeNrelPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(store, cfg(), current, chain);
+
+    await replayNrel(pipeline, entries.slice(0, NREL_PHASE1));
+    await provider.getSuggestions(["natio"], 0, 5, opts());
+    provider.applyCompletion(["natio"], 0, 5, { value: "National", label: "National" }, "natio");
+    await replayNrel(pipeline, entries.slice(NREL_PHASE1));
+
+    // First post-accept query carries a typed fragment "r": adjacency
+    // fails, pending is consumed one-shot, and the FRAGMENT rules answer —
+    // live-filtered successors at the fragment, threshold 1 (T2.S1).
+    const filtered = await provider.getSuggestions(["National r"], 0, 10, opts());
+    expect(filtered?.prefix).toBe("r");
+    expect(filtered?.items).toEqual([
+      { value: "renewable", label: "renewable", description: "chain" },
+    ]);
+    expect(chain.state()).toEqual({ word: "national" });
+
+    // Further typing keeps filtering live (never re-offers unfiltered):
+    const narrowed = await provider.getSuggestions(["National re"], 0, 11, opts());
+    expect(narrowed?.prefix).toBe("re");
+    expect(narrowed?.items.map((i) => i.label)).toEqual(["renewable"]);
+    expect(chain.state()).toEqual({ word: "national" });
+  });
+
+  it("reset (new user turn) clears the pending offer with the arm", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const { store, pipeline } = makeNrelPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(store, cfg(), current, chain);
+
+    await replayNrel(pipeline, entries.slice(0, NREL_PHASE1));
+    await provider.getSuggestions(["natio"], 0, 5, opts());
+    provider.applyCompletion(["natio"], 0, 5, { value: "National", label: "National" }, "natio");
+    await replayNrel(pipeline, entries.slice(NREL_PHASE1));
+
+    chain.reset(); // the before_agent_start handler
+
+    // Adjacent cursor position, but the arm (and its pending offer) is
+    // gone: plain threshold matching answers — phrase-shadowed menu.
+    const menu = await provider.getSuggestions(["National"], 0, 8, opts());
+    expect(menu?.prefix).toBe("National");
+    expect(menu?.items[0]?.description).toBe("phrase");
+    expect(chain.state()).toBeNull();
+  });
+
+  it("pending offer flows through the display layer's classification (prefix \"\" on both sides)", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const { store, pipeline } = makeNrelPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const inner = createHapaxProvider(store, cfg(), current, chain);
+    const display = createDisplayProvider(inner);
+
+    await replayNrel(pipeline, entries.slice(0, NREL_PHASE1));
+    // Arm on the inner provider (Tab resolves against the live cache —
+    // the display layer never gates the inner query, S3 rule 1).
+    await inner.getSuggestions(["natio"], 0, 5, opts());
+    inner.applyCompletion(["natio"], 0, 5, { value: "National", label: "National" }, "natio");
+    await replayNrel(pipeline, entries.slice(NREL_PHASE1));
+
+    // The pending offer through the DISPLAY provider: live prefix "" and
+    // result prefix "" match → classified hapax → painted immediately
+    // (first paint of this stack is never delayed, S3 rule 4a).
+    const painted = await display.getSuggestions(["National"], 0, 8, opts());
+    expect(painted?.prefix).toBe("");
+    expect(painted?.items.map((i) => i.label)).toEqual(["renewable", "license", "wind"]);
+    expect(display.dispose).toBeDefined();
+  });
+});

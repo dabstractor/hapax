@@ -765,7 +765,7 @@
       "type": "Phase",
       "id": "P2",
       "title": "M2 — Phrases & chained completion (v2)",
-      "status": "Planned",
+      "status": "Ready",
       "description": "Implement the fully-specced M2 scope after M1 acceptance: multi-word phrase candidates (n=2,3) with hybrid admission and decay, constituent suppression, successor-index chained Tab completion, M2 acceptance, and changeset documentation. All M1 invariants (never-hijack, sync Tab, no flicker, RAM-only) remain in force.",
       "milestones": [
         {
@@ -875,7 +875,7 @@
           "type": "Milestone",
           "id": "P2.M2",
           "title": "Chained completion, M2 acceptance & documentation",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Successor index, the armed(W) chain state machine in the provider with before_agent_start reset, M2 integration acceptance (zero-typing National→Renewable→Energy→Laboratory), /acwords phrase extensions, and the M2 changeset docs sweep.",
           "tasks": [
             {
@@ -934,14 +934,14 @@
               "type": "Task",
               "id": "P2.M2.T3",
               "title": "M2 acceptance & debug extensions",
-              "status": "Ready",
+              "status": "Complete",
               "description": "PRD §09 integration item 7 (zero-typing chain), enablePhrases gating validation, and /acwords phrase/successor dump.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M2.T3.S1",
                   "title": "Integration item 7 + enablePhrases gating + /acwords M2 dump",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M2.T2.S1",
@@ -963,14 +963,14 @@
               "type": "Task",
               "id": "P2.M2.T4",
               "title": "Sync changeset-level documentation (M2 final sweep)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Mode B catch-all for the M2 delta: README phrase/chaining features, usage examples, updated status.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M2.T4.S1",
                   "title": "README.md M2 sync: phrases, chaining, config flag, status",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M2.T3.S1",

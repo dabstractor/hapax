@@ -156,6 +156,14 @@ export default function hapax(pi: ExtensionAPI): void {
       // message's ordinal was already issued by processText (nextOrdinal
       // before the first slice), so currentOrdinal() inside this tail
       // callback IS that ordinal.
+      //
+      // Successor capture rides the SAME gate (verified P2.M2.T3.S1,
+      // PRD §06 h3.9): CandidateStore builds its word → top-3 successor
+      // index inside recordPhraseLines' upsert path (#bumpSuccessorFor)
+      // and nowhere else, so `enablePhrases: false` — which leaves this
+      // hook unwired — yields zero phrases AND zero successors. No
+      // separate gate is needed; before_agent_start's chain?.reset() is
+      // already no-op-safe when the layer is disabled (idle machine).
       ...(config.enablePhrases
         ? {
             onAdmittedTokens: (lines) =>

@@ -11,10 +11,16 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { firstWord, phraseSalience } from "../core/query.js";
 import { salience } from "../core/score.js";
 import type { CandidateStore } from "../core/store.js";
-import { STORE_CAP } from "../core/store.js";
-import type { Candidate, IngestStats, RankGroup } from "../core/types.js";
+import { PHRASE_CAP, STORE_CAP } from "../core/store.js";
+import type {
+  Candidate,
+  IngestStats,
+  PhraseEntry,
+  RankGroup,
+} from "../core/types.js";
 import type { HapaxConfig } from "./config.js";
 import type { IngestPipeline } from "./ingest.js";
 
@@ -82,6 +88,75 @@ function statsSection(stats: IngestStats): string[] {
   ];
 }
 
+/** How many top phrases the dump lists (PRD §08 h2.48: top 10). */
+const TOP_PHRASES = 10;
+
+/** Menu-style display of a phrase key: constituent display casings
+ *  joined with single spaces, exactly like rankMatches's phrase items
+ *  (h2.27); an evicted constituent falls back to its (lowercase) key. */
+function phraseDisplay(store: CandidateStore, key: string): string {
+  return key
+    .split(" ")
+    .map((w) => store.get(w)?.display ?? w)
+    .join(" ");
+}
+
+/**
+ * "hapax phrases" section (P2.M2.T3.S1, PRD §08 h2.48 / §09 h2.52 — the
+ * dump is the ONLY phrase-layer observability, so this is the tuning
+ * signal): stored-phrase count against PHRASE_CAP, the top 10 phrases by
+ * phraseSalience (query.ts's exported formula — never reimplemented),
+ * and one successor-index sample: the top successors of the top phrase's
+ * FIRST word, rendered "word → next ×count, …". Reads store state only —
+ * phraseEntries() / get() / topSuccessors() / phraseSize — never message
+ * bodies. Deterministic: salience descending with the byte-lexicographic
+ * key tie-break (same discipline as topCandidates), one "now" ordinal
+ * supplied by the caller. A store with no phrases (empty session, or
+ * `enablePhrases: false` — capture never ran) renders "phrases: (none)"
+ * and omits the sample; with phrases but a successor-less top word the
+ * sample header is omitted.
+ */
+function phrasesSection(store: CandidateStore, now: number): string[] {
+  const entries: PhraseEntry[] = store.phraseEntries(); // defensive copies
+  if (entries.length === 0) {
+    return ["hapax phrases", "  phrases: (none)"];
+  }
+  const rows = entries
+    .map((p) => ({
+      p,
+      sal: phraseSalience(
+        p.key.split(" ").map((w) => store.get(w)), // evicted → 0 contribution
+        p,
+        now,
+      ),
+    }))
+    .sort((a, b) => {
+      if (a.sal !== b.sal) return b.sal - a.sal; // salience descending
+      return a.p.key < b.p.key ? -1 : a.p.key > b.p.key ? 1 : 0; // byte-lex
+    })
+    .slice(0, TOP_PHRASES);
+  const lines = [
+    "hapax phrases",
+    `  phrases: ${store.phraseSize}   (cap ${PHRASE_CAP})`,
+    `  top ${TOP_PHRASES} by salience:`,
+    ...rows.map(
+      (r, i) =>
+        `    ${i + 1}. ${phraseDisplay(store, r.p.key)}  ×${r.p.count}${
+          r.p.count >= 2 ? "  (repeat)" : "" // repetition-path marker (h3.7)
+        }`,
+    ),
+  ];
+  const topWord = firstWord(rows[0]!.p.key);
+  const succ = store.topSuccessors(topWord);
+  if (succ.length > 0) {
+    lines.push("  successor sample (top successors of the top word):");
+    lines.push(
+      `    ${topWord} → ${succ.map((s) => `${s.next} ×${s.count}`).join(", ")}`,
+    );
+  }
+  return lines;
+}
+
 /**
  * Build the full /acwords dump from one consistent snapshot: the caller
  * supplies the stats copy (getStats() already returns one) and this
@@ -106,6 +181,8 @@ export function formatAcwordsDump(
     ...topSection(rows),
     "",
     ...statsSection(stats),
+    "",
+    ...phrasesSection(store, ordinal), // M2 (P2.M2.T3.S1) — same "now"
   ].join("\n");
 }
 

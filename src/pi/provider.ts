@@ -144,6 +144,17 @@ export type HapaxProvider = AutocompleteProvider & {
  *   3. rankMatches returns [] → clear the live cache, then delegate
  *      (zero candidates never render a menu).
  *
+ * P2.M2.T3.S1 (PRD §09 integration item 7) adds TWO amendments:
+ *
+ *   - a PENDING OFFER in the armed branch: the first getSuggestions after
+ *     an arm, taken with the cursor immediately after the accepted word
+ *     (zero typed characters), offers the armed word's unfiltered top
+ *     successors — see the armed-branch comment for the adjacency rule.
+ *   - an `enablePhrases` gate on the whole chain layer: with the flag
+ *     false the armed branch never runs and the arming intercept never
+ *     arms — the provider behaves exactly as M1 word-only (the flag
+ *     disables phrases, NOT word completion).
+ *
  * Delegation forwards the ORIGINAL arguments object unchanged — no
  * cloning, no dropping `force`. All other members pass straight
  * through: applyCompletion and shouldTriggerFileCompletion always
@@ -197,9 +208,72 @@ export function createHapaxProvider(
       // the normal path on this same keystroke, so the user sees normal
       // candidates immediately instead of a closed menu. Like every other
       // path: suggestion-set only — nothing is blocked or captured.
+      //
+      // enablePhrases gate (P2.M2.T3.S1): the entire layer — armed
+      // branch, pending offer, and arming intercept below — is inert
+      // under `enablePhrases: false`; word completion is untouched.
+      //
+      // PENDING OFFER (P2.M2.T3.S1, PRD §09 item 7 — zero additional
+      // typed characters): immediately after applyCompletion arms W, the
+      // cursor sits right after the inserted W — a trailing "fragment"
+      // that is W itself, which matches no successor of W, so the plain
+      // fragment rules would disarm and item 7 would fail. arm() there-
+      // fore records a one-shot pending word, consumed by the FIRST
+      // armed query: when that query's cursor is ADJACENT to the
+      // accepted insertion — the text before the cursor, lowercased,
+      // ENDS WITH the armed word with no trailing whitespace — the
+      // branch offers W's unfiltered top successors at prefix "" (the
+      // display classifier's result.prefix === live.prefix check holds
+      // with "" on both sides, so the offer composes with S3's debounce
+      // unchanged). One-shot: consumed whether or not the adjacency
+      // check passes, and a later fragment query filters through the
+      // T2.S1 rules unchanged below. The adjacency rule is strict (no
+      // "optionally trailing whitespace" form) on purpose: a word-less
+      // first query — e.g. buffer "alpha " — must keep T2.S1's
+      // disarm + delegate behavior (pinned by test/chain.test.ts case
+      // (8), which this task may not modify). Item values carry a
+      // LEADING SPACE (label stays clean): pi's editor applies
+      // completions as before + item.value, and with prefix "" that
+      // space is the only thing separating the accepted words —
+      // accepting the offer at "…National" inserts " renewable".
       const armed = chain.state();
-      if (armed) {
+      if (armed && config.enablePhrases) {
         const before = lines[cursorLine]?.slice(0, cursorCol) ?? "";
+        if (
+          chain.consumePending() !== null &&
+          before.toLowerCase().endsWith(armed.word)
+        ) {
+          const succ = store
+            .topSuccessors(armed.word)
+            .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
+          if (succ.length > 0) {
+            // Unfiltered successor set, published through the SAME
+            // lastLive seam as the armed path — chain-keyed so
+            // applyCompletion re-arms to the accepted successor.
+            const items = succ.map((s) => ({
+              value: ` ${s.next}`, // leading space — see pending-offer note
+              label: s.next,
+              description: "chain", // provenance marker, role of query.ts's
+            }));
+            lastLive = {
+              matches: succ.map((s) => ({
+                key: CHAIN_KEY_PREFIX + s.next,
+                display: s.next,
+                description: "chain",
+                salience: -s.count, // higher count → stronger, count-desc order
+              })),
+              prefix: "",
+              ts: Date.now(),
+            };
+            liveKeyByValue.clear(); // rebuilt every query — same as normal path
+            for (const s of succ) {
+              liveKeyByValue.set(` ${s.next}`, CHAIN_KEY_PREFIX + s.next);
+            }
+            return { items, prefix: "" };
+          }
+          // Armed word has no successors → pending already consumed
+          // (one-shot); fall through to the fragment rules below.
+        }
         const frag = before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0];
         const succ =
           frag === undefined
@@ -277,20 +351,25 @@ export function createHapaxProvider(
       // Arming side-effect ONLY (PRD §07 h2.43): classify what was
       // accepted through the live-key map, then delegate VERBATIM —
       // arguments and return value reach pi's provider untouched.
-      const key = liveKeyByValue.get(item.value);
-      if (key !== undefined) {
-        if (key.startsWith(CHAIN_KEY_PREFIX)) {
-          // A chain successor was accepted → armed(next).
-          chain.arm(key.slice(CHAIN_KEY_PREFIX.length));
-        } else if (!key.includes(" ")) {
-          // Whole-word candidate: word keys are single tokens, phrase
-          // keys are space-joined. The successor index is lowercase
-          // (h2.27) — arm the lowercase form so topSuccessors() finds it.
-          chain.arm(item.value.toLowerCase());
+      // enablePhrases gate (P2.M2.T3.S1): with the flag false nothing
+      // ever arms — the chain layer is inert and the provider behaves
+      // exactly as M1 word-only. Delegation itself is unconditional.
+      if (config.enablePhrases) {
+        const key = liveKeyByValue.get(item.value);
+        if (key !== undefined) {
+          if (key.startsWith(CHAIN_KEY_PREFIX)) {
+            // A chain successor was accepted → armed(next).
+            chain.arm(key.slice(CHAIN_KEY_PREFIX.length));
+          } else if (!key.includes(" ")) {
+            // Whole-word candidate: word keys are single tokens, phrase
+            // keys are space-joined. The successor index is lowercase
+            // (h2.27) — arm the lowercase form so topSuccessors() finds it.
+            chain.arm(item.value.toLowerCase());
+          }
+          // else: phrase key (space) → never arms.
         }
-        // else: phrase key (space) → never arms.
+        // Not in the map (path completion / stale value) → never arms.
       }
-      // Not in the map (path completion / stale value) → never arms.
       return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
     },
 
@@ -350,9 +429,17 @@ export type ChainState = { word: string } | null;
 export interface ChainMachine {
   /** Current armed word, or null when idle. */
   state(): ChainState;
-  /** Arm on acceptance of a whole-word hapax item (or a chain successor). */
+  /** Arm on acceptance of a whole-word hapax item (or a chain
+   *  successor). Also records a ONE-SHOT pending word so the first
+   *  getSuggestions after the accept can offer the armed word's
+   *  successors with zero typed characters (P2.M2.T3.S1). */
   arm(word: string): void;
-  /** Force idle (before_agent_start; also the disqualification path). */
+  /** Take the pending word (P2.M2.T3.S1): returns it and clears it —
+   *  one-shot, so only the FIRST armed query after an arm sees it.
+   *  Null when no arm happened since the last consume/reset. */
+  consumePending(): string | null;
+  /** Force idle (before_agent_start; also the disqualification path).
+   *  Clears the pending word too — a reset turn never owes an offer. */
   reset(): void;
 }
 
@@ -364,13 +451,21 @@ export interface ChainMachine {
  */
 export function createChainMachine(): ChainMachine {
   let armed: string | null = null;
+  let pending: string | null = null; // one-shot offer word (P2.M2.T3.S1)
   return {
     state: () => (armed === null ? null : { word: armed }),
     arm: (word) => {
       armed = word;
+      pending = word;
+    },
+    consumePending: () => {
+      const word = pending;
+      pending = null;
+      return word;
     },
     reset: () => {
       armed = null;
+      pending = null;
     },
   };
 }

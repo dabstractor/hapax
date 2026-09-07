@@ -231,7 +231,7 @@ silently (forward compatibility):
 | `triggerChar`    | string  | `"#"`   | one non-word, non-space character (`/^[^\w\s]$/`), or `""` to disable trigger mode entirely | prefix that opens the completion popup |
 | `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | chars before threshold matching                 |
 | `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once               |
-| `enablePhrases`  | boolean | `true`  | `true` / `false`                                         | phrase completions (M2); inert in M1 builds     |
+| `enablePhrases`  | boolean | `true`  | `true` / `false`                                         | phrase completions + Tab chaining (M2); `false` disables the whole phrase layer |
 | `debug`          | boolean | `false` | `true` / `false`                                         | enables the `/acwords` command + store dump     |
 
 #### File paths and precedence
@@ -274,11 +274,18 @@ notification, what the ingest pipeline actually admitted this session:
   (`×N`), and admission group;
 - ingest counters: words seen, admitted, and per-rule shape-gate
   rejections (`tooShort`, `tooLong`, `lowEntropy`, `unigramRun`,
-  `secret`, `consonantRun`).
+  `secret`, `consonantRun`);
+- the phrase layer (M2): the stored-phrase count against the 10,000-phrase
+  cap, the top 10 phrases by salience — display form, occurrence count
+  (`×N`), and a `(repeat)` marker on repetition-admitted phrases (seen ≥ 2
+  times) — plus one successor-index sample: the top successors of the top
+  phrase's first word, rendered `national → renewable ×4, license ×1`.
+  This sample is the tuning signal for the Tab-chained completion offers.
 
 The dump contains stored words and counters only — it never prints
-message bodies. M2 will extend the dump with phrase and successor-index
-sections.
+message bodies. A session with no stored phrases (nothing ingested yet,
+or `enablePhrases: false` in the config) renders `phrases: (none)` and
+omits the successor sample.
 
 ### Development
 
