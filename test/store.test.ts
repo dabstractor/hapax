@@ -7,7 +7,11 @@
  * snapshots, and the group histogram. Also the prefix index suite
  * (P1.M2.T4.S2): lazy dirty-flag rebuild, binary-searched prefix ranges
  * verified against brute force (20k keys + interleaved rounds), and the
- * lowercase-prefix caller contract.
+ * lowercase-prefix caller contract. Finally the eviction suite
+ * (P1.M2.T4.S3): the STORE_CAP hard cap with exactly-`needed` victim
+ * counts, lowest-evictionScore victim choice, userTyped protection
+ * (unless the cap can only be met from that pool), sub-words counting
+ * toward the cap, and prefix-index consistency after removals.
  *
  * Sightings are fabricated inline per the types.ts contract — the store is
  * downstream of segment + shapeGate + score and takes their output on
@@ -15,7 +19,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CandidateStore } from "../src/core/store.js";
+import { CandidateStore, EVICT_BATCH, STORE_CAP } from "../src/core/store.js";
+import { evictionScore } from "../src/core/score.js";
 import type { Sighting } from "../src/core/types.js";
 
 /** Fresh group-2 sighting of "hapax" at ordinal 1; override any field. */
@@ -362,5 +367,148 @@ describe("prefix index (PRD §06 h2.35)", () => {
     snap.push("MUTATED");
     snap[0] = "MUTATED";
     expect(s.sortedKeysSnapshot()).toEqual(["alpha", "beta"]); // store unaffected
+  });
+});
+
+// ── Eviction (P1.M2.T4.S3, PRD §06 h2.37 / §05 h2.33) ─────────────────────
+
+describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
+  /** "w00042"-style keys: fixed width so byte order == insertion order. */
+  const padded = (i: number): string => String(i).padStart(5, "0");
+
+  it("exports the baked constants (PRD §08 h2.47)", () => {
+    expect(STORE_CAP).toBe(20_000);
+    expect(EVICT_BATCH).toBe(256);
+  });
+
+  it("20,001 inserts → size capped at STORE_CAP, exactly one eviction", () => {
+    const s = new CandidateStore();
+    for (let i = 0; i <= STORE_CAP; i++) {
+      // One sighting per message, like ingest: the store's own counter
+      // supplies ascending ordinals (pipeline shape).
+      s.upsert(
+        sighting({ key: `w${padded(i)}`, ordinal: s.nextOrdinal(), rankGroup: 0 }),
+      );
+    }
+    expect(s.size).toBe(STORE_CAP);
+    // w00000: seen at ordinal 1, never again — oldest lastSeenOrdinal,
+    // sessionCount 1, no bonuses → strictly lowest evictionScore. Scores
+    // stay distinct: exp(-20000/50) ≈ 4e-174 has not underflowed to 0.
+    expect(s.get("w00000")).toBeUndefined();
+    expect(s.get("w00001")).toBeDefined();
+    expect(s.get(`w${padded(STORE_CAP)}`)).toBeDefined();
+  });
+
+  it("evicts the lowest evictionScore, not the alphabetically-first key", () => {
+    const s = new CandidateStore();
+    const ord = s.nextOrdinal(); // one message → Δordinal 0 at eviction
+    // 20,000 keys at sessionCount 3 → salience 2·log2(4) + 3 = 7; "zzz"
+    // alone at sessionCount 1 → 5. Strictly lowest score, and
+    // alphabetically LAST — a byte-order tie-break would have picked
+    // k00000 instead, so this proves the sort drives eviction.
+    for (let i = 0; i < STORE_CAP; i++) {
+      const key = `k${padded(i)}`;
+      s.upsert(sighting({ key, ordinal: ord }));
+      s.upsert(sighting({ key, ordinal: ord }));
+      s.upsert(sighting({ key, ordinal: ord }));
+    }
+    s.upsert(sighting({ key: "zzz", ordinal: ord })); // #20,001 → overflow
+    expect(s.size).toBe(STORE_CAP);
+    expect(s.get("zzz")).toBeUndefined();
+    expect(s.get("k00000")).toBeDefined();
+  });
+
+  it("userTyped survives even when it has the strictly lowest score", () => {
+    const s = new CandidateStore();
+    for (let i = 0; i < 11; i++) s.nextOrdinal(); // "now" = 11 at eviction
+    // "aaa": userTyped, oldest (Δ = 10), no rarity bonus →
+    // (2 + 3·e^(-0.5) + 1.5)·e^(-0.2) ≈ 4.36, strictly below every
+    // regular key's (2 + 3 + 1.0)·e^0 = 6. Alphabetically FIRST, too —
+    // only the userTyped protection keeps it in the store.
+    s.upsert(sighting({ key: "aaa", ordinal: 1, fromUser: true }));
+    for (let i = 0; i < STORE_CAP; i++) {
+      s.upsert(sighting({ key: `k${padded(i)}`, ordinal: 11, rankGroup: 0 }));
+    } // #20,001 → overflow by exactly 1
+    const now = s.currentOrdinal();
+    expect(evictionScore(s.get("aaa")!, now)).toBeLessThan(
+      evictionScore(s.get("k00001")!, now),
+    );
+    expect(s.size).toBe(STORE_CAP);
+    expect(s.get("aaa")).toBeDefined(); // protection, not score, kept it
+    expect(s.get("k00000")).toBeUndefined(); // lowest non-userTyped went
+    expect(s.get("k00001")).toBeDefined();
+  });
+
+  it("userTyped-only overflow still trims: the hard cap wins", () => {
+    const s = new CandidateStore();
+    const ord = s.nextOrdinal();
+    for (let i = 0; i <= STORE_CAP; i++) {
+      s.upsert(
+        sighting({
+          key: `u${padded(i)}`,
+          ordinal: ord,
+          fromUser: true,
+          // u00000 gets no rarity bonus → strictly lowest userTyped score.
+          rankGroup: i === 0 ? 2 : 0,
+        }),
+      );
+    }
+    expect(s.size).toBe(STORE_CAP);
+    expect(s.get("u00000")).toBeUndefined();
+    expect(s.get("u00001")).toBeDefined();
+  });
+
+  it("mixed store at scale: overflow victims are never userTyped", () => {
+    const s = new CandidateStore();
+    const ord = s.nextOrdinal();
+    // Regular keys score 2 + 3 + 1.0 = 6; userTyped keys 2 + 3 + 1.5 = 6.5
+    // (Δ = 0 for all, no underflow) — the two victims must be regular.
+    for (let i = 0; i < 10_002; i++) {
+      s.upsert(sighting({ key: `k${padded(i)}`, ordinal: ord, rankGroup: 0 }));
+    }
+    for (let i = 0; i < 10_000; i++) {
+      s.upsert(sighting({ key: `u${padded(i)}`, ordinal: ord, fromUser: true }));
+    } // 20,002 total → overflow 2
+    expect(s.size).toBe(STORE_CAP);
+    expect(s.get("k00000")).toBeUndefined(); // both victims regular…
+    expect(s.get("k00001")).toBeUndefined(); // …byte order among the ties
+    expect(s.get("k00002")).toBeDefined();
+    expect(s.entries().filter((c) => c.userTyped)).toHaveLength(10_000);
+  });
+
+  it("removals keep the prefix index consistent (S2 interplay)", () => {
+    const s = new CandidateStore();
+    const ord = s.nextOrdinal();
+    for (let i = 0; i < STORE_CAP; i++) {
+      s.upsert(sighting({ key: `ev${padded(i)}`, ordinal: ord, rankGroup: 0 }));
+    }
+    expect(s.prefixRange("ev")).toEqual([0, STORE_CAP]); // clean rebuild
+    s.upsert(
+      sighting({ key: `ev${padded(STORE_CAP)}`, ordinal: ord, rankGroup: 0 }),
+    );
+    expect(s.size).toBe(STORE_CAP);
+    expect(s.get("ev00000")).toBeUndefined(); // evicted (score tie → byte)
+    const [start, end] = s.prefixRange("ev"); // rebuilt after the removal
+    expect(end - start).toBe(s.size);
+    expect(s.sortedKeysSnapshot()).not.toContain("ev00000");
+  });
+
+  it("sub-words count toward the cap and evict identically", () => {
+    const s = new CandidateStore();
+    const ord = s.nextOrdinal();
+    for (let i = 0; i <= STORE_CAP; i++) {
+      s.upsert(
+        sighting({
+          key: `w${padded(i)}`,
+          ordinal: ord,
+          rankGroup: 0,
+          isSubword: i % 2 === 0,
+        }),
+      );
+    }
+    expect(s.size).toBe(STORE_CAP);
+    expect(s.get("w00000")).toBeUndefined(); // a subword — no special casing
+    expect(s.get("w00002")).toBeDefined(); // subword survivor
+    expect(s.get("w00001")).toBeDefined(); // whole-token survivor
   });
 });

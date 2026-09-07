@@ -299,7 +299,7 @@
               "type": "Task",
               "id": "P1.M2.T4",
               "title": "Candidate store (src/core/store.ts)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Per-session in-RAM store: upsert semantics, lazily-rebuilt sorted prefix index, salience-based batched eviction under a 20k cap.",
               "subtasks": [
                 {
@@ -338,7 +338,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T4.S3",
                   "title": "Eviction: 20k cap, batch-256, ageFactor, userTyped protection",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T4.S1",
