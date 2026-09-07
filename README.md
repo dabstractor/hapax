@@ -67,3 +67,43 @@ disables itself). Rules:
   (1).
 - After changing the version in `src/core/dictionary.ts` (`DICT_VERSION`),
   regenerate and commit `dict/common-en.bin` in the same change.
+
+## Configuration
+
+pi exposes no extension-settings API for extensions, so hapax reads a plain
+JSON config file itself (`src/pi/config.ts`, `loadConfig()`). The surface is
+deliberately tiny; all fields are optional and unknown keys are ignored
+silently (forward compatibility):
+
+| Field            | Type    | Default | Valid                                                   | Meaning                                        |
+| ---------------- | ------- | ------- | ------------------------------------------------------- | ---------------------------------------------- |
+| `triggerChar`    | string  | `"#"`   | one non-word, non-space character (`/^[^\w\s]$/`), or `""` to disable trigger mode entirely | prefix that opens the completion popup |
+| `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | chars before threshold matching                 |
+| `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once               |
+| `enablePhrases`  | boolean | `true`  | `true` / `false`                                         | phrase completions (M2); inert in M1 builds     |
+| `debug`          | boolean | `false` | `true` / `false`                                         | enables the `/acwords` command + store dump     |
+
+### File paths and precedence
+
+Layers merge in order, later wins per key:
+
+1. Built-in defaults (in code).
+2. `~/.pi/agent/hapax.json` — user-global.
+3. `.pi/hapax.json` — project-local; read **only when the project is
+   trusted** (untrusted ⇒ ignored entirely, as if missing — the path is
+   never touched).
+
+Missing files are the normal case and stay silent. A malformed file (bad
+JSON, or JSON that is not an object) is discarded as a whole with a single
+`hapax: malformed <path>, using defaults` warning; the remaining layers
+still apply. A present-but-invalid value is repaired to the previous
+layer's value with one warning per repaired field; out-of-range numbers
+are clamped into range without a warning. Booleans accept only real
+booleans — no truthy coercion.
+
+### Not configurable (by design)
+
+Salience weights, admission bands (220/120), shape-gate rules, the eviction
+cap, debounce intervals, and popup timing are internal tuning constants —
+never user-configurable. If better values are learned, they ship as new
+constants, not new config fields.

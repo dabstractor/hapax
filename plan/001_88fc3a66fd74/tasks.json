@@ -393,14 +393,14 @@
               "type": "Task",
               "id": "P1.M3.T1",
               "title": "Configuration (src/pi/config.ts)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Tiny JSON config surface with defaults, two-file merge, clamping/repair, and warn-on-malformed.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T1.S1",
                   "title": "Config load/merge/validate with defaults + repair",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1",
