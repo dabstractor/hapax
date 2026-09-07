@@ -24,15 +24,16 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { loadDictionary } from "../src/core/dictionary.js";
 import { rankMatches } from "../src/core/query.js";
-import { STORE_CAP } from "../src/core/store.js";
+import { EVICT_BATCH, PHRASE_CAP, PHRASE_EVICT_BATCH, STORE_CAP } from "../src/core/store.js";
 import type { Dictionary, RankedMatch } from "../src/core/types.js";
 import { IngestPipeline } from "../src/pi/ingest.js";
+import type { AgentMessage } from "../src/pi/ingest.js";
 import {
   makeAbsentWords,
   makeSessionText,
@@ -233,5 +234,107 @@ describe("perf gate d — steady-state heap delta (dict + store)", () => {
     );
     expect(hold).not.toBeNull();
     expect(delta).toBeLessThan(18 * 1024 * 1024);
+  });
+});
+// ── Gate e ──────────────────────────────────────────────────────────────────
+
+/** The repo's own 100k-token session fixture (same stream acceptance
+ *  journey 5 and validate.sh Phase 6 probe A replay). */
+const RESTORE_FIXTURE = join(import.meta.dirname, "fixtures/sessions/large-100k.jsonl");
+
+// Gate-e LESSON (2026-09 validation): gate c builds IngestPipeline WITHOUT
+// the phrase hooks, i.e. a NON-default configuration — the phrase layer
+// (enablePhrases: true by default) was 20× over the restore budget while
+// every CI run stayed green. Gate e measures the production wiring.
+//
+// BOUND NOTE: the <300ms CI bound is the WORD-ONLY restore bound (the
+// §05 budget amortized over this fixture — journey 5's gate). The M2
+// phrase layer adds §06-spec'd per-window work on top: this fixture
+// streams ~200k bigram/trigram windows (~142k distinct phrases) through
+// capture, the successor index, and admission. Measured floor for the
+// DEFAULT-config replay is ~380-400ms (word-only baseline ~110ms +
+// ~290ms phrase layer + amortized heap eviction — the 2026-09 fix that
+// replaced per-drain snapshot sorts with the batch-rounded lazy index).
+// The gate therefore budgets 600ms: ~1.5× that floor, while any
+// reappearance of per-drain victim sorting (measured 2,152ms pre-fix)
+// trips it by 3.5×.
+describe("perf gate e — DEFAULT-config restore (phrase hooks ON), 100k-token fixture", () => {
+  it("1561-message large-100k replay with onAdmittedTokens/onSweepPhrases completes under 600 ms (phrases-on restore gate)", async () => {
+    const entries = readFileSync(RESTORE_FIXTURE, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { type: string; message?: AgentMessage });
+    const store = makeStore(0);
+    // Wired exactly like src/pi/index.ts's session_start under the default
+    // config: phrase capture per message + the 40-ordinal demotion sweep.
+    const pipeline = new IngestPipeline({
+      store,
+      dictionary: dict,
+      onAdmittedTokens: (lines) => store.recordPhraseLines(lines, store.currentOrdinal()),
+      onSweepPhrases: () => store.sweepPhraseDemotions(),
+    });
+
+    const t0 = performance.now();
+    for (const e of entries) {
+      if (e.type === "message" && e.message) pipeline.onMessageEnd(e.message);
+    }
+    await pipeline.flush();
+    const dt = performance.now() - t0;
+
+    console.log(
+      `[gate e] large-100k phrases-ON restore=${dt.toFixed(1)}ms ` +
+        `words=${store.size} phrases=${store.phraseSize} (cap 10,000) ` +
+        `(budget <600ms, see bound note; per-drain-sort regression ≈ 2,150ms)`,
+    );
+    expect(dt).toBeLessThan(600);
+    expect(store.size).toBeLessThanOrEqual(STORE_CAP); // hard cap held
+    expect(store.phraseSize).toBeLessThanOrEqual(PHRASE_CAP);
+  });
+});
+
+// ── Gate f ──────────────────────────────────────────────────────────────────
+
+// Gate-f LESSON (2026-09 validation): over-cap eviction used to run a full
+// snapshot + sort per over-cap insert (13–19 s for a 5k-key flood) — a path
+// no existing gate exercised, since gate c's vocabulary stays under cap.
+// The store now amortizes victim selection into EVICT_BATCH-sized passes;
+// this gate pins the flood cost AND the post-eviction size bound.
+describe("perf gate f — over-cap word-store flood (eviction amortization)", () => {
+  it("25k distinct words (5k over STORE_CAP) in one message completes under 300 ms with the store within the cap", async () => {
+    const store = makeStore(0);
+    const pipeline = new IngestPipeline({ store, dictionary: dict });
+    const text = Array.from({ length: 25_000 }, (_, i) => `zzword${i}q`).join("\n");
+    const message: AgentMessage = {
+      role: "assistant",
+      content: [{ type: "text", text }],
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "perf-gate-f",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: 0,
+    };
+
+    const t0 = performance.now();
+    pipeline.onMessageEnd(message);
+    await pipeline.flush();
+    const dt = performance.now() - t0;
+
+    console.log(
+      `[gate f] 25k-distinct-word flood=${dt.toFixed(1)}ms final size=${store.size} ` +
+        `(cap ${STORE_CAP}; eviction passes ≈ 5,000/${EVICT_BATCH}) ` +
+        `(budget <100ms §05 hard, CI bound <300ms)`,
+    );
+    expect(dt).toBeLessThan(300);
+    // Post-eviction size bound: the store never rests above the cap —
+    // the batch pass trims back to ≤ STORE_CAP (§09 acceptance bound).
+    expect(store.size).toBeLessThanOrEqual(STORE_CAP);
   });
 });

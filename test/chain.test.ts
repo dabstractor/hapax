@@ -20,7 +20,7 @@
  * word's). The arming word IS the bigrams' first word, so its live
  * arming menu must be queried BEFORE the bigrams are recorded. The
  * successor index itself builds on EVERY phrase upsert regardless of
- * admission (store.ts #bumpSuccessorFor), so seeding after the menu
+ * admission (store.ts #upsertPhrase's bigram successor tail), so seeding after the menu
  * query costs nothing. Machine-level cases run against the inner
  * provider (no debounce interference); display composition is test 12's
  * job, under the fake timers of provider-display.test.ts.

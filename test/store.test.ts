@@ -13,6 +13,13 @@
  * (unless the cap can only be met from that pool), sub-words counting
  * toward the cap, and prefix-index consistency after removals.
  *
+ * EVICTION BATCHING (PRD §06 h2.37 "Evict in batches of 256 … to
+ * amortize cost"): every overflow pass rounds its victim count UP to a
+ * whole EVICT_BATCH (bounded by the pool), so a pass runs at most once
+ * per 256 new distinct keys while the post-eviction size stays within
+ * the cap. The tests below pin both halves: the batch rounding (sizes
+ * land at cap − batch + overflow) and the post-pass size bound.
+ *
  * Sightings are fabricated inline per the types.ts contract — the store is
  * downstream of segment + shapeGate + score and takes their output on
  * faith; key strings are arbitrary lowercase.
@@ -381,7 +388,7 @@ describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
     expect(EVICT_BATCH).toBe(256);
   });
 
-  it("20,001 inserts → size capped at STORE_CAP, exactly one eviction", () => {
+  it("20,001 inserts → exactly one eviction pass (a full 256 batch), size back within the cap", () => {
     const s = new CandidateStore();
     for (let i = 0; i <= STORE_CAP; i++) {
       // One sighting per message, like ingest: the store's own counter
@@ -390,32 +397,40 @@ describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
         sighting({ key: `w${padded(i)}`, ordinal: s.nextOrdinal(), rankGroup: 0 }),
       );
     }
-    expect(s.size).toBe(STORE_CAP);
+    // One overflow pass, batch-rounded (§06 h2.37): 20,001 − 256 = 19,745.
+    expect(s.size).toBe(STORE_CAP - EVICT_BATCH + 1);
     // w00000: seen at ordinal 1, never again — oldest lastSeenOrdinal,
     // sessionCount 1, no bonuses → strictly lowest evictionScore. Scores
-    // stay distinct: exp(-20000/50) ≈ 4e-174 has not underflowed to 0.
+    // are age-ordered with no ties, so the batch takes the 256 oldest
+    // keys: w00000..w00255.
     expect(s.get("w00000")).toBeUndefined();
-    expect(s.get("w00001")).toBeDefined();
+    expect(s.get(`w${padded(EVICT_BATCH - 1)}`)).toBeUndefined();
+    expect(s.get(`w${padded(EVICT_BATCH)}`)).toBeDefined();
     expect(s.get(`w${padded(STORE_CAP)}`)).toBeDefined();
   });
 
   it("evicts the lowest evictionScore, not the alphabetically-first key", () => {
     const s = new CandidateStore();
     const ord = s.nextOrdinal(); // one message → Δordinal 0 at eviction
-    // 20,000 keys at sessionCount 3 → salience 2·log2(4) + 3 = 7; "zzz"
-    // alone at sessionCount 1 → 5. Strictly lowest score, and
-    // alphabetically LAST — a byte-order tie-break would have picked
-    // k00000 instead, so this proves the sort drives eviction.
+    // k00000..k00299 at sessionCount 4 (salience 2·log2(5) + 3 ≈ 7.64),
+    // the rest at sessionCount 3 (2·log2(4) + 3 = 7); "zzz" alone at
+    // sessionCount 1 → 5. Strictly lowest score, and alphabetically
+    // LAST — a byte-order tie-break would have picked k00300 first, so
+    // this proves the sort drives eviction. The batch (256 victims)
+    // then fills with the byte-lowest score-7 keys, k00300..k00554.
     for (let i = 0; i < STORE_CAP; i++) {
       const key = `k${padded(i)}`;
-      s.upsert(sighting({ key, ordinal: ord }));
-      s.upsert(sighting({ key, ordinal: ord }));
-      s.upsert(sighting({ key, ordinal: ord }));
+      const times = i < 300 ? 4 : 3;
+      for (let t = 0; t < times; t++) s.upsert(sighting({ key, ordinal: ord }));
     }
-    s.upsert(sighting({ key: "zzz", ordinal: ord })); // #20,001 → overflow
-    expect(s.size).toBe(STORE_CAP);
-    expect(s.get("zzz")).toBeUndefined();
-    expect(s.get("k00000")).toBeDefined();
+    s.upsert(sighting({ key: "zzz", ordinal: ord })); // #20,001 → overflow pass
+    expect(s.size).toBe(STORE_CAP - EVICT_BATCH + 1);
+    expect(s.get("zzz")).toBeUndefined(); // strictly lowest score went first
+    expect(s.get("k00000")).toBeDefined(); // NOT byte order
+    expect(s.get("k00299")).toBeDefined();
+    expect(s.get("k00300")).toBeUndefined(); // batch fill: byte-first score-7
+    expect(s.get("k00554")).toBeUndefined();
+    expect(s.get("k00555")).toBeDefined();
   });
 
   it("userTyped survives even when it has the strictly lowest score", () => {
@@ -428,15 +443,16 @@ describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
     s.upsert(sighting({ key: "aaa", ordinal: 1, fromUser: true }));
     for (let i = 0; i < STORE_CAP; i++) {
       s.upsert(sighting({ key: `k${padded(i)}`, ordinal: 11, rankGroup: 0 }));
-    } // #20,001 → overflow by exactly 1
+    } // #20,001 → overflow pass, batch-rounded to 256 victims
     const now = s.currentOrdinal();
     expect(evictionScore(s.get("aaa")!, now)).toBeLessThan(
-      evictionScore(s.get("k00001")!, now),
+      evictionScore(s.get("k00256")!, now),
     );
-    expect(s.size).toBe(STORE_CAP);
+    expect(s.size).toBe(STORE_CAP - EVICT_BATCH + 1);
     expect(s.get("aaa")).toBeDefined(); // protection, not score, kept it
-    expect(s.get("k00000")).toBeUndefined(); // lowest non-userTyped went
-    expect(s.get("k00001")).toBeDefined();
+    expect(s.get("k00000")).toBeUndefined(); // the non-userTyped batch went,
+    expect(s.get("k00255")).toBeUndefined(); // Δ = 0 ties → byte order
+    expect(s.get("k00256")).toBeDefined();
   });
 
   it("userTyped-only overflow still trims: the hard cap wins", () => {
@@ -453,9 +469,10 @@ describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
         }),
       );
     }
-    expect(s.size).toBe(STORE_CAP);
-    expect(s.get("u00000")).toBeUndefined();
-    expect(s.get("u00001")).toBeDefined();
+    expect(s.size).toBe(STORE_CAP - EVICT_BATCH + 1);
+    expect(s.get("u00000")).toBeUndefined(); // strictly lowest userTyped score…
+    expect(s.get("u00255")).toBeUndefined(); // …batch filled by byte ties
+    expect(s.get("u00256")).toBeDefined();
   });
 
   it("mixed store at scale: overflow victims are never userTyped", () => {
@@ -468,11 +485,11 @@ describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
     }
     for (let i = 0; i < 10_000; i++) {
       s.upsert(sighting({ key: `u${padded(i)}`, ordinal: ord, fromUser: true }));
-    } // 20,002 total → overflow 2
-    expect(s.size).toBe(STORE_CAP);
-    expect(s.get("k00000")).toBeUndefined(); // both victims regular…
-    expect(s.get("k00001")).toBeUndefined(); // …byte order among the ties
-    expect(s.get("k00002")).toBeDefined();
+    } // 20,002 total → overflow 2, batch-rounded to 256 victims
+    expect(s.size).toBe(20_002 - EVICT_BATCH);
+    expect(s.get("k00000")).toBeUndefined(); // victims regular only —
+    expect(s.get("k00255")).toBeUndefined(); // …byte order among the ties
+    expect(s.get("k00256")).toBeDefined();
     expect(s.entries().filter((c) => c.userTyped)).toHaveLength(10_000);
   });
 
@@ -486,9 +503,11 @@ describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
     s.upsert(
       sighting({ key: `ev${padded(STORE_CAP)}`, ordinal: ord, rankGroup: 0 }),
     );
-    expect(s.size).toBe(STORE_CAP);
+    expect(s.size).toBe(STORE_CAP - EVICT_BATCH + 1); // batch pass: 256 victims
     expect(s.get("ev00000")).toBeUndefined(); // evicted (score tie → byte)
-    const [start, end] = s.prefixRange("ev"); // rebuilt after the removal
+    expect(s.get("ev00255")).toBeUndefined();
+    expect(s.get("ev00256")).toBeDefined();
+    const [start, end] = s.prefixRange("ev"); // rebuilt after the removals
     expect(end - start).toBe(s.size);
     expect(s.sortedKeysSnapshot()).not.toContain("ev00000");
   });
@@ -506,9 +525,13 @@ describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
         }),
       );
     }
-    expect(s.size).toBe(STORE_CAP);
-    expect(s.get("w00000")).toBeUndefined(); // a subword — no special casing
-    expect(s.get("w00002")).toBeDefined(); // subword survivor
-    expect(s.get("w00001")).toBeDefined(); // whole-token survivor
+    expect(s.size).toBe(STORE_CAP - EVICT_BATCH + 1);
+    // w00000..w00255 went — subwords (even) and whole tokens (odd) alike
+    // on both sides of the ledger: no special casing in either direction.
+    expect(s.get("w00000")).toBeUndefined(); // a subword victim
+    expect(s.get("w00002")).toBeUndefined(); // a subword victim
+    expect(s.get("w00003")).toBeUndefined(); // a whole-token victim
+    expect(s.get("w00256")).toBeDefined(); // subword survivor
+    expect(s.get("w00257")).toBeDefined(); // whole-token survivor
   });
 });

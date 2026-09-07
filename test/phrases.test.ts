@@ -4,8 +4,9 @@
  * firstSeenOrdinal frozen, sticky stored-but-never-set-here), within-line
  * bigram/trigram windows (the store joins whatever keys a line carries —
  * newline breaking is the PIPELINE's job and is covered there), the
- * PHRASE_CAP hard cap with exactly-`needed` lowest-score victims,
- * sticky protection (unless the cap can only be met from that pool),
+ * PHRASE_CAP hard cap with batch-rounded (PHRASE_EVICT_BATCH) lowest-score
+ * victims — the word store's amortization, post-pass size within the cap —
+ * sticky protection (unless the pool cannot cover the batch),
  * deterministic byte-lex tie-breaking, the reader accessors downstream
  * tasks consume (getPhrase / phraseSize / phraseEntries / iteratePhrases),
  * and independence from the word store (map, entries, prefix index).
@@ -252,21 +253,30 @@ describe("phrase layer (PRD §06 M2) — cap eviction", () => {
     `q${padded(i)}`,
   ];
 
-  it("10,001 distinct phrases → size capped at PHRASE_CAP, exactly one eviction", () => {
+  it("10,001 distinct phrases → exactly one eviction pass (a full 256 batch), size back within the cap", () => {
     const s = new CandidateStore();
     const ord = s.nextOrdinal(); // one message → all Δ = 0, all counts 1
     const lines: string[][] = [];
     for (let i = 0; i <= PHRASE_CAP; i++) lines.push(bigramLine(i));
     s.recordPhraseLines(lines, ord);
-    expect(s.phraseSize).toBe(PHRASE_CAP);
+    // One overflow pass, batch-rounded (mirrors the word store's §06
+    // h2.37 amortization): 10,001 − 256 = 9,745.
+    expect(s.phraseSize).toBe(PHRASE_CAP - PHRASE_EVICT_BATCH + 1);
     // All scores tie at count 1 · e^0 = 1 → byte-lex tie-break evicts the
-    // byte-LOWEST key ("p00000 q00000"), not the newest.
+    // byte-LOWEST keys ("p00000 q00000" …), not the newest.
     expect(s.getPhrase("p00000 q00000")).toBeUndefined();
-    expect(s.getPhrase("p00001 q00001")).toBeDefined();
+    expect(
+      s.getPhrase(
+        `p${padded(PHRASE_EVICT_BATCH - 1)} q${padded(PHRASE_EVICT_BATCH - 1)}`,
+      ),
+    ).toBeUndefined();
+    expect(
+      s.getPhrase(`p${padded(PHRASE_EVICT_BATCH)} q${padded(PHRASE_EVICT_BATCH)}`),
+    ).toBeDefined();
     expect(s.getPhrase(`p${padded(PHRASE_CAP)} q${padded(PHRASE_CAP)}`)).toBeDefined();
   });
 
-  it("deterministic: exactly size − cap victims, the predicted lowest scores", () => {
+  it("deterministic: the predicted lowest scores go first, the batch fills by byte order", () => {
     const s = new CandidateStore();
     s.nextOrdinal();
     s.nextOrdinal(); // eviction "now" will be ordinal 2
@@ -284,15 +294,21 @@ describe("phrase layer (PRD §06 M2) — cap eviction", () => {
     // strictly BELOW every base score (score drives, not byte order).
     const doomed: string[][] = [];
     for (let i = 0; i < 5; i++) doomed.push([`a${padded(i)}`, `x`]);
-    s.recordPhraseLines(doomed, 1); // 10,005 → ONE tail pass, needed = 5
-    // Exactly the five doomed phrases are evicted — never rounded up to
-    // PHRASE_EVICT_BATCH, never a base or kept entry.
-    expect(s.phraseSize).toBe(PHRASE_CAP);
+    s.recordPhraseLines(doomed, 1); // 10,005 → ONE tail pass, rounded up to a full batch
+    // The five doomed phrases (strictly lowest scores) go first; the
+    // batch's remaining 251 victims are the byte-first score-1 base
+    // phrases (p00001..p00251). Never a kept (score-9) entry.
+    expect(s.phraseSize).toBe(PHRASE_CAP - PHRASE_EVICT_BATCH + 5);
     for (let i = 0; i < 5; i++) {
       expect(s.getPhrase(`a${padded(i)} x`)).toBeUndefined();
     }
-    for (const line of base) {
-      expect(s.getPhrase(line.join(" "))).toBeDefined();
+    for (let i = 0; i < base.length; i++) {
+      const line = base[i].join(" ");
+      if (i < PHRASE_EVICT_BATCH - 5) {
+        expect(s.getPhrase(line)).toBeUndefined(); // batch fill, byte order
+      } else {
+        expect(s.getPhrase(line)).toBeDefined();
+      }
     }
     for (const line of kept) {
       const p = s.getPhrase(line.join(" "))!;
@@ -316,27 +332,33 @@ describe("phrase layer (PRD §06 M2) — cap eviction", () => {
     // #10,001 → needed = 1. The sticky entry is excluded from the pool,
     // so the victim is the byte-first score-1 base phrase instead.
     s.recordPhraseLines([["zzz", "final"]], 2);
-    expect(s.phraseSize).toBe(PHRASE_CAP);
+    expect(s.phraseSize).toBe(PHRASE_CAP - PHRASE_EVICT_BATCH + 1);
     expect(s.getPhrase("sticky alpha")).toBeDefined(); // protection, not score
-    expect(s.getPhrase("zzz final")).toBeDefined();
+    expect(s.getPhrase("zzz final")).toBeDefined(); // byte-LAST among the score-1 ties
     expect(s.getPhrase("p00000 q00000")).toBeUndefined();
-    expect(s.getPhrase("p00001 q00001")).toBeDefined();
+    expect(s.getPhrase("p00255 q00255")).toBeUndefined(); // batch fill (byte ties)
+    expect(s.getPhrase("p00256 q00256")).toBeDefined();
   });
 
-  it("protected pool still covering `needed` evicts only unprotected entries", () => {
+  it("protected pool still covering the batch evicts only unprotected entries", () => {
     const s = new CandidateStore();
     s.nextOrdinal();
-    // 10,000 phrases, ALL made sticky, then one non-sticky insert: the
-    // only pool member is the new phrase — it is the sole victim.
+    // 10,000 phrases, ALL made sticky, then 256 non-sticky inserts in one
+    // drain: the protected pool exactly covers the batch, so every victim
+    // is an unprotected newcomer and no sticky entry is touched.
     const lines: string[][] = [];
     for (let i = 0; i < PHRASE_CAP; i++) lines.push(bigramLine(i));
     s.recordPhraseLines(lines, 1);
     for (let i = 0; i < PHRASE_CAP; i++) {
       s.setPhraseSticky(`p${padded(i)} q${padded(i)}`);
     }
-    s.recordPhraseLines([["w9", "overflow"]], 1);
+    const overflow: string[][] = [];
+    for (let i = 0; i < PHRASE_EVICT_BATCH; i++) {
+      overflow.push([`w${padded(i)}`, "overflow"]);
+    }
+    s.recordPhraseLines(overflow, 1); // +256 → one batch pass
     expect(s.phraseSize).toBe(PHRASE_CAP);
-    expect(s.getPhrase("w9 overflow")).toBeUndefined(); // only unprotected
+    expect(s.getPhrase("w00000 overflow")).toBeUndefined(); // only unprotected
     expect(s.getPhrase("p00000 q00000")).toBeDefined(); // sticky kept
     expect(
       s.phraseEntries().filter((p) => p.sticky).length,
@@ -355,7 +377,7 @@ describe("phrase layer (PRD §06 M2) — cap eviction", () => {
     const lines: string[][] = [];
     for (let i = 0; i <= PHRASE_CAP; i++) lines.push(bigramLine(i));
     s.recordPhraseLines(lines, ord); // runs real evictions at the tail
-    expect(s.phraseSize).toBe(PHRASE_CAP);
+    expect(s.phraseSize).toBe(PHRASE_CAP - PHRASE_EVICT_BATCH + 1);
     expect(s.size).toBe(3);
     expect(s.entries()).toEqual(wordsBefore);
     expect(s.prefixRange("al")).toEqual([0, 1]);
@@ -457,7 +479,7 @@ describe("phrase admission (PRD §06 h3.7)", () => {
     // Sticky score: 2 · e^(−39/50) ≈ 0.92 — strictly the LOWEST in the
     // map, so its survival is protection, not score.
     s.recordPhraseLines([["zzz", "final"]], s.currentOrdinal());
-    expect(s.phraseSize).toBe(PHRASE_CAP);
+    expect(s.phraseSize).toBe(PHRASE_CAP - PHRASE_EVICT_BATCH + 1);
     expect(s.getPhrase("nova quark")).toBeDefined();
     expect(s.getPhrase("nova quark")!.sticky).toBe(true);
     expect(s.getPhrase("p00000 q00000")).toBeUndefined(); // byte-first score-1 victim

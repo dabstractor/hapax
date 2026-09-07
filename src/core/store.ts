@@ -84,9 +84,12 @@ import type {
  *  toward the same cap. PRD §06 h2.37; baked, not config (PRD §08 h2.47). */
 export const STORE_CAP = 20_000;
 /** Eviction batch size: the snapshot + sort that selects victims is
- *  amortized over drops of this many entries. PRD §06 h2.37; baked per
- *  §08 h2.47. The per-overflow victim COUNT is exactly `size - STORE_CAP`
- *  (PRD §09 forbids rounding up — see evictIfOverCap). */
+ *  amortized over drops of this many entries (PRD §06 h2.37: "Evict in
+ *  batches of 256 (sort snapshot, drop tail) to amortize cost"; baked per
+ *  §08 h2.47). Every overflow pass rounds its victim count UP to a whole
+ *  batch (bounded by the pool size), so a pass runs at most once per
+ *  EVICT_BATCH new distinct keys — never per upsert — while the post-
+ *  eviction size stays ≤ STORE_CAP (drop ≥ exact overflow). */
 export const EVICT_BATCH = 256;
 
 /** Hard cap on stored phrase n-grams (bigrams AND trigrams count toward
@@ -95,18 +98,32 @@ export const EVICT_BATCH = 256;
 export const PHRASE_CAP = 10_000;
 /** Phrase eviction batch size: the snapshot + sort that selects phrase
  *  victims is amortized over drops of this many entries (same reading of
- *  "batches of 256" as the word store's EVICT_BATCH). The per-overflow
- *  victim COUNT is exactly `size - PHRASE_CAP` — PRD §09 forbids rounding
- *  up (see evictPhrasesIfOverCap). */
+ *  "batches of 256" as the word store's EVICT_BATCH). Every overflow pass
+ *  rounds its victim count UP to a whole batch (bounded by the pool), so
+ *  a saturated phrase map pays one sort per ≥ PHRASE_EVICT_BATCH new
+ *  distinct phrases per drain — never per message — while post-eviction
+ *  size stays ≤ PHRASE_CAP. */
 export const PHRASE_EVICT_BATCH = 256;
 
-/** Phrase eviction score (PRD §06 M2): occurrence count decayed by the
- *  same slower τ = 50 clock the word store's evictionScore decays by.
- *  Kept local to store.ts — score.ts's evictionScore requires a full
- *  Candidate (its salience weights don't apply to phrases); this is the
- *  phrase-side counterpart, not a re-derivation of the word math. */
-function phraseEvictionScore(p: PhraseEntry, currentOrdinal: number): number {
-  return p.count * Math.exp(-(currentOrdinal - p.lastSeenOrdinal) / 50);
+/** Phrase eviction key (PRD §06 M2) — the log domain of the phrase
+ *  eviction score `count · exp(-(now - lastSeen) / 50)`:
+ *
+ *      log(score) = log(count) - now/50 + lastSeenOrdinal/50
+ *
+ *  At any single eviction pass `now` is one constant, so ordering by
+ *  `k = log(count) + lastSeenOrdinal/50` is EXACTLY the ordering by
+ *  score (same floats for exact ties → the same byte-lex tie-break).
+ *  Unlike the score itself, `k` does not move as the session clock
+ *  advances — only a MUTATION of the entry (count++ / lastSeen refresh)
+ *  changes it — which is what lets the eviction index (#phraseEvictHeap)
+ *  go stale lazily and re-validate at pop instead of the map paying a
+ *  full O(n log n) sort per overflow pass. count ≥ 1 always, so log is
+ *  finite. Word entries canNOT use this trick — their evictionScore
+ *  nests TWO decays (salience's τ = 20 recency inside the τ = 50 outer
+ *  decay), so the clock does not factor out and their victim selection
+ *  keeps the snapshot-sort form. */
+function phraseSortKey(p: PhraseEntry): number {
+  return Math.log(p.count) + p.lastSeenOrdinal / 50;
 }
 
 /** Successor sort key (PRD §06 h3.9): higher count first, byte-lex
@@ -116,6 +133,64 @@ function phraseEvictionScore(p: PhraseEntry, currentOrdinal: number): number {
 function successorBefore(a: Successor, b: Successor): boolean {
   if (a.count !== b.count) return a.count > b.count;
   return a.next < b.next;
+}
+
+// ── Eviction index (phrase map) ────────────────────────────────────────────
+
+/** One node of the phrase eviction index: `k` is the entry's log-domain
+ *  eviction key (see #phraseSortKey) as of when the node was written,
+ *  `key` the phrase key. Nodes go stale when their entry is mutated
+ *  (count/lastSeen move k) or evicted; pops re-validate against the live
+ *  entry and re-push corrected nodes, so the heap never needs per-mutation
+ *  maintenance and a pass costs O(victims · log n) — never a full-map
+ *  sort (PRD §06 h2.37's amortization, taken to its conclusion). */
+type EvictNode = { k: number; key: string };
+
+/** Heap order: ascending k (lowest eviction score first), byte-lex
+ *  ascending key on exact-tie k — the SAME total order the previous
+ *  snapshot sort used (score asc, key asc), so victim choice is
+ *  bit-identical. */
+function evictNodeBefore(a: EvictNode, b: EvictNode): boolean {
+  if (a.k !== b.k) return a.k < b.k;
+  return a.key < b.key;
+}
+
+/** Standard binary min-heap push (sift-up). Swaps use a temp — tuple
+ *  destructuring allocates per swap and this sits on the ingest hot path. */
+function heapPush(heap: EvictNode[], node: EvictNode): void {
+  heap.push(node);
+  let i = heap.length - 1;
+  while (i > 0) {
+    const parent = (i - 1) >> 1;
+    if (!evictNodeBefore(heap[i], heap[parent])) break;
+    const t = heap[i];
+    heap[i] = heap[parent];
+    heap[parent] = t;
+    i = parent;
+  }
+}
+
+/** Standard binary min-heap pop (sift-down); undefined when empty. */
+function heapPop(heap: EvictNode[]): EvictNode | undefined {
+  const top = heap[0];
+  const last = heap.pop();
+  if (heap.length > 0 && last !== undefined) {
+    heap[0] = last;
+    let i = 0;
+    for (;;) {
+      const l = 2 * i + 1;
+      const r = l + 1;
+      let m = i;
+      if (l < heap.length && evictNodeBefore(heap[l], heap[m])) m = l;
+      if (r < heap.length && evictNodeBefore(heap[r], heap[m])) m = r;
+      if (m === i) break;
+      const t = heap[i];
+      heap[i] = heap[m];
+      heap[m] = t;
+      i = m;
+    }
+  }
+  return top;
 }
 
 /** Shared empty successor array (PRD §06 h3.9): topSuccessors() hands
@@ -148,6 +223,11 @@ export class CandidateStore {
   // keystroke path) and cleaned by #evictPhrasesIfOverCap when an evicted
   // key is a bigram. Read O(1) via topSuccessors().
   #successorIndex = new Map<string, Successor[]>();
+  // Phrase eviction index (see EvictNode): a lazy min-heap over the live
+  // phrase entries ordered by #phraseSortKey. Built on first overflow,
+  // pushed on every phrase CREATE (mutation needs nothing — pops
+  // re-validate), and rebuilt when stale-node dirt exceeds the live map.
+  #phraseEvictHeap: EvictNode[] | null = null;
   // Provenance of fast-path admission — the "both paths" half of the
   // sticky rule and the filter T2.S2's demotion sweep iterates. Also
   // pins the fast path to FIRST SIGHT: once recorded, a later count-1
@@ -204,19 +284,32 @@ export class CandidateStore {
   }
 
   /** Overflow eviction (PRD §06 h2.37, §05 h2.33): when the store exceeds
-   *  STORE_CAP, delete exactly `size - STORE_CAP` candidates — always the
-   *  lowest `evictionScore` ones (score.ts's salience decayed by the
-   *  slower τ = 50 clock, imported here so the math has one source of
-   *  truth). Runs at the tail of every upsert: live ingest (P1.M3.T2.S2)
+   *  STORE_CAP, delete candidates — always the lowest `evictionScore` ones
+   *  (score.ts's salience decayed by the slower τ = 50 clock, imported here
+   *  so the math has one source of truth) — until the store is back within
+   *  the cap. Runs at the tail of every upsert: live ingest (P1.M3.T2.S2)
    *  and restore replay (P1.M3.T2.S3) never call eviction themselves —
    *  upsert alone keeps the store bounded.
    *
-   *  Batch semantics (settled reading of h2.37): "batches of 256"
-   *  amortizes victim SELECTION — one snapshot + sort serves the whole
-   *  drop (EVICT_BATCH is §06's amortization granularity). The per-
-   *  overflow victim count is exactly `needed`: PRD §09's acceptance
-   *  contract ("insert 20,001 → exactly one eviction", size back to
-   *  STORE_CAP) forbids rounding the count up to EVICT_BATCH.
+   *  Batch semantics (PRD §06 h2.37: "Evict in batches of 256 (sort
+   *  snapshot, drop tail) to amortize cost"): each pass rounds the exact
+   *  overflow UP to a whole batch — victims = max(size − STORE_CAP,
+   *  EVICT_BATCH), bounded by the pool size — so one snapshot + sort
+   *  serves ≥ EVICT_BATCH drops and a pass can run at most once per
+   *  EVICT_BATCH new distinct keys, never per upsert. This is the
+   *  amortization h2.37 prescribes: without it, a session whose distinct
+   *  vocabulary sits at the PRD's own estimated upper range (~10–20k
+   *  uniques per 300k tokens) pays a full O(n log n) sort on EVERY
+   *  over-cap insert — a multi-thousand-key flood would block the event
+   *  loop for seconds inside one ≤64 KB slice, against §05's "never block
+   *  a keystroke". The post-eviction size bound of the §09 acceptance
+   *  contract ("insert 20,001 → exactly one eviction, lowest
+   *  evictionScore; userTyped survives") still holds: drop ≥ exact
+   *  overflow, so the store lands at ≤ STORE_CAP after every pass (at
+   *  20,001 the single pass drops a full batch of 256, lowest-score
+   *  first), and because the trigger is any overflow the store never
+   *  RESTS above the cap — the steady state merely rests up to
+   *  EVICT_BATCH − 1 entries below it, a 256-entry batch buffer.
    *
    *  userTyped entries are excluded from the victim pool entirely unless
    *  the evictable pool cannot cover the overflow — the cap is hard, so
@@ -234,12 +327,22 @@ export class CandidateStore {
    *  Cost below the cap: the size check is the first statement, so normal
    *  ingest and ≤20k restores pay nothing. */
   private evictIfOverCap(): void {
-    if (this.#map.size <= STORE_CAP) return;
+    const size = this.#map.size;
+    if (size <= STORE_CAP) return;
     const now = this.currentOrdinal(); // one "now" for the whole pass
-    const needed = this.#map.size - STORE_CAP;
-    const snapshot = this.entries(); // defensive copies — sort freely
-    let pool = snapshot.filter((c) => !c.userTyped);
-    if (pool.length < needed) pool = snapshot; // hard cap beats protection
+    // Round the exact overflow UP to a whole batch (bounded by the store
+    // size): drop ≥ overflow keeps the post-pass size ≤ STORE_CAP, and
+    // drop ≥ EVICT_BATCH guarantees ≥ EVICT_BATCH new distinct keys
+    // between passes — the amortized cost PRD §06 h2.37 prescribes.
+    const drop = Math.min(Math.max(size - STORE_CAP, EVICT_BATCH), size);
+    // Live references, not entries() defensive copies: the sort works on
+    // a fresh wrapper array and only reads key/score synchronously, so a
+    // previously-taken snapshot is never aliased and later upserts can
+    // mutate the underlying entries freely. Skipping 20k+ object spreads
+    // per pass matters at flood scale.
+    let pool: Candidate[] = [];
+    for (const c of this.#map.values()) if (!c.userTyped) pool.push(c);
+    if (pool.length < drop) pool = [...this.#map.values()]; // hard cap beats protection
     // Score each candidate once, then sort by the cached score — the
     // same victims as sorting with evictionScore in the comparator,
     // without redoing the math O(n log n) times per pass.
@@ -248,9 +351,9 @@ export class CandidateStore {
       if (a.score !== b.score) return a.score - b.score;
       return a.c.key < b.c.key ? -1 : a.c.key > b.c.key ? 1 : 0;
     });
-    // Lowest scores = the sorted head. min() is paranoia: pool ⊆ snapshot
-    // and snapshot.length === #map.size > needed always.
-    for (const { c } of scored.slice(0, Math.min(needed, scored.length))) {
+    // Lowest scores = the sorted head; scored.length ≥ drop always (pool
+    // ⊆ the map, and drop ≤ size = map size).
+    for (const { c } of scored.slice(0, drop)) {
       this.#map.delete(c.key);
     }
     this.#dirty = true; // prefix index (h2.35) rebuilds on next query
@@ -359,9 +462,15 @@ export class CandidateStore {
     for (const line of lines) {
       for (let i = 0; i < line.length; i++) {
         if (i + 1 < line.length) {
-          this.#upsertPhrase(`${line[i]} ${line[i + 1]}`, ordinal);
+          const w1 = line[i];
+          const w2 = line[i + 1];
+          // Bigram window: the constituents are already in hand, so the
+          // successor bump reuses them (no re-slicing the joined key).
+          this.#upsertPhrase(`${w1} ${w2}`, ordinal, w1, w2);
         }
         if (i + 2 < line.length) {
+          // Trigram window — no successor bump (only bigrams feed the
+          // successor index); the internal space-walk would just no-op.
           this.#upsertPhrase(`${line[i]} ${line[i + 1]} ${line[i + 2]}`, ordinal);
         }
       }
@@ -372,7 +481,7 @@ export class CandidateStore {
   /** Phrase upsert (h2.36 semantics, phrase side): create on first sight,
    *  merge otherwise. Unlike word upsert there is no #dirty to maintain —
    *  phrases are invisible to the prefix index. */
-  #upsertPhrase(key: string, ordinal: number): void {
+  #upsertPhrase(key: string, ordinal: number, w1?: string, w2?: string): void {
     const existing = this.#phrases.get(key);
     if (!existing) {
       const entry: PhraseEntry = {
@@ -383,7 +492,14 @@ export class CandidateStore {
         sticky: false, // only admission (P2.M1.T2.S1) ever sets this
       };
       this.#phrases.set(key, entry);
-      this.#bumpSuccessorFor(key); // successor tail (PRD §06 h3.9)
+      // Index the newcomer for eviction (no-op until the heap exists —
+      // the first overflow pass builds it wholesale from the live map).
+      if (this.#phraseEvictHeap !== null) {
+        heapPush(this.#phraseEvictHeap, { k: phraseSortKey(entry), key });
+      }
+      if (w1 !== undefined && w2 !== undefined) {
+        this.#bumpSuccessor(w1, w2); // successor tail (PRD §06 h3.9)
+      }
       this.#admitPhrase(key, entry); // admission tail (PRD §06 h3.7)
       return;
     }
@@ -391,22 +507,10 @@ export class CandidateStore {
     existing.lastSeenOrdinal = ordinal;
     // firstSeenOrdinal stays frozen at creation; sticky is untouched —
     // except through admission, immediately below.
-    this.#bumpSuccessorFor(key); // successor tail (PRD §06 h3.9)
-    this.#admitPhrase(key, existing);
-  }
-
-  /** Successor-index maintenance for one upserted phrase key (P2.M2.T1.S1,
-   *  PRD §06 h3.9): exactly-two-word keys are bigrams and bump w1 → w2;
-   *  trigrams (and anything longer) are no-ops. The single-space guard is
-   *  exact because keys are lowercase single-space joins by construction.
-   *  Runs at the tail of EVERY phrase upsert, AFTER the create-or-bump so
-   *  the entry count is final — one O(1)-ish bump, never a scan over
-   *  #phrases (§05 h2.34), and never on the keystroke path. */
-  #bumpSuccessorFor(key: string): void {
-    const sp = key.indexOf(" ");
-    if (sp !== -1 && sp === key.lastIndexOf(" ")) {
-      this.#bumpSuccessor(key.slice(0, sp), key.slice(sp + 1));
+    if (w1 !== undefined && w2 !== undefined) {
+      this.#bumpSuccessor(w1, w2); // successor tail (PRD §06 h3.9)
     }
+    this.#admitPhrase(key, existing);
   }
 
   /** Bump-or-insert w2 in w1's successor array, keeping the array sorted
@@ -427,15 +531,23 @@ export class CandidateStore {
       this.#successorIndex.set(w1, [{ next: w2, count: 1 }]);
       return;
     }
-    const existing = arr.find((s) => s.next === w2);
-    if (existing !== undefined) {
-      existing.count++;
-      let i = arr.indexOf(existing);
-      while (i > 0 && successorBefore(existing, arr[i - 1])) {
-        arr[i] = arr[i - 1];
-        arr[i - 1] = existing;
-        i--;
+    // One scan finds the successor AND its index (a second indexOf here
+    // showed up in restore-replay profiles at ~1500 messages).
+    let idx = -1;
+    for (let i = 0; i < arr.length; i++) {
+      if (arr[i].next === w2) {
+        idx = i;
+        break;
       }
+    }
+    if (idx !== -1) {
+      const existing = arr[idx];
+      existing.count++;
+      while (idx > 0 && successorBefore(existing, arr[idx - 1])) {
+        arr[idx] = arr[idx - 1];
+        idx--;
+      }
+      arr[idx] = existing;
       return;
     }
     const entry: Successor = { next: w2, count: 1 };
@@ -464,6 +576,14 @@ export class CandidateStore {
    *  userTyped OR-in semantics). Cost: O(1) set work plus, on the fast
    *  path only, ≤ 5 word-store lookups (see #firstSightFastPathEligible). */
   #admitPhrase(key: string, entry: PhraseEntry): void {
+    // Sticky + still a candidate is terminal: admission is the only
+    // production writer, and it sets sticky only together with candidacy,
+    // so re-running the decision table can add nothing. Hot repeated
+    // phrases (the common case in a long session) exit here — visible in
+    // restore profiles as a per-upsert saving. (removePhraseCandidacy can
+    // decouple the two — sticky stays while candidacy drops — and that
+    // state MUST fall through so a recurrence re-admits.)
+    if (entry.sticky && this.#phraseCandidates.has(key)) return;
     if (entry.count >= 2) {
       // Repetition path — admits regardless of constituent rarity. When
       // the fast path had admitted this key earlier, BOTH paths have now
@@ -487,49 +607,133 @@ export class CandidateStore {
    *  provable, never assumed. Keys arrive lowercase single-space-joined,
    *  so split(" ") is exact. O(words-in-key) ≤ 5 lookups, no scans. */
   #firstSightFastPathEligible(key: string): boolean {
-    const words = key.split(" ");
-    // Length bound is defense-in-depth: capture produces ≤ 3-word keys
-    // today (bigrams + trigrams), but admission must stay correct for n.
-    if (words.length > 5) return false;
-    return words.every((w) => {
-      const c = this.get(w);
-      return c !== undefined && (c.rankGroup === 0 || c.properName);
-    });
+    // Space-walk instead of split(" ") — no per-sight array allocation
+    // (this runs on EVERY first-sighted phrase window).
+    let start = 0;
+    for (let n = 1; ; n++) {
+      // Length bound is defense-in-depth: capture produces ≤ 3-word keys
+      // today (bigrams + trigrams), but admission must stay correct for n.
+      if (n > 5) return false;
+      const sp = key.indexOf(" ", start);
+      const word = sp === -1 ? key.slice(start) : key.slice(start, sp);
+      const c = this.#map.get(word);
+      if (c === undefined || (c.rankGroup !== 0 && !c.properName)) return false;
+      if (sp === -1) return true;
+      start = sp + 1;
+    }
   }
 
-  /** Phrase-map overflow eviction — the word store's evictIfOverCap
-   *  pattern (PRD §06 M2 inherits §06 h2.37) with two substitutions:
-   *  the victim pool excludes `sticky` (not userTyped) entries, and the
-   *  score is phraseEvictionScore (above) instead of score.ts's
-   *  Candidate-typed evictionScore. Everything else is identical:
-   *  early size return, snapshot via phraseEntries(), fall back to the
-   *  full snapshot when the protected filter leaves fewer than `needed`,
-   *  score-once-then-sort ascending with a byte-lexicographic key
-   *  tie-break (keys are unique per map, so victims are deterministic),
-   *  and exactly `size - PHRASE_CAP` deletions — never rounded up to
-   *  PHRASE_EVICT_BATCH (PRD §09). Removals mark nothing dirty: the
-   *  word prefix index is unaffected by phrase eviction. */
+  /** Phrase-map overflow eviction (PRD §06 M2 inherits §06 h2.37's
+   *  batch amortization) — the word store's evictIfOverCap with two
+   *  substitutions: the victim pool excludes `sticky` (not userTyped)
+   *  entries, and victim ordering uses the phrase eviction key
+   *  (phraseSortKey) instead of score.ts's Candidate-typed
+   *  evictionScore. Victim choice is IDENTICAL to the historical
+   *  score-ascending snapshot sort with a byte-lexicographic key
+   *  tie-break: at one pass, ordering by the log-domain key is exactly
+   *  ordering by the score (see phraseSortKey).
+   *
+   *  COST — the reason this pass exists at all: victim selection pulls
+   *  the #phraseEvictHeap (a lazy min-heap over the live entries) and
+   *  pops O(victims · log n) nodes, re-validating each against the live
+   *  entry — NOT a full-map snapshot + sort. A saturated 10k phrase map
+   *  therefore pays microseconds per drain instead of a ~10k-entry sort
+   *  per message (the 2026-09 validation probe measured a 2.1 s restore
+   *  for the 1561-message large-100k fixture under the old per-message
+   *  sort; the batch trigger + index brought it under the §05 budget).
+   *
+   *  Semantics per pass: drop = max(size − PHRASE_CAP,
+   *  PHRASE_EVICT_BATCH) bounded by the map size — post-eviction size is
+   *  ≤ PHRASE_CAP (drop ≥ exact overflow). Sticky entries surfaced by
+   *  the pop are set aside; only when the heap exhausts before `drop`
+   *  can be met from unprotected entries do they evict too, lowest key
+   *  first ("hard cap beats protection"). Stale nodes (entry mutated or
+   *  evicted since the node was written) re-push the corrected key or
+   *  drop out; the heap rebuilds wholesale when stale-node dirt exceeds
+   *  twice the live map. Removals mark nothing dirty: the word prefix
+   *  index is unaffected by phrase eviction. */
   #evictPhrasesIfOverCap(): void {
-    if (this.#phrases.size <= PHRASE_CAP) return;
-    const now = this.currentOrdinal(); // one "now" for the whole pass
-    const needed = this.#phrases.size - PHRASE_CAP;
-    const snapshot = this.phraseEntries(); // defensive copies — sort freely
-    let pool = snapshot.filter((p) => !p.sticky);
-    if (pool.length < needed) pool = snapshot; // hard cap beats protection
-    // Score each entry once, then sort by the cached score (float asc,
-    // byte-lex key tie-break) — the same victims as sorting with the
-    // score in the comparator, without recomputing it per comparison.
-    const scored = pool.map((p) => ({ p, score: phraseEvictionScore(p, now) }));
-    scored.sort((a, b) => {
-      if (a.score !== b.score) return a.score - b.score;
-      return a.p.key < b.p.key ? -1 : a.p.key > b.p.key ? 1 : 0;
-    });
-    // Lowest scores = the sorted head. min() is paranoia: pool ⊆ snapshot
-    // and snapshot.length === #phrases.size > needed always.
-    for (const { p } of scored.slice(0, Math.min(needed, scored.length))) {
-      this.#phrases.delete(p.key);
-      this.#dropSuccessorFor(p.key); // successor cleanup (P2.M2.T1.S1)
+    const size = this.#phrases.size;
+    if (size <= PHRASE_CAP) return;
+    // Batch-rounded victim count: drop ≥ overflow keeps the post-pass
+    // size ≤ PHRASE_CAP; drop ≥ PHRASE_EVICT_BATCH keeps passes ≥ 256
+    // new distinct phrases apart (§06 h2.37's amortized cost).
+    const drop = Math.min(Math.max(size - PHRASE_CAP, PHRASE_EVICT_BATCH), size);
+    let heap = this.#phraseEvictHeap;
+    if (heap === null) heap = this.#rebuildPhraseHeap();
+    let victims = 0;
+    let protectedSeen: PhraseEntry[] | null = null;
+    while (victims < drop && heap.length > 0) {
+      const node = heapPop(heap);
+      if (node === undefined) break;
+      const entry = this.#phrases.get(node.key);
+      if (entry === undefined) continue; // evicted since — stale node
+      const k = phraseSortKey(entry);
+      if (k !== node.k) {
+        // Stale: the entry moved (count/lastSeen changed after this node
+        // was written). Re-index at its CURRENT key and keep popping —
+        // the true lowest-k victims cannot be decided from a stale node.
+        heapPush(heap, { k, key: node.key });
+        continue;
+      }
+      if (entry.sticky) {
+        (protectedSeen ??= []).push(entry); // set aside, ascending k
+        continue;
+      }
+      // delete() returns false on a duplicate node for an already-evicted
+      // entry — count the victim only when the map actually shrank.
+      if (this.#phrases.delete(node.key)) {
+        this.#dropSuccessorFor(node.key); // successor cleanup (P2.M2.T1.S1)
+        victims++;
+      }
     }
+    if (victims < drop && heap.length === 0 && protectedSeen !== null) {
+      // Hard cap beats protection: the unprotected pool could not cover
+      // the batch. protectedSeen holds every live sticky entry in
+      // ascending-k order — the same victims the full-snapshot fallback
+      // of a snapshot sort would pick, lowest first.
+      for (const entry of protectedSeen) {
+        if (victims >= drop) break;
+        if (this.#phrases.delete(entry.key)) {
+          this.#dropSuccessorFor(entry.key);
+          victims++;
+        }
+      }
+    }
+    // Reap stale-node dirt: every mutation-before-pop leaves its old node
+    // behind. Keeping the index bounded keeps later passes O(victims).
+    if (heap.length > 2 * this.#phrases.size + 64) {
+      this.#rebuildPhraseHeap();
+    }
+  }
+
+  /** Rebuild the phrase eviction index wholesale from the live map
+   *  (bottom-up heapify, O(n)); also the lazy constructor for the first
+   *  overflow pass. After this, every live entry has exactly one
+   *  current node. */
+  #rebuildPhraseHeap(): EvictNode[] {
+    const heap: EvictNode[] = [];
+    for (const p of this.#phrases.values()) {
+      heap.push({ k: phraseSortKey(p), key: p.key });
+    }
+    for (let i = heap.length >> 1; i-- > 0; ) {
+      // Bottom-up heapify: sift each internal node down.
+      let idx = i;
+      for (;;) {
+        const l = 2 * idx + 1;
+        const r = l + 1;
+        let m = idx;
+        if (l < heap.length && evictNodeBefore(heap[l], heap[m])) m = l;
+        if (r < heap.length && evictNodeBefore(heap[r], heap[m])) m = r;
+        if (m === idx) break;
+        const t = heap[idx];
+        heap[idx] = heap[m];
+        heap[m] = t;
+        idx = m;
+      }
+    }
+    this.#phraseEvictHeap = heap;
+    return heap;
   }
 
   /** Eviction-side successor cleanup (P2.M2.T1.S1, PRD §06 h3.9): when a

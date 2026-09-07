@@ -14,7 +14,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CandidateStore, PHRASE_CAP } from "../src/core/store.js";
+import { CandidateStore, PHRASE_CAP, PHRASE_EVICT_BATCH } from "../src/core/store.js";
 
 /** "p00042"-style fixed-width keys so byte order == insertion order. */
 const padded = (i: number): string => String(i).padStart(5, "0");
@@ -118,9 +118,15 @@ describe("successor index (PRD §06 h3.9) — eviction cleanup", () => {
     // is deterministic — phrases.test.ts pins the same victim selection).
     s.recordPhraseLines([["zzz", "overflow"]], 2);
     s.recordPhraseLines([["yyy", "overflow"]], 2);
-    expect(s.phraseSize).toBe(PHRASE_CAP);
+    // One batch-rounded pass: the two doomed (strictly lowest) go first,
+    // then the 254 byte-first score-1 base phrases (p00001..p00254) fill
+    // the batch. The byte-LAST score-1 ties (zzz/yyy overflow) survive.
+    expect(s.phraseSize).toBe(PHRASE_CAP - PHRASE_EVICT_BATCH + 2);
     expect(s.getPhrase("alpha delta")).toBeUndefined();
     expect(s.getPhrase("ghost final")).toBeUndefined();
+    expect(s.getPhrase("p00001 q00001")).toBeUndefined(); // batch fill
+    expect(s.getPhrase("p00254 q00254")).toBeUndefined();
+    expect(s.getPhrase("p00255 q00255")).toBeDefined();
     // alpha: delta spliced out, survivors intact — and NOT backfilled to 3.
     expect(s.topSuccessors("alpha")).toEqual([
       { next: "beta", count: 9 },

@@ -517,6 +517,16 @@ export interface DisplayProviderOptions {
  *      newer keystroke supersedes it. The pending swap applies on the
  *      next getSuggestions call; the timer only promotes internal state
  *      between keystrokes (bookkeeping + a cleanup handle for dispose).
+ *      EXCEPTION — acceptance invalidates the anchor: when
+ *      applyCompletion has run since the last paint, the buffer changed
+ *      underneath the displayed set (pi re-queries at the post-accept
+ *      cursor, always inside the window for a fast second Tab), and
+ *      re-serving the displayed set would hand pi a stale `prefix` —
+ *      applyCompletion replaces prefix.length characters before the
+ *      cursor verbatim, so a stale anchor DELETES accepted text (the
+ *      rapid Tab-Tab corruption: "discuss National" + stale prefix
+ *      "natio" → "discuss NatNational"). In that case the fresh set
+ *      paints immediately instead of being parked as pending.
  *
  * Narrowing needs no special case: rule 4 always returns a non-empty set
  * once open, so pi never observes zero-then-nonzero — no close+reopen
@@ -540,6 +550,10 @@ export function createDisplayProvider(
   let displayedItems: AutocompleteItem[] = [];
   let displayedPrefix = "";
   let lastPaintAt = 0; // Date.now() of the last visible-set change
+  // True once applyCompletion has run since the last paint: the buffer
+  // changed underneath the displayed set, so its prefix anchor is stale
+  // and must never be re-served (rule 4's acceptance exception).
+  let completionSincePaint = false;
   let pendingSig: string | null = null;
   let pendingItems: AutocompleteItem[] = [];
   let pendingPrefix = "";
@@ -557,6 +571,7 @@ export function createDisplayProvider(
     displayedItems = [];
     displayedPrefix = "";
     lastPaintAt = 0;
+    completionSincePaint = false;
     pendingSig = null;
     pendingItems = [];
     pendingPrefix = "";
@@ -580,6 +595,7 @@ export function createDisplayProvider(
     displayedItems = items;
     displayedPrefix = prefix;
     lastPaintAt = Date.now();
+    completionSincePaint = false; // this paint reflects the post-accept buffer
   };
 
   /** Timer callback: promote the pending swap (if it survived) to displayed. */
@@ -641,7 +657,22 @@ export function createDisplayProvider(
         return { items: copyOf(displayedItems), prefix: displayedPrefix };
       }
 
-      // 4c. Suppression window: keep what's on screen; remember the new set
+      // 4c-exception. Acceptance invalidates the anchor: applyCompletion
+      // ran since the last paint, so the buffer changed underneath the
+      // displayed set (a fast second Tab re-queries at the post-accept
+      // cursor inside the suppression window). Re-serving the displayed
+      // set would hand pi its PRE-acceptance prefix; pi's applyCompletion
+      // replaces prefix.length characters before the cursor verbatim, so
+      // a stale anchor destroys accepted text ("discuss National" →
+      // "discuss NatNational"). Paint the fresh set immediately instead
+      // of parking it as pending — normal narrowing suppression (no
+      // acceptance in between) is untouched.
+      if (completionSincePaint) {
+        paint(items, result.prefix);
+        return { items: copyOf(displayedItems), prefix: displayedPrefix };
+      }
+
+      // 4d. Suppression window: keep what's on screen; remember the new set
       // (superseding any earlier pending) and schedule its promotion. pi
       // pulls the promoted set on a later getSuggestions call.
       pendingSig = sig;
@@ -652,6 +683,11 @@ export function createDisplayProvider(
     },
 
     applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+      // Acceptance invalidates the displayed set's prefix anchor (see the
+      // 4c-exception in getSuggestions): flag it so the next query inside
+      // the suppression window paints fresh instead of re-serving the
+      // stale pre-acceptance set.
+      completionSincePaint = true;
       return base.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
     },
 

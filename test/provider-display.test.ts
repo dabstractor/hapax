@@ -190,6 +190,36 @@ describe("suppression window", () => {
   });
 });
 
+describe("rapid Tab-Tab integrity (acceptance invalidates the anchor)", () => {
+  it("applyCompletion since the last paint → the next qualifying result paints immediately, never the stale set", async () => {
+    const { base, wrapper, emissions, emit } = harness();
+
+    await emit("ze"); // t=0 → ZE painted
+    vi.advanceTimersByTime(50);
+    // Tab accepts a hapax item: the buffer changes underneath the painted
+    // set, and pi's immediate re-query lands INSIDE the suppression window.
+    wrapper.applyCompletion(
+      ["#ze"],
+      0,
+      4,
+      { value: "Zendesk", label: "Zendesk", description: "" },
+      "#ze",
+    );
+    expect(base.__hapaxLive()).not.toBeNull();
+
+    // The stale displayed set must NOT be re-served: its prefix anchors
+    // the PRE-acceptance buffer, and applying it would replace the wrong
+    // characters (buffer corruption). The fresh set paints at once.
+    expect(await emit("zend")).toEqual(ZEND);
+    expect(emissions).toEqual([ZE, ZEND]);
+
+    // Normal debounce resumes after the fresh paint.
+    vi.advanceTimersByTime(30); // t=80 < lastPaintAt(50) + 100
+    expect(await emit("zendeska")).toEqual(ZEND); // suppressed again
+    expect(emissions).toEqual([ZE, ZEND, ZEND]);
+  });
+});
+
 describe("superseded pending", () => {
   it("superseding keystroke replaces the pending set — only the newest set is ever painted", async () => {
     const { emissions, emit } = harness();

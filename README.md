@@ -47,7 +47,11 @@ dump, M1 regression) is the item-7 section of
   the very next Tab completes that successor with no additional typing —
   `National` → `renewable` → `energy` → `laboratory` (scripted proof:
   item 7 of `test/fixtures/sessions/RESULTS.md`). Chaining resets on
-  `before_agent_start` and on disqualifying input.
+  `before_agent_start` and on disqualifying input. Caveat: once a phrase
+  headed by that word is admitted, the phrase completes instead (phrase
+  salience outranks the bare word, and phrase acceptances never arm the
+  chain) — chain-arming applies to words that do not head an admitted
+  phrase.
 
 ## Quick start
 
@@ -85,7 +89,15 @@ type  natio            → menu offers National → Tab inserts "National"
 ```
 
 Once admitted (by repetition or an all-rare first sight), phrases appear in
-the same menu as words.
+the same menu as words. Note that this narrows the zero-typing chain window
+above: from the first line that contains `National Renewable Energy`, the
+`natio` menu offers the phrases (phrase salience = 1.2 × the sum of its
+constituents, which always outranks the prefix word — the bare `National`
+item is suppressed), and Tab then inserts the whole phrase in one step.
+The `National → renewable → energy → …` walk is the behavior in the window
+BEFORE the phrase's first admission (and in phrase-free sessions, or with
+`enablePhrases: false`); once the phrase is admitted, chain-arming applies
+to words that do not head an admitted phrase.
 
 Ordinary prose: typing is identical to stock pi — no key is captured, no
 menu appears for common words, and Tab with no selection inserts a literal

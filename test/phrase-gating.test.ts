@@ -3,7 +3,7 @@
  * phrase layer, NOT hapax). With `enablePhrases: false` the extension
  * wires no onAdmittedTokens hook (src/pi/index.ts), so the store never
  * sees recordPhraseLines — and because the successor index is built
- * INSIDE the phrase-upsert path (store.ts #bumpSuccessorFor), it has
+ * INSIDE the phrase-upsert path (store.ts #upsertPhrase's bigram successor tail), it has
  * zero successors too. Downstream, everything phrase-shaped is inert for
  * want of data: rankMatches finds no phrase candidates (no items, no
  * constituent suppression) and the provider's chain layer never arms
