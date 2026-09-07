@@ -38,10 +38,25 @@
  * marks the prefix index dirty (see #dirty). The scoring math is not
  * duplicated: eviction imports evictionScore from score.js — the single
  * source of truth.
+ *
+ * PHRASE LAYER (P2.M1.T1.S1, PRD §06 M2): a second, independent map —
+ * single-space-joined lowercase phrase key → PhraseEntry — captures
+ * bigram and trigram windows of consecutive admitted whole tokens within
+ * one line (the ingest pipeline splits lines; newline is the only window
+ * break). Same upsert/evict discipline as words — count++ on repeat,
+ * PHRASE_CAP = 10,000 hard cap, exactly-`needed` lowest-score eviction —
+ * with a phrase-specific score (count × exp(-Δ/50): score.ts's
+ * evictionScore requires a full Candidate, so the math is a local helper
+ * sharing only the τ = 50 constant) and `sticky` instead of `userTyped`
+ * in the victim-pool filter. The two stores share NOTHING: phrase writes
+ * never touch #map, #sortedKeys, or #dirty (the word prefix index never
+ * rebuilds for phrase activity), and word eviction never touches
+ * #phrases. sticky starts false and is only ever set through
+ * setPhraseSticky — admission is P2.M1.T2.S1's job, not the recorder's.
  */
 
 import { evictionScore } from "./score.js";
-import type { Candidate, RankGroup, Sighting } from "./types.js";
+import type { Candidate, PhraseEntry, RankGroup, Sighting } from "./types.js";
 
 /** Hard cap on stored word candidates — whole tokens AND sub-words count
  *  toward the same cap. PRD §06 h2.37; baked, not config (PRD §08 h2.47). */
@@ -51,6 +66,26 @@ export const STORE_CAP = 20_000;
  *  §08 h2.47. The per-overflow victim COUNT is exactly `size - STORE_CAP`
  *  (PRD §09 forbids rounding up — see evictIfOverCap). */
 export const EVICT_BATCH = 256;
+
+/** Hard cap on stored phrase n-grams (bigrams AND trigrams count toward
+ *  the same cap). PRD §06 M2; baked, not config (PRD §08 h2.47). The word
+ *  store's cap is INDEPENDENT — the phrase map never evicts words. */
+export const PHRASE_CAP = 10_000;
+/** Phrase eviction batch size: the snapshot + sort that selects phrase
+ *  victims is amortized over drops of this many entries (same reading of
+ *  "batches of 256" as the word store's EVICT_BATCH). The per-overflow
+ *  victim COUNT is exactly `size - PHRASE_CAP` — PRD §09 forbids rounding
+ *  up (see evictPhrasesIfOverCap). */
+export const PHRASE_EVICT_BATCH = 256;
+
+/** Phrase eviction score (PRD §06 M2): occurrence count decayed by the
+ *  same slower τ = 50 clock the word store's evictionScore decays by.
+ *  Kept local to store.ts — score.ts's evictionScore requires a full
+ *  Candidate (its salience weights don't apply to phrases); this is the
+ *  phrase-side counterpart, not a re-derivation of the word math. */
+function phraseEvictionScore(p: PhraseEntry, currentOrdinal: number): number {
+  return p.count * Math.exp(-(currentOrdinal - p.lastSeenOrdinal) / 50);
+}
 
 /** Per-session word-candidate store (PRD §06). Pure in-memory Map from
  *  lowercase key → Candidate, plus the session's message ordinal counter. */
@@ -62,6 +97,9 @@ export class CandidateStore {
   // inserts and cleared by the next prefixRange() rebuild.
   // S3 eviction must ALSO set #dirty = true on any key removal.
   #dirty = false;
+  // Phrase layer (PRD §06 M2) — deliberately NOT under #dirty: nothing
+  // about #phrases ever invalidates the WORD prefix index.
+  #phrases = new Map<string, PhraseEntry>();
 
   /** Issue the next message ordinal: 1, 2, 3… strictly monotonic, never
    *  reset. The ingest pipeline calls this once per message. */
@@ -241,5 +279,131 @@ export class CandidateStore {
     const counts: Record<RankGroup, number> = { 0: 0, 1: 0, 2: 0 };
     for (const c of this.#map.values()) counts[c.rankGroup]++;
     return counts;
+  }
+
+  // ── Phrase layer (P2.M1.T1.S1, PRD §06 M2) ─────────────────────────────
+
+  /** Record consecutive-token n-grams (PRD §06 M2): for each line, upsert
+   *  every bigram (n = 2) and trigram (n = 3) window of ADJACENT admitted
+   *  whole-token keys. Lines arrive pre-split by the ingest pipeline — a
+   *  newline is the only window break, and this method never looks for
+   *  one; it only joins whatever keys a line carries (keys are lowercase
+   *  by the pipeline's contract; they are joined with single spaces and
+   *  used as given). A line shorter than 2 keys forms no windows; empty
+   *  lines are fine and form none. Windows overlap by design: "a b c"
+   *  yields "a b", "b c", and "a b c".
+   *
+   *  Upsert semantics mirror the word store's h2.36 contract: absent →
+   *  create { count: 1, firstSeenOrdinal = lastSeenOrdinal = ordinal,
+   *  sticky: false }; present → count++, lastSeenOrdinal = ordinal
+   *  (firstSeenOrdinal frozen, sticky untouched — P2.M1.T2.S1 sets it).
+   *  The ordinal is supplied by the caller (the pipeline stamps one per
+   *  message); this method never advances the counter. On overflow the
+   *  map trims back to PHRASE_CAP via evictPhrasesIfOverCap() — once per
+   *  call, at the tail, never per upsert. Phrase writes never touch the
+   *  word map or the prefix index. */
+  recordPhraseLines(lines: readonly string[][], ordinal: number): void {
+    for (const line of lines) {
+      for (let i = 0; i < line.length; i++) {
+        if (i + 1 < line.length) {
+          this.#upsertPhrase(`${line[i]} ${line[i + 1]}`, ordinal);
+        }
+        if (i + 2 < line.length) {
+          this.#upsertPhrase(`${line[i]} ${line[i + 1]} ${line[i + 2]}`, ordinal);
+        }
+      }
+    }
+    this.#evictPhrasesIfOverCap(); // bounded map (§06 M2) — no-op below cap
+  }
+
+  /** Phrase upsert (h2.36 semantics, phrase side): create on first sight,
+   *  merge otherwise. Unlike word upsert there is no #dirty to maintain —
+   *  phrases are invisible to the prefix index. */
+  #upsertPhrase(key: string, ordinal: number): void {
+    const existing = this.#phrases.get(key);
+    if (!existing) {
+      this.#phrases.set(key, {
+        key,
+        count: 1,
+        lastSeenOrdinal: ordinal,
+        firstSeenOrdinal: ordinal,
+        sticky: false, // only admission (P2.M1.T2.S1) ever sets this
+      });
+      return;
+    }
+    existing.count++;
+    existing.lastSeenOrdinal = ordinal;
+    // firstSeenOrdinal stays frozen at creation; sticky is untouched.
+  }
+
+  /** Phrase-map overflow eviction — the word store's evictIfOverCap
+   *  pattern (PRD §06 M2 inherits §06 h2.37) with two substitutions:
+   *  the victim pool excludes `sticky` (not userTyped) entries, and the
+   *  score is phraseEvictionScore (above) instead of score.ts's
+   *  Candidate-typed evictionScore. Everything else is identical:
+   *  early size return, snapshot via phraseEntries(), fall back to the
+   *  full snapshot when the protected filter leaves fewer than `needed`,
+   *  score-once-then-sort ascending with a byte-lexicographic key
+   *  tie-break (keys are unique per map, so victims are deterministic),
+   *  and exactly `size - PHRASE_CAP` deletions — never rounded up to
+   *  PHRASE_EVICT_BATCH (PRD §09). Removals mark nothing dirty: the
+   *  word prefix index is unaffected by phrase eviction. */
+  #evictPhrasesIfOverCap(): void {
+    if (this.#phrases.size <= PHRASE_CAP) return;
+    const now = this.currentOrdinal(); // one "now" for the whole pass
+    const needed = this.#phrases.size - PHRASE_CAP;
+    const snapshot = this.phraseEntries(); // defensive copies — sort freely
+    let pool = snapshot.filter((p) => !p.sticky);
+    if (pool.length < needed) pool = snapshot; // hard cap beats protection
+    // Score each entry once, then sort by the cached score (float asc,
+    // byte-lex key tie-break) — the same victims as sorting with the
+    // score in the comparator, without recomputing it per comparison.
+    const scored = pool.map((p) => ({ p, score: phraseEvictionScore(p, now) }));
+    scored.sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      return a.p.key < b.p.key ? -1 : a.p.key > b.p.key ? 1 : 0;
+    });
+    // Lowest scores = the sorted head. min() is paranoia: pool ⊆ snapshot
+    // and snapshot.length === #phrases.size > needed always.
+    for (const { p } of scored.slice(0, Math.min(needed, scored.length))) {
+      this.#phrases.delete(p.key);
+    }
+  }
+
+  /** Mark one phrase sticky (PRD §06 M2): sticky resists eviction exactly
+   *  like userTyped words. Creation and refresh never set this — P2.M1.T2.S1
+   *  admission is the only writer; it ships now because admission and this
+   *  task's eviction tests both need it. Unknown key → no-op (never creates). */
+  setPhraseSticky(key: string): void {
+    const entry = this.#phrases.get(key);
+    if (entry) entry.sticky = true;
+  }
+
+  /** Exact phrase-key lookup ("word word" joined lowercase). Returns the
+   *  LIVE entry — treat as read-only (same contract as get()). */
+  getPhrase(key: string): PhraseEntry | undefined {
+    return this.#phrases.get(key);
+  }
+
+  /** Number of stored phrases (one per joined key). */
+  get phraseSize(): number {
+    return this.#phrases.size;
+  }
+
+  /** Defensive snapshot of all phrase entries — shallow copies, so later
+   *  records never mutate a previously-taken snapshot. Test/inspection
+   *  surface for eviction and /acwords. */
+  phraseEntries(): PhraseEntry[] {
+    return [...this.#phrases.values()].map((p) => ({ ...p }));
+  }
+
+  /** Live iteration over the phrase map's entries (Map values iterator:
+   *  the yielded objects are the stored entries themselves, so mutations
+   *  made after this call — including entries recorded mid-iteration — are
+   *  visible). P2.M1.T2.S1 iterates for admission; P2.M2.T1.S1 reads
+   *  bigram counts; /acwords (M2) dumps. Callers that need a stable view
+   *  must copy (phraseEntries()). */
+  iteratePhrases(): IterableIterator<PhraseEntry> {
+    return this.#phrases.values();
   }
 }

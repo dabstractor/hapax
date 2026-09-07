@@ -779,14 +779,14 @@
               "type": "Task",
               "id": "P2.M1.T1",
               "title": "N-gram capture & phrase store (src/core/store.ts extension)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Record bigrams/trigrams of consecutive admitted whole tokens within a line, with PhraseEntry map and 10k cap eviction.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M1.T1.S1",
                   "title": "Within-line n-gram capture + PhraseEntry map + cap/eviction",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T2.S2",
@@ -806,14 +806,14 @@
               "type": "Task",
               "id": "P2.M1.T2",
               "title": "Phrase admission & decay",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Hybrid admission (repetition path + all-rare fast path), sticky flag, and the 40-message demotion sweep.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M1.T2.S1",
                   "title": "Hybrid admission: count>=2 OR all-rare first sight; sticky",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M1.T1.S1"
@@ -829,7 +829,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S2",
                   "title": "40-ordinal demotion sweep for unconfirmed fast-path phrases",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T2.S1"

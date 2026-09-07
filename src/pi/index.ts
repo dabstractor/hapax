@@ -126,12 +126,31 @@ export default function hapax(pi: ExtensionAPI): void {
       notify: (m, l) => ctx.ui.notify(m, l),
     });
 
-    store = new CandidateStore();
+    // Bound to a local const, not the nullable factory slot: the hook
+    // below — and any drain already in flight when session_shutdown
+    // nulls `store` — must always reach this session's store instance,
+    // the same object the pipeline's own #store field holds.
+    const sessionStore = new CandidateStore();
+    store = sessionStore;
     lazyDict = createLazyDictionary(resolveDictPath(), () => {
       ctx.ui.notify("hapax: dictionary failed to load", "error");
       disabled = true; // permanent for this extension runtime
     });
-    pipeline = new IngestPipeline({ store, dictionary: lazyDict });
+    pipeline = new IngestPipeline({
+      store: sessionStore,
+      dictionary: lazyDict,
+      // M2 phrase capture (P2.M1.T1.S1), live only when enabled (PRD §08):
+      // per-line admitted whole-token keys → phrase n-gram upserts. The
+      // message's ordinal was already issued by processText (nextOrdinal
+      // before the first slice), so currentOrdinal() inside this tail
+      // callback IS that ordinal.
+      ...(config.enablePhrases
+        ? {
+            onAdmittedTokens: (lines) =>
+              sessionStore.recordPhraseLines(lines, sessionStore.currentOrdinal()),
+          }
+        : {}),
+    });
 
     // Stack the hapax provider on pi's current one. Re-registration on
     // reload is acceptable (fresh session, fresh provider); no unregister

@@ -110,9 +110,13 @@ export interface IngestPipelineOptions {
   /** awaited between slices; default scheduler.yield/setImmediate/Promise
    *  fallback chain; test-injectable to count chunk boundaries */
   yieldFn?: YieldFn;
-  /** M2 n-gram hook (P2.M1.T1.S1): lowercase keys of admitted WHOLE-token
-   *  candidates, in order, once per message (empty array allowed) */
-  onAdmittedTokens?: (keys: string[]) => void;
+  /** M2 n-gram hook (P2.M1.T1.S1): per-LINE arrays of the lowercase keys
+   *  of admitted WHOLE-token candidates, in document order, once per
+   *  message. A newline is the only window break — a line never spans
+   *  one, and a slice boundary never breaks one (open lines carry
+   *  across). Empty lines produce empty arrays; a message whose lines
+   *  admit nothing still calls with its (possibly empty-array) lines. */
+  onAdmittedTokens?: (lines: string[][]) => void;
 }
 
 /**
@@ -130,7 +134,7 @@ export interface IngestPipelineOptions {
  * session_shutdown handler calls dispose() to drop the debounce timer and
  * any queued-but-unprocessed text; restore replay (P1.M3.T2.S3) calls
  * flush/processText directly; /acwords (P1.M3.T4.S1) reads getStats;
- * n-grams (P2.M1.T1.S1) supply onAdmittedTokens.
+ * n-grams (P2.M1.T1.S1) supply onAdmittedTokens (per-line keys).
  */
 export class IngestPipeline {
   #store: CandidateStore;
@@ -138,7 +142,7 @@ export class IngestPipeline {
   #debounceMs: number;
   #chunkBytes: number;
   #yieldFn: YieldFn;
-  #onAdmittedTokens?: (keys: string[]) => void;
+  #onAdmittedTokens?: (lines: string[][]) => void;
   /** FIFO queue; entries hold nothing but { text, fromUser } and are
    *  removed before processing so text is never retained (h2.34). */
   #pending: { text: string; fromUser: boolean }[] = [];
@@ -234,60 +238,95 @@ export class IngestPipeline {
    *  a multi-MB message never blocks a keystroke (§02 h2.15). P1.M3.T2.S3
    *  restore calls this directly to bypass the debounce. A slice boundary
    *  can split one token — an accepted approximation (regex tokenize is
-   *  safe on any slice). */
+   *  safe on any slice) — but NEVER a phrase-window line: text is split
+   *  on '\n' per slice, every newline-terminated segment finalizes a
+   *  line, and an unterminated tail segment carries the open line into
+   *  the next slice, so only a newline breaks a window (PRD §06 M2). */
   async processText(text: string, fromUser: boolean): Promise<void> {
     if (text.length === 0) return; // no content → no ordinal, no stats
     const ordinal = this.#store.nextOrdinal(); // ONCE per message
-    const admittedWhole: string[] = [];
+    const lines: string[][] = []; // finalized per-line key arrays, in order
+    let openLine: string[] = []; // the line still open at a slice boundary
     for (let off = 0; off < text.length; off += this.#chunkBytes) {
       const slice = text.slice(off, off + this.#chunkBytes);
-      for (const token of tokenize(slice)) {
-        const drafts = expandCandidates(token); // whole token first
-        // Group of the whole token WHEN ADMITTED — the only state shared
-        // by a token's drafts (subword clamp input, PRD §04).
-        let wholeGroup: RankGroup | undefined;
-        for (const draft of drafts) {
-          const gate = passesShape(draft);
-          if (!gate.ok) {
-            // reason is present iff !ok (GateResult contract)
-            this.#stats.rejectedByGate[gate.reason!]++;
-            continue; // gate-rejected drafts are never wordsSeen
-          }
-          this.#stats.wordsSeen++;
-          // Subwords admit independently; the parent clamp applies only
-          // when the whole token admitted (wholeGroup stays undefined
-          // after a gate or admission reject — no clamp then).
-          const result = admit(
-            draft,
-            this.#dictionary,
-            draft.isSubword ? wholeGroup : undefined,
-          );
-          if (result === "reject") continue; // admission reject: simply
-          // not stored (PRD §04 h2.24); no IngestStats field by design.
-          this.#stats.admitted++;
-          if (!draft.isSubword) {
-            wholeGroup ??= result;
-            admittedWhole.push(draft.key);
-          }
-          const sighting: Sighting = {
-            key: draft.key,
-            display: draft.display,
-            ordinal,
-            fromUser,
-            properName: draft.properName,
-            rankGroup: result,
-            isSubword: draft.isSubword,
-            ...(draft.parentKey !== undefined
-              ? { parentKey: draft.parentKey }
-              : {}),
-          };
-          this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)
-        }
+      // Newline is the ONLY phrase-window break (PRD §06 M2) — a slice
+      // boundary never breaks one. segments[0..n-2] were each terminated
+      // by a '\n' inside this slice → finalize each as a line; the tail
+      // segment stays open. (An empty tail segment is just the newline's
+      // right side — nothing to carry; empty lines finalize as [].)
+      const segments = slice.split("\n");
+      for (let i = 0; i < segments.length - 1; i++) {
+        const keys = this.#admitSegment(segments[i]!, ordinal, fromUser);
+        lines.push(openLine.length > 0 ? [...openLine, ...keys] : keys);
+        openLine = [];
       }
+      openLine.push(
+        ...this.#admitSegment(segments[segments.length - 1]!, ordinal, fromUser),
+      );
       await this.#yieldFn(); // keystroke path resumes between slices
     }
-    // M2 n-gram hook — whole tokens only, once per message (may be []).
-    this.#onAdmittedTokens?.(admittedWhole);
+    if (openLine.length > 0) lines.push(openLine); // unterminated final line
+    // M2 n-gram hook — per line, once per message. Empty text never gets
+    // here (early return); null-extracted messages never enqueue.
+    this.#onAdmittedTokens?.(lines);
+  }
+
+  /** Run one '\n'-free segment through the core chain (tokenize →
+   *  expandCandidates → passesShape → admit → store.upsert) and return
+   *  the lowercase keys of its admitted WHOLE tokens, in order. Sub-words
+   *  are stored as candidates but never enter phrase windows (PRD §06
+   *  M2). Gate/admission accounting and #stats updates are exactly the
+   *  message-loop behavior this was extracted from (P1.M3.T2.S2). */
+  #admitSegment(
+    segment: string,
+    ordinal: number,
+    fromUser: boolean,
+  ): string[] {
+    const keys: string[] = [];
+    for (const token of tokenize(segment)) {
+      const drafts = expandCandidates(token); // whole token first
+      // Group of the whole token WHEN ADMITTED — the only state shared
+      // by a token's drafts (subword clamp input, PRD §04).
+      let wholeGroup: RankGroup | undefined;
+      for (const draft of drafts) {
+        const gate = passesShape(draft);
+        if (!gate.ok) {
+          // reason is present iff !ok (GateResult contract)
+          this.#stats.rejectedByGate[gate.reason!]++;
+          continue; // gate-rejected drafts are never wordsSeen
+        }
+        this.#stats.wordsSeen++;
+        // Subwords admit independently; the parent clamp applies only
+        // when the whole token admitted (wholeGroup stays undefined
+        // after a gate or admission reject — no clamp then).
+        const result = admit(
+          draft,
+          this.#dictionary,
+          draft.isSubword ? wholeGroup : undefined,
+        );
+        if (result === "reject") continue; // admission reject: simply
+        // not stored (PRD §04 h2.24); no IngestStats field by design.
+        this.#stats.admitted++;
+        if (!draft.isSubword) {
+          wholeGroup ??= result;
+          keys.push(draft.key);
+        }
+        const sighting: Sighting = {
+          key: draft.key,
+          display: draft.display,
+          ordinal,
+          fromUser,
+          properName: draft.properName,
+          rankGroup: result,
+          isSubword: draft.isSubword,
+          ...(draft.parentKey !== undefined
+            ? { parentKey: draft.parentKey }
+            : {}),
+        };
+        this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)
+      }
+    }
+    return keys;
   }
 
   /** Cumulative counters (PRD §08 /acwords). Returns a copy — a live

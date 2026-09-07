@@ -44,6 +44,7 @@ import hapax, {
   resolveDictPath,
 } from "../src/pi/index.js";
 import type { AgentMessage } from "../src/pi/ingest.js";
+import { CandidateStore } from "../src/core/store.js";
 import { writeDictFile } from "./helpers/dict-writer.js";
 
 // --- fixture helpers ----------------------------------------------------------
@@ -223,6 +224,15 @@ function enableDebug(): void {
   );
 }
 
+/** Write a user-global config layer with the given fields. */
+function writeConfig(fields: Record<string, unknown>): void {
+  mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+  writeFileSync(
+    join(home, ".pi", "agent", "hapax.json"),
+    JSON.stringify(fields),
+  );
+}
+
 /** Default fixture wiring: fake pi + fake ctx + factory invoked; handlers
  *  captured so tests can fire events directly. Dict = temp path (write
  *  content first with useDict()/useCorruptDict() when a drain will run). */
@@ -385,6 +395,55 @@ describe("session_start — restore gating", () => {
       const text = await dump(handler);
       expect(wordsSeenIn(text)).toBeGreaterThan(0);
     });
+  });
+});
+
+// --- session_start: phrase wiring (P2.M1.T1.S1) -------------------------------
+
+describe("session_start — phrase wiring (enablePhrases)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks(); // scope the CandidateStore.prototype spy
+  });
+
+  it("enablePhrases true (default) wires the hook — phrases land in the store", async () => {
+    useDict(); // alpha/beta/gamma are dict-absent → group 0 → admitted
+    const { handlers, ctx } = wired();
+    const spy = vi.spyOn(CandidateStore.prototype, "recordPhraseLines");
+    startSession(handlers.get("session_start")!, ctx, "new");
+
+    await endMessage(
+      handlers.get("message_end")!,
+      ctx,
+      userMsg("alpha beta gamma"),
+    );
+    // Filter to THIS session's message: the prototype spy is shared by
+    // every store instance, and an earlier test's fire-and-forget restore
+    // drain can land its own recordPhraseLines call inside this window.
+    await vi.waitFor(() => {
+      expect(spy.mock.calls.some(([lines]) => lines.flat().includes("alpha"))).toBe(true);
+    });
+    const call = spy.mock.calls.find(([lines]) => lines.flat().includes("alpha"))!;
+    expect(call[0]).toEqual([["alpha", "beta", "gamma"]]);
+    expect(call[1]).toBe(1); // this message's ordinal (fresh store)
+  });
+
+  it("enablePhrases false leaves the hook unwired — recordPhraseLines never fires", async () => {
+    useDict();
+    writeConfig({ enablePhrases: false });
+    const { handlers, ctx } = wired();
+    const spy = vi.spyOn(CandidateStore.prototype, "recordPhraseLines");
+    startSession(handlers.get("session_start")!, ctx, "new");
+
+    await endMessage(
+      handlers.get("message_end")!,
+      ctx,
+      userMsg("alpha beta gamma"),
+    );
+    await settle(); // let the debounce fire and the drain finish
+    // enablePhrases false → the hook is never wired: this session's
+    // message never reaches recordPhraseLines (any spied call would be
+    // bleed from another test's store — filter on this message's keys).
+    expect(spy.mock.calls.some(([lines]) => lines.flat().includes("alpha"))).toBe(false);
   });
 });
 

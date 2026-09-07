@@ -87,7 +87,7 @@ interface Harness {
 function makePipeline(
   opts: {
     chunkBytes?: number;
-    onAdmittedTokens?: (keys: string[]) => void;
+    onAdmittedTokens?: (lines: string[][]) => void;
     withYieldFn?: boolean;
   } = {},
 ): Harness {
@@ -230,16 +230,18 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     expect(h.store.get("time")?.rankGroup).toBe(1);
   });
 
-  it("calls onAdmittedTokens once per message with admitted whole-token keys", async () => {
-    const calls: string[][] = [];
-    const h = makePipeline({ onAdmittedTokens: (keys) => calls.push(keys) });
+  it("calls onAdmittedTokens once per message with per-line whole-token keys", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
     h.pipeline.onMessageEnd(userMsg("zephyr deltaWave"));
     h.pipeline.onMessageEnd(assistantMsg([{ type: "text", text: "vortex" }]));
-    h.pipeline.onMessageEnd(userMsg("abc")); // nothing admitted → empty array
+    h.pipeline.onMessageEnd(userMsg("abc")); // nothing admitted anywhere
     await drainNow(h);
     // Whole tokens only ("delta"/"wave" subwords excluded), doc order,
-    // one call per message, empty array allowed.
-    expect(calls).toEqual([["zephyr", "deltawave"], ["vortex"], []]);
+    // one call per message. Newline-terminated lines always appear (even
+    // empty); the unterminated tail line is reported only when it holds
+    // keys — "abc" admitted nothing, so its lines array is empty.
+    expect(calls).toEqual([[["zephyr", "deltawave"]], [["vortex"]], []]);
     // Role plumbing: user → userTyped sticky, assistant → not.
     expect(h.store.get("zephyr")?.userTyped).toBe(true);
     expect(h.store.get("vortex")?.userTyped).toBe(false);
@@ -312,5 +314,92 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     await pipeline.flush(); // clears the timer, drains now — no 300ms wait
     expect(store.size).toBe(3);
     expect(store.currentOrdinal()).toBe(1);
+  });
+});
+
+// --- onAdmittedTokens: per-line shape (P2.M1.T1.S1) -------------------------
+
+describe("onAdmittedTokens — per-line n-gram hook (PRD §06 M2)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("splits lines on newline — windows never span lines", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
+    h.pipeline.onMessageEnd(userMsg("zephyr quartz\nvortex granite"));
+    await drainNow(h);
+    expect(calls).toEqual([[["zephyr", "quartz"], ["vortex", "granite"]]]);
+    // Recording through the real store (index.ts's wiring shape) proves
+    // the line break broke the window: "quartz vortex" must not exist.
+    h.store.recordPhraseLines(calls[0]!, h.store.currentOrdinal());
+    expect(h.store.getPhrase("quartz vortex")).toBeUndefined();
+    expect(h.store.getPhrase("zephyr quartz")).toBeDefined();
+  });
+
+  it("a chunk boundary never breaks a line — only '\\n' does", async () => {
+    const calls: string[][][] = [];
+    // "zephyr quartz vortex" cut after each token (7-char slices): two
+    // slice boundaries, zero newlines — still ONE line with all words.
+    const h = makePipeline({
+      chunkBytes: 7,
+      onAdmittedTokens: (lines) => calls.push(lines),
+    });
+    h.pipeline.onMessageEnd(userMsg("zephyr quartz vortex"));
+    await drainNow(h);
+    expect(h.counts.yields).toBe(3); // boundaries really happened
+    expect(calls).toEqual([[["zephyr", "quartz", "vortex"]]]);
+    // The window SPANNING the slice 2–3 boundary survives recording.
+    h.store.recordPhraseLines(calls[0]!, h.store.currentOrdinal());
+    expect(h.store.getPhrase("quartz vortex")).toBeDefined();
+    expect(h.store.getPhrase("zephyr quartz")).toBeDefined();
+  });
+
+  it("sub-words never enter line arrays — only whole-token keys", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
+    // Whole "contextzephyr" is COMMON → admission reject; its admitted
+    // subwords ("context", "zephyr") are subword drafts — excluded.
+    h.pipeline.onMessageEnd(userMsg("contextZephyr standalone"));
+    await drainNow(h);
+    expect(calls).toEqual([[["standalone"]]]);
+    // Subwords DID reach the word store (established §04 behavior; the
+    // "context" subword is COMMON → admission reject there)…
+    expect(h.store.get("zephyr")).toBeDefined();
+    expect(h.store.get("standalone")).toBeDefined();
+  });
+
+  it("empty lines produce empty arrays; a trailing newline adds no extra line", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
+    h.pipeline.onMessageEnd(userMsg("zephyr\n\nvortex\n"));
+    await drainNow(h);
+    expect(calls).toEqual([[["zephyr"], [], ["vortex"]]]);
+  });
+
+  it("multi-block messages arrive as separate lines (extractText joins with '\\n')", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
+    h.pipeline.onMessageEnd(
+      userMsg([
+        { type: "text", text: "zephyr quartz" },
+        { type: "text", text: "vortex" },
+      ]),
+    );
+    await drainNow(h);
+    expect(calls).toEqual([[["zephyr", "quartz"], ["vortex"]]]);
+  });
+
+  it("no callback for empty text or null-extraction messages", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
+    h.pipeline.onMessageEnd(toolResultMsg()); // null extraction → never queued
+    h.pipeline.onMessageEnd(userMsg("")); // empty text → processText early-return
+    await drainNow(h);
+    expect(calls).toEqual([]);
+    expect(h.store.currentOrdinal()).toBe(0); // no ordinal issued either
   });
 });
