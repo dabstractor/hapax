@@ -8,7 +8,9 @@ window, extracts uncommon words, identifiers, and proper names, and offers
 them as Tab completions in the prompt input via pi's built-in autocomplete
 menu.
 
-**Status: M1 (v1) — fully usable.**
+**Status: M1 (v1) — complete, verified 2026-09-07** against the full M1
+definition-of-done gauntlet — every gate, command, and measured number is
+recorded in [`docs/M1-DoD.md`](docs/M1-DoD.md).
 
 ## Features
 
