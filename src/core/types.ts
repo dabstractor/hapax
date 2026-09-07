@@ -54,6 +54,16 @@ export interface Sighting {
   parentKey?: string;
 }
 
+/** Output of src/core/segment.ts tokenize(). PRD §04 segmentation. */
+export interface RawToken {
+  /** the matched text, original casing (normalization is P1.M2.T1.S2) */
+  raw: string;
+  /** true when the token came from the hexish scan (6–40 hex chars,
+   *  at least one letter a–f; commit-hash-shaped). Hexish tokens are
+   *  opaque — subword splitting (S2) skips them. */
+  hexish: boolean;
+}
+
 /** Why the shape gate rejected a candidate. PRD §04 shape-gate rules. */
 export type GateRejectReason =
   | 'tooShort'
