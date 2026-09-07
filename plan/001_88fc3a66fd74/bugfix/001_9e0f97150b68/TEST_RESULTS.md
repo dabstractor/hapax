@@ -1,0 +1,96 @@
+# Bug Fix Requirements
+
+## Overview
+Tested the full hapax M1+M2 implementation against the PRD: read every source module, ran the shipped suite (523 tests green, tsc clean), then ran 8 independent adversarial probe suites against the real modules and the shipped dictionary (secrets leakage, dictionary calibration, display-debounce/tab semantics against pi-tui's actual editor implementation, chain arming post-restore, bad-dictionary failure mode, demotion cadence, eviction, phrase suppression). Found 6 issues: one critical (the shipped dictionary's rank ordering is unrelated to word frequency, so all common English words pass the admission bands as 'rare' and the autocomplete menu pops for ordinary prose like 'with'/'this'/'them' — defeating the PRD's core no-hijack invariant, masked in acceptance by ≤3-char probe words), three major contract/behavior bugs (stale-prefix suppression corrupts typed text on Tab — 'zzendesk' reproduced through a faithful pi-tui editor simulation; realistic multi-segment API keys leak their payloads into suggestions; a failed dictionary load still ingests the entire restored history as rank-group-0 candidates instead of disabling), one major feature-reachability flaw (M2 chained completion cannot be armed after session restore because constituent suppression mathematically always removes the bare word once a phrase exists), and one minor (demotion sweep skipped during restore replay). The core engine (segmentation, scoring math, store, query, delegation, phrases, successor index) is well-built and its unit/acceptance suites are genuinely strong; the failures cluster at artifact calibration, cross-component timing contracts, and adversarial input shapes the scripted acceptance did not exercise.
+
+
+## Critical Issues (Must Fix)
+Issues that prevent core functionality from working.
+
+### Issue 1: Shipped dictionary is mis-calibrated: every common English word is admitted as a rare candidate and pops completion menus during ordinary prose
+**Severity**: Critical
+**ID**: BUG-001
+**Location**: dict/common-en.bin (artifact; generated via tools/gen-provisional-tsv.mjs length-sorted ordering) — interacts with src/core/score.ts admit() bands and src/core/dictionary.ts loader
+
+**Description**:
+The shipped dict/common-en.bin (50,927 entries, built by tools/gen-provisional-tsv.mjs from a LENGTH-sorted system word list, not a frequency list) assigns quantized scores that break the PRD §04 admission bands. Measured lookups: the=103, that=73, with=71, this=72, them=72, first<120, have=84, would=51... Of the 61 most common ≥4-letter English words, 61/61 are admitted (58 as rank group 1 'rare-but-attested' with the rarity bonus; 0 rejected). PRD §04 requires q>=220 -> reject ('very common word (the, context)') and PRD §07 states 'The user can type an entire session and never trigger a menu for common words: the, context are rank-rejected'. End-to-end against the repo's own test/fixtures/sessions/prose.jsonl, typing 'with' -> menu ['with'], 'this' -> ['This'], 'them' -> ['them'], 'thin' -> ['thin'], 'firs' -> ['first']. This defeats the core admission model and the product's #1 UX principle (§01: menu suggestions must be unobtrusive; typing experience identical). The scripted acceptance item 2 masked this because all 22 of its probe words ('of on at be by do go he in it no or so to up we me my us if re men') are ≤3 chars, which the shape gate rejects by length regardless of dictionary calibration. Note also the log-quantization curve interacts badly with the bands even for a real corpus (at N≈51k only ranks 0-3 reach q>=220), but the dominant demonstrable failure is the provisional artifact's rank ordering.
+
+**Steps to Reproduce**:
+1. node -e with loadDictionary('dict/common-en.bin'): lookup('the')===103, lookup('that')===73, lookup('with')===71 — all < 220 → admit() returns group 1. 2. Ingest test/fixtures/sessions/prose.jsonl through IngestPipeline (real dict). 3. createHapaxProvider(...).getSuggestions(['with'],0,4,{signal}) returns items [{value:'with'}] — a menu for the most ordinary English word. (Verified by direct probe against the shipped artifact and the repo's own prose fixture.)
+
+
+## Major Issues (Should Fix)
+Issues that significantly impact user experience or functionality.
+
+### Issue 1: Display-debounce suppression returns a stale prefix; Tab inside/after a suppressed keystroke corrupts typed text (e.g. 'zzendesk')
+**Severity**: Major
+**ID**: BUG-002
+**Location**: src/pi/provider.ts:674-682 (createDisplayProvider rule 4d suppression branch returning stale displayedPrefix)
+
+**Description**:
+createDisplayProvider's suppression branch (rule 4d) returns the previously displayed set WITH ITS OLD PREFIX while the buffer holds more typed characters. pi-tui stores suggestions.prefix from the last getSuggestions call (node_modules/@earendil-works/pi-tui/dist/components/editor.js:1926) and on Tab calls applyCompletion(lines, line, col, selected, autocompletePrefix) (editor.js:540-545), replacing prefix.length characters before the cursor verbatim. Reproduced sequence: menu painted for fragment 'ze' ({zendesk, zephyr}, prefix 'ze'); user types 'p' within 100ms (live set narrows to {zephyr}, differs → suppressed → provider returns stale {zendesk} with stale prefix 'ze'); user hits Tab → pi replaces the 2 chars before the cursor ('ep') with 'zendesk' → buffer becomes 'zzendesk'. The stale prefix persists until the NEXT keystroke query, so Tab after any pause following a suppressed keystroke still corrupts. This violates PRD §01 design invariant 1 ('Never hijack typing… The user's typing experience is unchanged') and is beyond the PRD-accepted cosmetic 'Tab-before-paint' limitation (which inserts a correct top item; this inserts WRONG TEXT). The codebase already fixed this exact hazard class for the acceptance case (completionSincePaint, provider.ts 'acceptance invalidates the anchor' — the rapid Tab-Tab 'NatNational' corruption) but left the plain-typing case unprotected.
+
+**Steps to Reproduce**:
+Simulate pi-tui exactly: store with candidates 'zendesk' and 'zephyr'; provider = createDisplayProvider(createHapaxProvider(...)). Type 'z' (delegate), 'e' → paints {zendesk,zephyr}@prefix 'ze'; type 'p' immediately (<100ms, live set {zephyr} differs) → provider returns {zendesk} @prefix 'ze'; call applyCompletion(lines,['zep'],col=3,item='zendesk',prefix='ze') → result 'zzendesk'. Deterministic; verified end-to-end with a faithful editor simulation (probe5).
+
+### Issue 2: Multi-segment secret keys leak into suggestions: key payloads (AWS secret segments, Slack token tails, JWT signature fragments) become completion candidates
+**Severity**: Major
+**ID**: BUG-003
+**Location**: src/core/shapeGate.ts:143-186 (isSecretShaped — no rule covers high-entropy mixed-case+digit runs ≥16-24 without '+'/'/', and prefix rules are defeated by tokenization splitting keys at separators)
+
+**Description**:
+PRD §09 integration item 5 requires 'paste an API key into a user prompt; key never appears in suggestions afterwards', and §01 says 'Suggestions that would embarrass (secrets, garbage tokens) must never appear; the shape gate is load-bearing'. The secret rules in isSecretShaped only fire on single tokens: prefix rules (sk-, ghp_, AKIA, eyJ…) never match after segmentation splits the key at separators, the base64 rule requires '+'/'/' (which base64url secrets never contain), and the digit+symbol ratio rarely exceeds 0.4 for mixed-case payloads. Verified with realistic key formats pasted as a user prompt and ingested through the real pipeline: typing 'wjal' suggests 'wJalrXUtnFEMI' (first 13 chars of an AWS secret access key wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY); 'abc' suggests 'abcdefghijklmnopqrstuvwx' (Slack token tail); JWT signature fragments 'dozjg' etc. are stored. A 34-char OpenAI-style payload (sk-proj-4t7RX2bQ9wLm3vN8xKpZ6dJh1cA5eFgH0iU) passes the gate when it lacks a ≥6 consonant run. The repo's own acceptance item 5 used single-token fake keys (FAKE_SK is pure hex ≥20 → caught by the pure-hex rule; FAKE_GHP keeps the ghp_ prefix in one token), so the scripted check passed while the realistic cases leak.
+
+**Steps to Reproduce**:
+new IngestPipeline with shipped dict; await processText('aws secret: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\nslack: xoxb-123456789012-1234567890123-abcdefghijklmnopqrstuvwx', true); rankMatches(store,'wjal') → [{display:'wJalrXUtnFEMI'}]; rankMatches(store,'abc') → [{display:'abcdefghijklmnopqrstuvwx'}]. (Verified by direct probe.)
+
+### Issue 3: Disable-on-bad-dictionary contract violated on the restore path: a failed dictionary load still replays the whole session history, admitting every word as rarest-group candidate
+**Severity**: Major
+**ID**: BUG-004
+**Location**: src/pi/ingest.ts:426-443 (restoreFromHistory replay loop has no disabled/failure gating) + src/pi/index.ts:166-169 (disabled flag only checked in message_end)
+
+**Description**:
+PRD §03 loader contract: 'Invalid magic/version: throw at load; the extension surfaces a notify and disables itself rather than running with a bad table.' src/pi/index.ts sets a permanent `disabled` flag on the first failed lookup, but `disabled` only gates the message_end handler. restoreFromHistory (kicked at session_start) calls pipeline.processText directly in a background loop with no disabled check: after the first lookup fails, every subsequent word in the ENTIRE history is admitted with lookup()=null → rank group 0 (rarest) with the 1.0 rarity bonus. Verified: with a non-existent dict path, replaying two prose messages stores 'with', 'that' (etc.) and rankMatches(store,'with') returns [{display:'with'}]. On a resumed session with a missing/corrupt dictionary (exactly the deployment error resume would hit), the user gets one error toast but the extension then runs the whole session with a 'bad table' — the opposite of the specified behavior — offering menus of common English words ranked as ultra-rare.
+
+**Steps to Reproduce**:
+createLazyDictionary('/nonexistent/common-en.bin', ()=>{}) into an IngestPipeline; call restoreFromHistory(pipeline, fakeSessionManager with 2 prose messages) (or await processText directly); wait 50ms → store.size 15, store.get('with') defined, rankMatches(store,'with') → [{display:'with','description':'session x3'}]. Notification fires once but ingestion continues. (Verified by direct probe; src/pi/index.ts:171 only guards message_end.)
+
+### Issue 4: M2 chained completion is unreachable after session restore: constituent suppression permanently removes the bare word from every menu, and phrases never arm the chain
+**Severity**: Major
+**ID**: BUG-005
+**Location**: src/core/query.ts:223-232 (constituent suppression) interacting with src/pi/provider.ts:363-375 (arming only on whole-word keys, phrase keys 'never arm')
+
+**Description**:
+PRD §09 M2 item 7: 'accept National → chain offers Renewable → Tab → Energy → Tab → Laboratory'. Chaining arms only via Tab acceptance of a whole-word hapax candidate (PRD §07), but the phrase salience formula (1.2 × Σ constituent saliences + repetition bonus ≥ 1.2 × wordSalience) mathematically ALWAYS exceeds the first word's own salience, so constituent suppression (query.ts: phraseSuppresses with the >= tie rule) removes the bare word from every menu whenever a phrase candidate starts with it. ProperName pairs like 'National Renewable' are fast-path phrase candidates at FIRST SIGHT, so this is near-universal for the very vocabulary chaining targets. Consequence: in any session where the phrase has already been learned — including every resumed session, since restore replays all history before the first keystroke (PRD §09 item 3) — the user cannot accept the bare word, and phrase acceptance never arms, so the zero-typing chain cannot be engaged at all. Verified: after full replay of a National Renewable Energy Laboratory session, rankMatches for 'natio', 'national', and even 'na' return ONLY phrases (no 'National' word item). The repo's own acceptance test engineered around this by accepting the word BEFORE the phrase-bearing messages are ingested (test/acceptance.test.ts fixture-phase comment: suppression 'permanently shadows the bare word'), i.e. the feature only works in the narrow live window before a bigram repeats.
+
+**Steps to Reproduce**:
+Ingest 'The National Renewable Energy Laboratory does wind research. National wind and National solar.' ×4 through IngestPipeline with the phrase hook wired; rankMatches(store,'natio') → only phrase items ('National wind National', 'National Renewable Energy', …), bare 'National' absent; no hapax item can arm the chain. (Verified by direct probe; also acknowledged in test/acceptance.test.ts ~lines 497-510.)
+
+
+## Minor Issues (Nice to Fix)
+Small improvements or polish items.
+
+### Issue 1: 40-ordinal phrase demotion sweep never runs during session-restore replay, leaving stale fast-path phrase candidates after resume
+**Severity**: Minor
+**ID**: BUG-006
+**Location**: src/pi/ingest.ts:243-253 (sweep only in #drainQueue finally; restoreFromHistory:426-443 bypasses it)
+
+**Description**:
+PRD §06 M2: 'Fast-path phrases that fail to reach count >= 2 within 40 subsequent message ordinals are demoted'. The sweep (onSweepPhrases → store.sweepPhraseDemotions()) fires only in IngestPipeline.#drainQueue's finally block (src/pi/ingest.ts:249) — i.e. only on a live message_end debounce flush. restoreFromHistory replays via processText directly, so during and immediately after a restore replay no sweep runs: fast-path phrases admitted from ancient history that never recurred remain completion candidates (and keep suppressing their first words) until the first live message_end drain. Transient (self-corrects on the first live message) but violates the demotion cadence after resume, the flagship restore scenario.
+
+**Steps to Reproduce**:
+Wire onSweepPhrases to sweepPhraseDemotions; onMessageEnd a fast-path all-rare phrase ('zorblat quuxified mumblewords') then flush → 3 candidates; call processText('filler…') ×45 directly (restore-style, no drain) → candidates remain undemoted; the identical sequence routed through onMessageEnd+flush demotes them all. (Verified by direct probe.)
+
+## Testing Summary
+- Total bugs found: 6
+- Critical: 1
+- Major: 4
+- Minor: 1
+
+## Recommendations
+- Regenerate dict/common-en.bin from a real frequency list (wordfreq/Google Books unigrams); even a crude hand-ranked top-1k overlay would restore the §04 bands. Also re-examine the §03 log-quantization curve against the 220/120 bands — at N≈51k only ranks 0-3 reach q>=220, so 'context'-class words can never be rejected even with a perfect corpus; widen the reject band or use a different quantization curve, and add a shipped-dict calibration test asserting lookup('the')>=220 and lookup('with')>=220.
+- In createDisplayProvider, never return a prefix that does not suffix-match the current buffer: paint immediately when the fresh result's prefix differs from the displayed one (mirroring the existing completionSincePaint exception), so pi's applyCompletion can never replace the wrong span.
+- Extend isSecretShaped: reject ≥16-char mixed-case+digit runs (base64url alphabet, no +/ requirement), and run the prefix/secret checks over raw text windows before segmentation or reject digit-led high-entropy fragments; add acceptance cases with realistic key formats (sk-proj-…, AWS secrets, JWTs with dots).
+- Gate restoreFromHistory on the dictionary failure (check the disabled flag inside the replay loop or make the lazy dictionary expose failure so the loop aborts), honoring PRD §03's disable-don't-degrade contract.
+- Revisit the suppression/arming interaction: exempt the bare word from suppression when it has successors in the successor index (or arm the chain from phrase acceptance of the phrase's first word), so chaining works in resumed sessions.
+- Call sweepPhraseDemotions once after restoreFromHistory completes (or at the tail of processText when driven by restore).
