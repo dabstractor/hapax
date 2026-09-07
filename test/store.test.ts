@@ -4,7 +4,10 @@
  * 1; upsert never advances it — the pipeline owns assignment), casing
  * merging into one entry with most-recent display, sticky OR-in flags,
  * rankGroup min-on-merge, isSubword fixed at creation, defensive entries()
- * snapshots, and the group histogram.
+ * snapshots, and the group histogram. Also the prefix index suite
+ * (P1.M2.T4.S2): lazy dirty-flag rebuild, binary-searched prefix ranges
+ * verified against brute force (20k keys + interleaved rounds), and the
+ * lowercase-prefix caller contract.
  *
  * Sightings are fabricated inline per the types.ts contract — the store is
  * downstream of segment + shapeGate + score and takes their output on
@@ -220,5 +223,144 @@ describe("rankGroupHistogram (PRD §06)", () => {
 
   it("empty store → all three keys present at 0 (never undefined)", () => {
     expect(new CandidateStore().rankGroupHistogram()).toEqual({ 0: 0, 1: 0, 2: 0 });
+  });
+});
+
+describe("prefix index (PRD §06 h2.35)", () => {
+  /** Brute-force oracle: the exact sorted keys that should match a prefix,
+   *  derived from entries() — independent of the index implementation. */
+  const expectedMatches = (s: CandidateStore, prefix: string): string[] =>
+    s.entries()
+      .map((c) => c.key)
+      .sort()
+      .filter((k) => k.startsWith(prefix));
+
+  /** Exactness check: [start, end) must slice the snapshot to exactly the
+   *  brute-force matches, with no prefix match just outside the bounds. */
+  const expectRangeExact = (s: CandidateStore, prefix: string): void => {
+    const expected = expectedMatches(s, prefix);
+    const [start, end] = s.prefixRange(prefix);
+    const snap = s.sortedKeysSnapshot();
+    expect(snap.slice(start, end)).toEqual(expected);
+    if (start > 0) expect(snap[start - 1].startsWith(prefix)).toBe(false);
+    if (end < snap.length) expect(snap[end].startsWith(prefix)).toBe(false);
+  };
+
+  it("a NEW key dirties the index; the next query rebuilds (insert never sorts)", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "alpha" }));
+    s.upsert(sighting({ key: "beta" }));
+    expect(s.prefixRange("al")).toEqual([0, 1]); // covers only "alpha"
+    expect(s.sortedKeysSnapshot()).toEqual(["alpha", "beta"]);
+    s.upsert(sighting({ key: "alpine" })); // new key → dirty
+    // Snapshot still shows the pre-insert rebuild: upsert did NOT sort.
+    expect(s.sortedKeysSnapshot()).toEqual(["alpha", "beta"]);
+    // Next query rebuilds once — "alpha" and "alpine" are now adjacent.
+    expect(s.prefixRange("al")).toEqual([0, 2]);
+    expect(s.sortedKeysSnapshot()).toEqual(["alpha", "alpine", "beta"]);
+  });
+
+  it("merge-only upserts do not dirty the index — no rebuild, ranges stay correct", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "alpha" }));
+    s.upsert(sighting({ key: "alpine" }));
+    s.upsert(sighting({ key: "beta" }));
+    s.prefixRange("al"); // rebuild → snapshot current
+    const before = s.sortedKeysSnapshot();
+    s.upsert(sighting({ key: "alpha", ordinal: 2 })); // merge, no new key
+    s.upsert(sighting({ key: "alpine", ordinal: 3 })); // merge
+    // Merges left the index untouched (same rebuild, byte order intact).
+    expect(s.sortedKeysSnapshot()).toEqual(before);
+    expect(s.prefixRange("al")).toEqual([0, 2]);
+    expectRangeExact(s, "al");
+  });
+
+  it("no matching keys → empty [n, n] range", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "alpha" }));
+    s.upsert(sighting({ key: "beta" }));
+    expect(s.prefixRange("zzz")).toEqual([2, 2]);
+    expect(s.prefixRange("b")).toEqual([1, 2]); // sanity: a real match works
+  });
+
+  it("empty store → [0, 0]", () => {
+    expect(new CandidateStore().prefixRange("a")).toEqual([0, 0]);
+  });
+
+  it('empty prefix "" → [0, size] (every key starts with "")', () => {
+    const s = new CandidateStore();
+    for (const k of ["cod", "dog", "cat"]) s.upsert(sighting({ key: k }));
+    expect(s.prefixRange("")).toEqual([0, 3]);
+  });
+
+  it("unsorted insertion still yields contiguous, byte-ordered ranges", () => {
+    const s = new CandidateStore();
+    for (const k of ["dog", "cat", "cow", "cod"]) s.upsert(sighting({ key: k }));
+    // Sorted: ["cat","cod","cow","dog"] — "co" covers exactly cod,cow.
+    expect(s.prefixRange("co")).toEqual([1, 3]);
+    expect(s.sortedKeysSnapshot().slice(1, 3)).toEqual(["cod", "cow"]);
+  });
+
+  it("a prefix reaching the array end returns end === length (valid)", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "xy" }));
+    s.upsert(sighting({ key: "xyz" }));
+    expect(s.prefixRange("xyz")).toEqual([1, 2]); // end == length
+    expect(s.prefixRange("xy")).toEqual([0, 2]);
+  });
+
+  it("20k synthetic keys: ranges exact vs brute force; rebuild once, then steady state", () => {
+    const s = new CandidateStore();
+    // Unique lowercase keys, mixed lengths 5–12 (base36, zero-padded).
+    const key = (i: number): string => "w" + i.toString(36).padStart(4 + (i % 8), "0");
+    for (let i = 0; i < 20_000; i++) s.upsert(sighting({ key: key(i) }));
+    for (const p of ["w0", "w1", "wz", "wf3", "w1234", "wzzzz"]) expectRangeExact(s, p);
+    // No new inserts between queries → index clean → consistent results.
+    expect(s.prefixRange("w0")).toEqual(s.prefixRange("w0"));
+    // One more new key → next query's rebuild keeps results exact.
+    s.upsert(sighting({ key: "wzzzzzzzztop" }));
+    expectRangeExact(s, "wzzzzz");
+    expectRangeExact(s, "w0");
+  });
+
+  it("interleaved insert/query rounds stay exact regardless of dirty state", () => {
+    const s = new CandidateStore();
+    const chars = "abcdefghijklmnopqrstuvwxyz";
+    const randKey = (): string => {
+      const len = 3 + Math.floor(Math.random() * 6); // lengths 3–8
+      let k = "";
+      for (let j = 0; j < len; j++) k += chars[Math.floor(Math.random() * 26)];
+      return k;
+    };
+    for (let round = 0; round < 20; round++) {
+      for (let i = 0; i < 50; i++) {
+        s.upsert(sighting({ key: randKey(), ordinal: round * 50 + i }));
+      }
+      expectRangeExact(s, "a");
+      expectRangeExact(s, "q");
+      expectRangeExact(s, "zz");
+      // A merge while the index may be dirty: must not corrupt anything.
+      s.upsert(sighting({ key: s.entries()[0]!.key, ordinal: 9999 }));
+      expectRangeExact(s, "b");
+    }
+  });
+
+  it("uppercase prefix is a caller bug — throws RangeError", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "alpha" }));
+    expect(() => s.prefixRange("Al")).toThrow(RangeError);
+    expect(() => s.prefixRange("ALPHA")).toThrow(RangeError);
+  });
+
+  it("sortedKeysSnapshot reflects the last rebuild and is defensively copied", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "beta" }));
+    s.upsert(sighting({ key: "alpha" }));
+    expect(s.prefixRange("a")).toEqual([0, 1]); // triggers the rebuild
+    expect(s.sortedKeysSnapshot()).toEqual([...s.entries().map((c) => c.key)].sort());
+    const snap = s.sortedKeysSnapshot();
+    snap.push("MUTATED");
+    snap[0] = "MUTATED";
+    expect(s.sortedKeysSnapshot()).toEqual(["alpha", "beta"]); // store unaffected
   });
 });
