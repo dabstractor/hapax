@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "M1 — Session vocabulary autocomplete (v1): fully usable tool",
-      "status": "Planned",
+      "status": "Ready",
       "description": "Implement the complete M1 scope of the hapax PRD: packed dictionary subsystem, pure core extraction/scoring/store pipeline, pi extension wiring (ingest, autocomplete provider, config, debug command), integration acceptance, performance gates, and changeset-level documentation. Greenfield build in /home/dustin/projects/hapax per the PRD module layout. Research complete — see plan/001_88fc3a66fd74/architecture/.",
       "milestones": [
         {
@@ -637,7 +637,7 @@
           "type": "Milestone",
           "id": "P1.M4",
           "title": "Integration acceptance, performance gates & changeset documentation",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Scripted acceptance of PRD §09 items 1-6, CI-scriptable micro-benchmarks against the hard budgets, and the final changeset-level documentation sweep.",
           "tasks": [
             {
@@ -687,14 +687,14 @@
               "type": "Task",
               "id": "P1.M4.T2",
               "title": "Sync changeset-level documentation (M1 final sweep)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Mode B catch-all: update README.md and any overview docs so the whole M1 changeset ships coherent — features, usage, configuration surface, architecture summary, security posture, DoD checklist.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M4.T2.S1",
                   "title": "README.md changeset sync: features, usage, architecture, security",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",
@@ -740,7 +740,7 @@
                   "type": "Subtask",
                   "id": "P1.M4.T2.S2",
                   "title": "M1 definition-of-done verification sweep",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M4.T2.S1",
@@ -779,14 +779,14 @@
               "type": "Task",
               "id": "P2.M1.T1",
               "title": "N-gram capture & phrase store (src/core/store.ts extension)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Record bigrams/trigrams of consecutive admitted whole tokens within a line, with PhraseEntry map and 10k cap eviction.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M1.T1.S1",
                   "title": "Within-line n-gram capture + PhraseEntry map + cap/eviction",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T2.S2",
