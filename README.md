@@ -107,3 +107,24 @@ Salience weights, admission bands (220/120), shape-gate rules, the eviction
 cap, debounce intervals, and popup timing are internal tuning constants —
 never user-configurable. If better values are learned, they ship as new
 constants, not new config fields.
+
+## Debug
+
+Set `"debug": true` in `~/.pi/agent/hapax.json` (or `.pi/hapax.json`) and
+hapax registers a `/acwords` command when the session starts. With the
+default `debug: false` the command does not exist. `/acwords` is a
+read-only tuning instrument (PRD §09): it dumps, via a popup
+notification, what the ingest pipeline actually admitted this session:
+
+- the candidate store size against the 20,000-entry cap and the current
+  message ordinal;
+- the rank-group histogram (rare / mid / common entry counts);
+- the top 50 candidates by salience — display form, occurrence count
+  (`×N`), and admission group;
+- ingest counters: words seen, admitted, and per-rule shape-gate
+  rejections (`tooShort`, `tooLong`, `lowEntropy`, `unigramRun`,
+  `secret`, `consonantRun`).
+
+The dump contains stored words and counters only — it never prints
+message bodies. M2 will extend the dump with phrase and successor-index
+sections.

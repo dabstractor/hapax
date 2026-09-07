@@ -562,14 +562,14 @@
               "type": "Task",
               "id": "P1.M3.T4",
               "title": "Debug command (/acwords)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Read-only inspection command registered only when config.debug is true.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T4.S1",
                   "title": "registerCommand('acwords') store/stats dump",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T2.S2",
