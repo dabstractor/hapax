@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Foundation: scaffold & dictionary subsystem",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Project scaffold (package.json with pi manifest, tsconfig, vitest), shared core types, packed-binary dictionary loader with FNV-1a lookup, offline build script, and the shipped dict artifact path.",
           "tasks": [
             {
@@ -104,7 +104,7 @@
               "type": "Task",
               "id": "P1.M1.T3",
               "title": "Dictionary build pipeline (tools/build-dict.mjs)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Stdlib-only offline build script: merge TSV frequency lists, filter, quantize, emit the packed binary, self-verify, and document corpus acquisition for the shipped artifact.",
               "subtasks": [
                 {
@@ -145,7 +145,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T3.S3",
                   "title": "Shipped dict artifact + corpus acquisition documentation",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T3.S2"
@@ -174,14 +174,14 @@
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Segmentation (src/core/segment.ts)",
-              "status": "Planned",
+              "status": "Researching",
               "description": "Turn raw text into whole-token and sub-word candidates with normalization, per PRD §04 segmentation.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "Base tokenization: identifiers, hexish tokens, CJK skip",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S2"
@@ -197,7 +197,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "camelCase/snake_case subword splitting + normalization",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1"
