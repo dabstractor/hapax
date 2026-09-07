@@ -5,16 +5,24 @@
  * (independent test writer) — see PRD §03. Do not share code; the
  * duplication cross-checks the format.
  *
- * Corpus-agnostic build pipeline (PRD §03 "Build pipeline", steps 1–6):
- * consumes `word<TAB>count` TSVs, merges/filters/sorts/quantizes them, and
- * emits a packed HAPX v1 binary loadable by `loadDictionary()`. Plain .mjs,
- * node stdlib only — no npm dependencies, no imports from repo TS code.
+ * Corpus-agnostic build pipeline (PRD §03 "Build pipeline", steps 1–7):
+ * consumes `word<TAB>count` TSVs, merges/filters/sorts/quantizes them, emits
+ * a packed HAPX v1 binary loadable by `loadDictionary()`, then re-opens the
+ * file from disk and verifies it with an embedded minimal reader — `verify()`
+ * below, a THIRD independent implementation of the lookup contract next to
+ * src/core/dictionary.ts (loader) and test/helpers/dict-writer.ts (test
+ * writer); the duplication cross-checks the format and must not be DRYed up.
+ * Plain .mjs, node stdlib only — no npm dependencies, no imports from repo
+ * TS code.
  *
  * Usage:
  *   node tools/build-dict.mjs --out dict/common-en.bin input1.tsv [input2.tsv ...]
  *
- * Exits 0 with a size summary on success; exits 1 with a `file:line` message
- * on malformed TSV input, and 1 with usage on bad arguments.
+ * Exits 0 with a per-section size summary plus `verified: N/N entries OK,
+ * no duplicate keys` on success; exits 1 with a `file:line` message on
+ * malformed TSV input, 1 with usage on bad arguments, and 1 with a
+ * `verify FAILED: <check>` message when the emitted file fails its own
+ * verification pass.
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -200,8 +208,27 @@ export function emit(outPath, entries) {
   // Hash the word's UTF-8 bytes (the same bytes stored in the blob).
   const mask = bucketCount - 1;
   for (let i = 0; i < entryCount; i++) {
-    let slot = fnv1a(wordBufs[i], 0) & mask;
+    const bytes = wordBufs[i];
+    let slot = fnv1a(bytes, 0) & mask;
     while (buf.readUInt32LE(bucketsOff + 4 * slot) !== 0) {
+      // Build-time duplicate-key guard (PRD §03 step 7): a collided slot
+      // that already holds THIS word (same length, same bytes) means the
+      // entry list contained the key twice — fail loudly instead of letting
+      // the second copy silently alias the first. Entry LENGTH is compared
+      // before blob bytes, same as the probe in verify()/loadDictionary().
+      const e = buf.readUInt32LE(bucketsOff + 4 * slot) - 1;
+      const start = buf.readUInt32LE(offsetsOff + 4 * e);
+      const end = buf.readUInt32LE(offsetsOff + 4 * (e + 1));
+      if (end - start === bytes.length) {
+        let eq = true;
+        for (let k = 0; k < bytes.length; k++) {
+          if (buf[24 + start + k] !== bytes[k]) {
+            eq = false;
+            break;
+          }
+        }
+        if (eq) throw new Error(`duplicate key "${sorted[i].word}"`);
+      }
       slot = (slot + 1) & mask;
     }
     buf.writeUInt32LE(i + 1, bucketsOff + 4 * slot);
@@ -212,10 +239,185 @@ export function emit(outPath, entries) {
   return { entryCount, blobLen, bucketCount, total };
 }
 
+/** Per-section size summary (PRD §03 step 7 output — machine-greppable
+ *  key=value pairs on one line), e.g. at full N:
+ *    dict/common-en.bin: entries=70000 blob=421530B offsets=280004B scores=70000B
+ *      buckets=131072*4=524288B header=24B total=1295846B (~1.3 MB)
+ */
+function printSizeSummary(outPath, { entryCount, blobLen, bucketCount, total }) {
+  console.log(
+    `${outPath}: entries=${entryCount} blob=${blobLen}B ` +
+      `offsets=${4 * (entryCount + 1)}B scores=${entryCount}B ` +
+      `buckets=${bucketCount}*4=${4 * bucketCount}B header=24B ` +
+      `total=${total}B (~${(total / 1e6).toFixed(1)} MB)`,
+  );
+}
+
+/** Verification failure (build step 7). The message names the failed check;
+ *  main() prints `verify FAILED: <message>` and exits 1 (distinguishable
+ *  from input errors, which are prefixed `error:`). */
+export class VerifyError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "VerifyError";
+  }
+}
+
 /**
- * Orchestrate parse → merge → filter/sort/quantize → emit, print the size
- * summary to stdout, and exit 0. Any TSV/IO error is printed to stderr with
- * exit 1 (arg errors exit earlier inside parseArgs with usage).
+ * PRD §03 build step 7: self-verification pass. Re-opens the file just
+ * written (readFileSync — the in-memory write buffer is NOT trusted; the
+ * point is to validate the bytes on disk) and validates it with an embedded
+ * minimal reader: a third independent implementation of the lookup contract
+ * (see the file header — loader, test writer, and this reader share no code
+ * on purpose; a writer/reader disagreement is exactly what this catches).
+ *
+ * Checks (each failure throws `VerifyError` naming the failed check):
+ * 1. header: magic "HAPX", version 1, flags bit 0, seed 0, bucketCount a
+ *    power of two and ≥ 1.3 × entryCount, and the exact file length
+ *    `24 + blobLen + 4*(entryCount+1) + entryCount + 4*bucketCount`;
+ * 2. every `(word, quant)` in `entries` (the in-memory post-pipeline list)
+ *    looks up to exactly `quant` via FNV-1a + linear probing, comparing the
+ *    entry LENGTH before blob bytes (a blob prefix must not false-positive);
+ * 3. no duplicate keys in the list: `new Set(words).size === words.length`
+ *    (emit()'s insertion guard is the build-time layer — together they
+ *    satisfy the PRD's "assert no duplicate keys");
+ * 4. header entryCount equals the list length (nothing silently dropped).
+ *
+ * The probe loop is bounded by bucketCount, so a corrupt (fully saturated)
+ * table degrades to misses, never an infinite loop. u32 sections are read
+ * with `readUInt32LE` — alignment-safe and simple in this one-shot context
+ * (deliberately NOT the loader's u32View alignment trick).
+ *
+ * Returns `{ entryCount, blobLen, bucketCount, bytes, lookup }` on success:
+ * per-section byte sizes for the summary, plus the embedded `lookup`,
+ * exposed so tests can spot-check misses (e.g. filtered keys) directly.
+ */
+export function verify(outPath, entries) {
+  const buf = readFileSync(outPath);
+  if (buf.length < 24) {
+    throw new VerifyError("truncated header (file < 24 bytes)");
+  }
+  if (buf.toString("latin1", 0, 4) !== "HAPX") {
+    throw new VerifyError("bad magic");
+  }
+  const version = buf.readUInt16LE(4);
+  if (version !== 1) {
+    throw new VerifyError(`unsupported version ${version} (expected 1)`);
+  }
+  const flags = buf.readUInt16LE(6);
+  if ((flags & 1) !== 1) {
+    throw new VerifyError(`flags ${flags} missing bit 0 (lowercase keys)`);
+  }
+  const entryCount = buf.readUInt32LE(8);
+  const blobLen = buf.readUInt32LE(12);
+  const bucketCount = buf.readUInt32LE(16);
+  const seed = buf.readUInt32LE(20);
+  if (seed !== 0) {
+    throw new VerifyError(`seed ${seed} != 0`);
+  }
+  // The probe masks with bucketCount - 1: that is only valid for powers of
+  // two (and 0 would loop forever), mirroring loadDictionary's validation.
+  if (bucketCount === 0 || (bucketCount & (bucketCount - 1)) !== 0) {
+    throw new VerifyError(`bucketCount ${bucketCount} is not a power of two`);
+  }
+  if (bucketCount < entryCount * 1.3) {
+    throw new VerifyError(
+      `bucketCount ${bucketCount} too small for ${entryCount} entries (need >= 1.3x)`,
+    );
+  }
+  const expectedLen =
+    24 + blobLen + 4 * (entryCount + 1) + entryCount + 4 * bucketCount;
+  if (buf.length !== expectedLen) {
+    throw new VerifyError(
+      `file length ${buf.length} != ${expectedLen} (truncated or corrupt header)`,
+    );
+  }
+
+  // Section layout — same arithmetic as emit() (format table in PRD §03).
+  const offsetsBase = 24 + blobLen;
+  const scoresBase = offsetsBase + 4 * (entryCount + 1);
+  const bucketsBase = scoresBase + entryCount;
+
+  /** Embedded lookup — same contract as loadDictionary().lookup: FNV-1a
+   *  (Math.imul, offset basis 0x811c9dc5, prime 0x01000193) over the word's
+   *  UTF-8 bytes, seed XOR-fold, mask by bucketCount - 1, linear probing
+   *  (value = entryIndex + 1, 0 = empty), entry LENGTH compared before blob
+   *  bytes. Returns the u8 score on hit, null on miss. Bounded by
+   *  bucketCount probes so a saturated table degrades to a miss, not a
+   *  hang. Blob byte k of entry e lives at file offset 24 + start + k (the
+   *  blob starts right after the 24-byte header). */
+  function lookup(word) {
+    const bytes = Buffer.from(word, "utf8");
+    if (bytes.length > 64) return null; // loader rejects these pre-hash too
+    let h = 0x811c9dc5;
+    for (let i = 0; i < bytes.length; i++) {
+      h = Math.imul(h ^ bytes[i], 0x01000193);
+    }
+    let idx = ((h ^ seed) >>> 0) & (bucketCount - 1);
+    for (let probe = 0; probe < bucketCount; probe++) {
+      const slot = buf.readUInt32LE(bucketsBase + idx * 4);
+      if (slot === 0) return null;
+      const e = slot - 1;
+      const start = buf.readUInt32LE(offsetsBase + e * 4);
+      const end = buf.readUInt32LE(offsetsBase + (e + 1) * 4);
+      if (end - start === bytes.length) {
+        let eq = true;
+        for (let i = 0; i < bytes.length; i++) {
+          if (buf[24 + start + i] !== bytes[i]) {
+            eq = false;
+            break;
+          }
+        }
+        if (eq) return buf[scoresBase + e];
+      }
+      idx = (idx + 1) & (bucketCount - 1);
+    }
+    return null; // corrupt/saturated table — miss, never hang
+  }
+
+  if (new Set(entries.map((x) => x.word)).size !== entries.length) {
+    throw new VerifyError("duplicate keys in entry list");
+  }
+  for (const { word, quant } of entries) {
+    const got = lookup(word);
+    if (got !== quant) {
+      throw new VerifyError(
+        `word "${word}": expected quant ${quant}, got ${got}`,
+      );
+    }
+  }
+  if (entryCount !== entries.length) {
+    throw new VerifyError(`entryCount ${entryCount} != ${entries.length}`);
+  }
+
+  return {
+    entryCount,
+    blobLen,
+    bucketCount,
+    lookup, // exposed for tests; main() ignores it
+    bytes: {
+      header: 24,
+      blob: blobLen,
+      offsets: 4 * (entryCount + 1),
+      scores: entryCount,
+      buckets: 4 * bucketCount,
+      total: buf.length,
+    },
+  };
+}
+
+/**
+ * Orchestrate parse → merge → filter/sort/quantize → emit → verify (PRD §03
+ * steps 1–7): print the per-section size summary to stdout, then — after the
+ * verification pass — the `verified: N/N entries OK, no duplicate keys`
+ * line. Run order is emit → summary → verify: the summary comes from emit's
+ * own numbers, then verify() re-reads the file from disk before the verified
+ * line is printed, so a failing check still reaches the operator (stderr)
+ * with the section sizes already on stdout for diagnosis.
+ *
+ * Any TSV/IO/verify error is printed to stderr with exit 1 (arg errors exit
+ * earlier inside parseArgs with usage); verify failures are prefixed
+ * `verify FAILED:` to distinguish them from input errors (`error:`).
  */
 export function main(argv = process.argv.slice(2)) {
   const { out, inputs } = parseArgs(argv);
@@ -223,14 +425,18 @@ export function main(argv = process.argv.slice(2)) {
     const map = new Map();
     for (const path of inputs) mergeTsv(path, map);
     const entries = selectEntries(map);
-    const { entryCount, blobLen, bucketCount, total } = emit(out, entries);
+    const emitted = emit(out, entries);
+    printSizeSummary(out, emitted);
+    const stats = verify(out, entries);
     console.log(
-      `wrote ${out}\n` +
-        `entries: ${entryCount}, blob: ${blobLen} B, buckets: ${bucketCount}, ` +
-        `total: ${total} B (~1.3 MB expected at full N=${DICT_N})`,
+      `verified: ${stats.entryCount}/${stats.entryCount} entries OK, no duplicate keys`,
     );
   } catch (err) {
-    console.error(`error: ${err.message}`);
+    if (err instanceof VerifyError) {
+      console.error(`verify FAILED: ${err.message}`);
+    } else {
+      console.error(`error: ${err.message}`);
+    }
     process.exit(1);
   }
 }

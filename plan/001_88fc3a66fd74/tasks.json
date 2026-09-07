@@ -128,7 +128,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T3.S2",
                   "title": "Self-verification pass + size summary",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T3.S1"
