@@ -2,9 +2,13 @@
  * PRD §05 message ingestion filter (P1.M3.T2.S1): map a finalized pi
  * AgentMessage to the text hapax should ingest. Pure module — no pi runtime
  * usage, no timers, no listeners; message_end wiring belongs to the
- * IngestPipeline (P1.M3.T2.S2).
+ * IngestPipeline (P1.M3.T2.S2), which also owns chunked processing and
+ * stats; session restore replay (P1.M3.T2.S3) sits on top of both.
  */
-import type { MessageEndEvent } from "@earendil-works/pi-coding-agent";
+import type {
+  MessageEndEvent,
+  SessionEntry,
+} from "@earendil-works/pi-coding-agent";
 
 import { expandCandidates, tokenize } from "../core/segment.js";
 import { passesShape } from "../core/shapeGate.js";
@@ -279,4 +283,82 @@ export class IngestPipeline {
       rejectedByGate: { ...this.#stats.rejectedByGate },
     };
   }
+}
+
+/**
+ * Read-only slice of pi's session manager needed for restore replay
+ * (P1.M3.T2.S3). Structural on purpose: ReadonlySessionManager is not
+ * re-exported at the package root, and tests substitute plain fakes.
+ * Ordering contract (pi docs, session-format.md): getBranch() walks
+ * leaf → root (newest → oldest); getEntries() is append-only
+ * oldest → newest, including abandoned branches.
+ */
+export interface RestoreSessionManager {
+  getBranch(): SessionEntry[];
+  getEntries(): SessionEntry[];
+}
+
+/** getEntries behind a guard — an unavailable history falls back to
+ *  empty so restore degrades to a clean no-op, never a throw. */
+function safeEntries(sessionManager: RestoreSessionManager): SessionEntry[] {
+  try {
+    return sessionManager.getEntries();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Session restore (PRD §05 h2.31/h2.33): replay stored history oldest →
+ * newest through the SAME pipeline as live messages — one store ordinal
+ * per message, identical gates, counters, and store eviction (never
+ * special-cased here; a huge history evicts early words exactly as live
+ * traffic would).
+ *
+ * Source selection: primary getBranch() — leaf → root, so it is REVERSED
+ * (from a copy; pi's array is never mutated in place) into oldest-first
+ * faithful-to-context order. Empty or throwing branch falls back to
+ * getEntries(), already oldest → newest and kept as-is. Only
+ * `type === "message"` entries replay; the session header, compaction,
+ * model_change, branch_summary, and custom entries are skipped, as are
+ * messages whose extractText is null (toolResult, no text parts).
+ *
+ * Fire-and-forget: returns void synchronously (session start never
+ * blocks); replay errors are caught per entry and swallowed so one bad
+ * entry cannot abort the rest or escape as an unhandled rejection.
+ * Reason-independent: every session_start reason can carry history, so
+ * replay happens whenever history exists; empty history is a no-op.
+ */
+export function restoreFromHistory(
+  pipeline: Pick<IngestPipeline, "processText">,
+  sessionManager: RestoreSessionManager,
+): void {
+  // Collect the ordered entry list synchronously — metadata only. Text
+  // is never extracted or held here (h2.34: touch bodies one message at
+  // a time, inside the replay loop).
+  let ordered: readonly SessionEntry[];
+  try {
+    const branch = sessionManager.getBranch();
+    ordered =
+      branch.length > 0
+        ? [...branch].reverse() // copy BEFORE reverse — never mutate pi's array
+        : safeEntries(sessionManager);
+  } catch {
+    ordered = safeEntries(sessionManager);
+  }
+
+  void (async () => {
+    for (const entry of ordered) {
+      if (entry.type !== "message") continue;
+      try {
+        const text = extractText(entry.message);
+        if (text === null) continue; // toolResult, no text parts → no-op
+        await pipeline.processText(text, entry.message.role === "user");
+      } catch {
+        // Best-effort background work: one bad entry must never break
+        // session start or abort the rest of the replay.
+        continue;
+      }
+    }
+  })();
 }
