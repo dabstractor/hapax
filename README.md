@@ -199,6 +199,7 @@ overrides the resolved path.)
 ```bash
 npm run check   # tsc --noEmit (strict)
 npm test        # vitest --run
+npm run bench   # PRD §09 perf-gate micro-benchmarks (synthetic fixtures; >3× budget regressions fail via the test/perf-gates.test.ts suite in `npm test`)
 ```
 
 `pi --check` does not exist — these two gates are the definition of green.
