@@ -420,7 +420,7 @@
               "type": "Task",
               "id": "P1.M3.T2",
               "title": "Ingestion wiring (src/pi/ingest.ts)",
-              "status": "Researching",
+              "status": "Ready",
               "description": "message_end handling: text extraction per the event contract, 300ms debounce queue, chunk-yielded processing through the core pipeline, and background session-history restore replay.",
               "subtasks": [
                 {
@@ -443,7 +443,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T2.S2",
                   "title": "IngestPipeline: 300ms debounce queue + chunked core pipeline + stats",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T2.S1",
@@ -465,7 +465,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T2.S3",
                   "title": "Session restore: history replay via sessionManager",
-                  "status": "Researching",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T2.S2"
