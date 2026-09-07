@@ -483,7 +483,7 @@
               "type": "Task",
               "id": "P1.M3.T3",
               "title": "Autocomplete provider (src/pi/provider.ts)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "The provider wrapping pi's built-in completion: trigger/threshold extraction, synchronous live query, 100ms display debounce, flicker hysteresis, and strict never-hijack delegation.",
               "subtasks": [
                 {
@@ -542,7 +542,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T3.S4",
                   "title": "Never-hijack acceptance tests (delegation, zero-candidate, pass-through)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T3.S3"
@@ -562,14 +562,14 @@
               "type": "Task",
               "id": "P1.M3.T4",
               "title": "Debug command (/acwords)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Read-only inspection command registered only when config.debug is true.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T4.S1",
                   "title": "registerCommand('acwords') store/stats dump",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T2.S2",
@@ -594,7 +594,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T5.S1",
                   "title": "Factory: session_start/message_end/session_shutdown wiring, lazy dict, disable-on-bad-dict",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T2.S3",
