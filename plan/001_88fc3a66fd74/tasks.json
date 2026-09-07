@@ -174,7 +174,7 @@
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Segmentation (src/core/segment.ts)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Turn raw text into whole-token and sub-word candidates with normalization, per PRD §04 segmentation.",
               "subtasks": [
                 {
@@ -197,7 +197,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "camelCase/snake_case subword splitting + normalization",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1"
@@ -216,14 +216,14 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "Shape gate (src/core/shapeGate.ts)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Load-bearing filter for dictionary-absent words: entropy, repetition, secret-shape, and noise rejection, always-on, with machine-readable reject reasons.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "Length, entropy, unigram-run, consonant-run rules",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S2"
@@ -238,7 +238,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S2",
                   "title": "Secret-shape rejection rules (always-on, not configurable)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T2.S1"

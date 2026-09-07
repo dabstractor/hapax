@@ -46,6 +46,14 @@
  * RawToken[]; hexish tokens are opaque to it) and by ingest (P1.M3.T2) per
  * ≤64KB message slice. No normalization/lowercasing here (S2); no shape-gate
  * rules (≥4 chars, entropy, secrets) here (P1.M2.T2).
+ *
+ * Stage 2 — expandCandidates() (S2, same module): takes each RawToken and
+ * emits the whole token plus its camelCase/snake_case sub-words (length ≥ 4)
+ * as CandidateDrafts, normalized per PRD §04 h3.4/h3.5 (lowercase key,
+ * as-seen display casing, per-candidate properName hint). Hexish tokens are
+ * opaque — returned as a single whole-token draft, never split. Consumers:
+ * shapeGate (P1.M2.T2 passesShape) and score admission (P1.M2.T3.S1), which
+ * read isSubword/parentKey.
  */
 
 import type { RawToken } from "./types.js";
@@ -145,4 +153,102 @@ export function tokenize(text: string): RawToken[] {
     out.push({ raw: t.raw, hexish: t.hexish });
   }
   return out;
+}
+
+/** One candidate occurrence produced by segment.ts. Input shape for the
+ *  shape gate (P1.M2.T2 passesShape) and score admission (P1.M2.T3.S1).
+ *  Segment-stage only — Candidate/Sighting (store-level) live in types.ts.
+ *  PRD §04 h3.4/h3.5. */
+export interface CandidateDraft {
+  /** lowercase — lookup/store key */
+  key: string;
+  /** casing of this sighting (recency-merge is the store's job) */
+  display: string;
+  /** first char of display is uppercase at extraction */
+  properName: boolean;
+  isSubword: boolean;
+  /** lowercase key of the parent whole token; set iff isSubword */
+  parentKey?: string;
+}
+
+/** A–Z test (ASCII only — tokenize() never emits non-ASCII into tokens). */
+function isUpperAscii(c: string): boolean {
+  return c >= "A" && c <= "Z";
+}
+
+/**
+ * Split one `_`-free segment at camelCase boundaries (PRD §04 h3.4): before
+ * an uppercase char whose previous char is lowercase or a digit (lower→up:
+ * "fixR" → "fix|R"), or whose previous char is uppercase and next char is
+ * lowercase (acronym-lowercase: "HTTPServer" → "HTTP|Server"). Digits
+ * themselves never create boundaries ("utf8Reader" splits only before R).
+ * The lookahead means an acronym run with no trailing lowercase ("HTTPS")
+ * stays whole. The boundary regex has no /g flag — no shared lastIndex.
+ */
+function splitCamel(seg: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  for (let i = 1; i < seg.length; i++) {
+    const c = seg[i];
+    if (isUpperAscii(c)) {
+      const prev = seg[i - 1];
+      const next = i + 1 < seg.length ? seg[i + 1] : "";
+      if (
+        /[a-z0-9]/.test(prev) ||
+        (isUpperAscii(prev) && next >= "a" && next <= "z")
+      ) {
+        parts.push(seg.slice(start, i));
+        start = i;
+      }
+    }
+  }
+  parts.push(seg.slice(start));
+  return parts;
+}
+
+/**
+ * Expand one raw token into candidate drafts (PRD §04 h3.4/h3.5): the whole
+ * token first, then every camelCase/snake_case sub-word of length ≥ 4.
+ * Shorter sub-words are dropped as standalone candidates; the whole token
+ * survives regardless of length (shape-gate length rules are P1.M2.T2's).
+ *
+ * Splitting: on `_` segments (empties dropped; underscores are KEPT in the
+ * whole token — users Tab the identifier as typed) and camelCase boundaries
+ * within each segment. Hexish tokens are opaque: exactly the whole-token
+ * draft, never split.
+ *
+ * Normalization: `key` is lowercase; `display` is this sighting's casing
+ * (recency merge is the store's job, P1.M2.T4.S1); `properName` comes from
+ * the candidate's own display initial; `parentKey` is set iff `isSubword`.
+ *
+ * Pure: no state, no runtime imports (RawToken is a type-only import).
+ */
+export function expandCandidates(token: RawToken): CandidateDraft[] {
+  const whole: CandidateDraft = {
+    key: token.raw.toLowerCase(),
+    display: token.raw,
+    properName: isUpperAscii(token.raw.charAt(0)),
+    isSubword: false,
+  };
+  if (token.hexish) return [whole];
+
+  const parentKey = whole.key;
+  const subs: CandidateDraft[] = [];
+  for (const seg of token.raw.split("_")) {
+    if (seg.length === 0) continue;
+    for (const sub of splitCamel(seg)) {
+      // A part equal to the whole token (single segment, no boundary — e.g.
+      // "HTTPS") IS the whole token, never a sub-word of itself.
+      if (sub === token.raw) continue;
+      if (sub.length < 4) continue;
+      subs.push({
+        key: sub.toLowerCase(),
+        display: sub,
+        properName: isUpperAscii(sub.charAt(0)),
+        isSubword: true,
+        parentKey,
+      });
+    }
+  }
+  return [whole, ...subs];
 }
