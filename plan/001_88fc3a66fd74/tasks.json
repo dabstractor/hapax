@@ -386,7 +386,7 @@
           "type": "Milestone",
           "id": "P1.M3",
           "title": "pi adapter (extension wiring: config, ingest, provider, lifecycle)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "src/pi/ layer: config load/merge, message_end ingestion with debounce/chunking/restore, the autocomplete provider with debounce+hysteresis and strict delegation, /acwords debug command, and the extension factory + manifest verification against the validated pi 0.84.4 API.",
           "tasks": [
             {
@@ -587,7 +587,7 @@
               "type": "Task",
               "id": "P1.M3.T5",
               "title": "Extension entry & lifecycle (src/pi/index.ts) + manifest verification",
-              "status": "Ready",
+              "status": "Complete",
               "description": "The extension factory wiring every lifecycle event per PRD §02, plus real-load verification under jiti with the pi manifest.",
               "subtasks": [
                 {
@@ -616,7 +616,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T5.S2",
                   "title": "jiti-safe dict path + manifest + local dev-load verification",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T5.S1",

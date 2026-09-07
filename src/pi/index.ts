@@ -36,8 +36,6 @@
  * (never-hijack, PRD §07): zero candidates, zero interference, no crash.
  */
 
-import { fileURLToPath } from "node:url";
-
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { loadDictionary } from "../core/dictionary.js";
@@ -46,24 +44,16 @@ import type { Dictionary } from "../core/types.js";
 import { loadConfig } from "./config.js";
 import { registerAcwordsCommand } from "./debug.js";
 import { IngestPipeline, restoreFromHistory } from "./ingest.js";
+import { resolveDictPath } from "./paths.js";
 import { createDisplayProvider, createHapaxProvider } from "./provider.js";
 
 /**
- * PROVISIONAL dictionary path resolution — jiti-safe resolution lands in
- * P1.M3.T5.S2; this is the single seam that task replaces. Kept isolated
- * and synchronous so the swap touches nothing else.
- *
- * Order: the HAPAX_DICT environment override (also the test seam), then
- * the shipped packed dictionary resolved against this module's URL
- * (src/pi/index.ts → ../../dict/common-en.bin = the package root's dict
- * directory). No fs access here — the path is only RESOLVED; the file is
- * read lazily on the first lookup (createLazyDictionary).
+ * Dictionary path resolution lives in ./paths.js (P1.M3.T5.S2): the seam
+ * S1 left PROVISIONAL was extracted there so the jiti-safe dual
+ * __dirname / import.meta.url pattern is testable in isolation.
+ * Re-exported under the same name so the S1 import contract is stable.
  */
-export function resolveDictPath(): string {
-  const override = process.env.HAPAX_DICT;
-  if (override !== undefined && override !== "") return override;
-  return fileURLToPath(new URL("../../dict/common-en.bin", import.meta.url));
-}
+export { resolveDictPath };
 
 /**
  * Dictionary that defers loadDictionary(path) to the FIRST lookup

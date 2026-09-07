@@ -128,3 +128,77 @@ notification, what the ingest pipeline actually admitted this session:
 The dump contains stored words and counters only — it never prints
 message bodies. M2 will extend the dump with phrase and successor-index
 sections.
+
+## Development
+
+### Dev loop (no build step)
+
+pi loads hapax's TypeScript source directly through jiti — there is no
+build step and no install copy to keep in sync. Point pi at the repo:
+
+```bash
+pi -e /home/dustin/projects/hapax
+```
+
+The `pi` manifest in `package.json`
+(`"pi": { "extensions": ["./src/pi/index.ts"] }`) resolves the entry file.
+Edit `src/**`, quit and relaunch pi (extensions load at startup), and the
+new source is live.
+
+Verified 2026-09-07 (P1.M3.T5.S2): `pi -e` starts with zero extension-load
+errors; sending a message containing a distinctive word (`quokkatestword`)
+and then typing `#quok` in the input box shows the hapax suggestion popup.
+
+### jiti and the dictionary path
+
+pi transpiles the extension with jiti 2.7.0 (TypeScript → CommonJS at load
+time), where `import.meta` does not exist; native ESM hosts (vitest, a
+future native-ESM pi) are the mirror case with no `__dirname`. The packed
+dictionary is therefore resolved in `src/pi/paths.ts` (`resolveDictPath()`)
+with the dual pattern:
+
+```ts
+const here = typeof __dirname !== "undefined"
+  ? __dirname
+  : path.dirname(fileURLToPath(import.meta.url));
+```
+
+Never "simplify" this to `import.meta.url` only — it breaks under jiti.
+`test/paths.test.ts` covers the native-ESM branch; the jiti branch is
+exercised by every real `pi -e` load.
+
+### Loading without the flag: global symlink vs project-local
+
+To auto-load hapax with plain `pi` (no flags), symlink the repo into the
+global extensions directory:
+
+```bash
+ln -s /home/dustin/projects/hapax ~/.pi/agent/extensions/hapax
+```
+
+A project-local copy/symlink (`.pi/extensions/hapax` inside a project)
+also works, but project-local extension directories are trust-gated: pi
+prompts on first load, and untrusted projects never load local extensions.
+The `-e` flag and the global symlink bypass the prompt. Remove the symlink
+if you don't want hapax in every session.
+
+### Missing dictionary → graceful disable
+
+If `dict/common-en.bin` is missing or corrupt, hapax degrades instead of
+crashing: the first dictionary lookup fails, pi shows exactly one
+`hapax: dictionary failed to load` error notify, and ingestion is disabled
+permanently for that extension runtime — every later event degrades to a
+no-op (no repeated toasts), while the empty provider stays registered so
+pi's built-in completion is delegated, never hijacked. pi itself remains
+fully functional. Restore the file and restart pi to re-enable hapax.
+(For testing, the `HAPAX_DICT=/path/to/file.bin` environment variable
+overrides the resolved path.)
+
+### Checks
+
+```bash
+npm run check   # tsc --noEmit (strict)
+npm test        # vitest --run
+```
+
+`pi --check` does not exist — these two gates are the definition of green.
