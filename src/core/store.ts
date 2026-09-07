@@ -52,7 +52,14 @@
  * never touch #map, #sortedKeys, or #dirty (the word prefix index never
  * rebuilds for phrase activity), and word eviction never touches
  * #phrases. sticky starts false and is only ever set through
- * setPhraseSticky — admission is P2.M1.T2.S1's job, not the recorder's.
+ * setPhraseSticky. ADMISSION (P2.M1.T2.S1, PRD §06 h3.7) runs at each
+ * phrase upsert's tail: a phrase becomes a completion CANDIDATE when its
+ * count reaches 2 (repetition path) or — first sight only — every
+ * constituent word is rankGroup 0 or properName and the n-gram is ≤ 5
+ * words (fast path); both paths firing makes it sticky. Candidacy lives
+ * in #phraseCandidates, orthogonal to counts; demotion
+ * (removePhraseCandidacy, called by T2.S2's sweep) drops candidacy while
+ * counts, ordinals, and sticky stay.
  */
 
 import { evictionScore } from "./score.js";
@@ -100,6 +107,16 @@ export class CandidateStore {
   // Phrase layer (PRD §06 M2) — deliberately NOT under #dirty: nothing
   // about #phrases ever invalidates the WORD prefix index.
   #phrases = new Map<string, PhraseEntry>();
+  // Phrase admission (P2.M1.T2.S1, PRD §06 h3.7) — candidacy is
+  // orthogonal to counts: a key is a completion candidate once the
+  // repetition path (count ≥ 2) or the first-sight fast path (every
+  // constituent rankGroup 0 / properName, ≤ 5 words) has admitted it.
+  #phraseCandidates = new Set<string>();
+  // Provenance of fast-path admission — the "both paths" half of the
+  // sticky rule and the filter T2.S2's demotion sweep iterates. Also
+  // pins the fast path to FIRST SIGHT: once recorded, a later count-1
+  // upsert (e.g. post-eviction re-record) never re-evaluates.
+  #fastPathAdmitted = new Set<string>();
 
   /** Issue the next message ordinal: 1, 2, 3… strictly monotonic, never
    *  reset. The ingest pipeline calls this once per message. */
@@ -322,18 +339,74 @@ export class CandidateStore {
   #upsertPhrase(key: string, ordinal: number): void {
     const existing = this.#phrases.get(key);
     if (!existing) {
-      this.#phrases.set(key, {
+      const entry: PhraseEntry = {
         key,
         count: 1,
         lastSeenOrdinal: ordinal,
         firstSeenOrdinal: ordinal,
         sticky: false, // only admission (P2.M1.T2.S1) ever sets this
-      });
+      };
+      this.#phrases.set(key, entry);
+      this.#admitPhrase(key, entry); // admission tail (PRD §06 h3.7)
       return;
     }
     existing.count++;
     existing.lastSeenOrdinal = ordinal;
-    // firstSeenOrdinal stays frozen at creation; sticky is untouched.
+    // firstSeenOrdinal stays frozen at creation; sticky is untouched —
+    // except through admission, immediately below.
+    this.#admitPhrase(key, existing);
+  }
+
+  /** Hybrid phrase admission (P2.M1.T2.S1, PRD §06 h3.7), run at the tail
+   *  of EVERY phrase upsert — never as a scan over the map (§05 h2.34;
+   *  the ingest path stays O(1)-ish per upserted phrase). Decision table
+   *  (count = the entry's post-upsert count):
+   *
+   *    count ≥ 2, fast-path provenance present → candidate + sticky
+   *    count ≥ 2, no provenance                → candidate (repetition)
+   *    count = 1, all-rare key, ≤ 5 words      → candidate + provenance
+   *    count = 1, otherwise                    → nothing
+   *
+   *  The fast path is FIRST-SIGHT ONLY: eligibility is evaluated exactly
+   *  once (count first hitting 1 with provenance absent). A phrase that
+   *  failed it and later recurs is admitted by the repetition path alone
+   *  — never retro-re-evaluated, because constituents' rankGroups drift
+   *  via min-merge and the PRD pins the rule to first sight. sticky is
+   *  set through setPhraseSticky — once true it is never unset (mirrors
+   *  userTyped OR-in semantics). Cost: O(1) set work plus, on the fast
+   *  path only, ≤ 5 word-store lookups (see #firstSightFastPathEligible). */
+  #admitPhrase(key: string, entry: PhraseEntry): void {
+    if (entry.count >= 2) {
+      // Repetition path — admits regardless of constituent rarity. When
+      // the fast path had admitted this key earlier, BOTH paths have now
+      // fired → sticky (resists eviction via the victim-pool filter).
+      if (this.#fastPathAdmitted.has(key)) this.setPhraseSticky(key);
+      this.#phraseCandidates.add(key);
+    } else if (
+      !this.#fastPathAdmitted.has(key) && this.#firstSightFastPathEligible(key)
+    ) {
+      // Fast path — first sight of an all-rare key admits immediately.
+      this.#phraseCandidates.add(key);
+      this.#fastPathAdmitted.add(key); // provenance for T2.S2's sweep
+    }
+  }
+
+  /** Fast-path eligibility (PRD §06 h3.7): EVERY constituent word of the
+   *  key must currently be a word-store Candidate with rankGroup 0
+   *  (dictionary-absent, shape-gated) or properName true, and the key
+   *  must be ≤ 5 words. A constituent ABSENT from the word store (never
+   *  admitted, or since evicted) FAILS the path — candidacy must be
+   *  provable, never assumed. Keys arrive lowercase single-space-joined,
+   *  so split(" ") is exact. O(words-in-key) ≤ 5 lookups, no scans. */
+  #firstSightFastPathEligible(key: string): boolean {
+    const words = key.split(" ");
+    // Length bound is defense-in-depth: capture produces ≤ 3-word keys
+    // today (bigrams + trigrams), but admission must stay correct for n.
+    if (words.length > 5) return false;
+    return words.every((w) => {
+      const c = this.get(w);
+      return c !== undefined && (c.rankGroup === 0 || c.properName);
+    });
   }
 
   /** Phrase-map overflow eviction — the word store's evictIfOverCap
@@ -377,6 +450,43 @@ export class CandidateStore {
   setPhraseSticky(key: string): void {
     const entry = this.#phrases.get(key);
     if (entry) entry.sticky = true;
+  }
+
+  // ── Phrase admission (P2.M1.T2.S1, PRD §06 h3.7) ─────────────────────
+
+  /** Is `key` currently a completion candidate (PRD §06 h3.7)? Candidacy
+   *  is orthogonal to counts: removePhraseCandidacy can drop it while
+   *  getPhrase(key).count stays. P2.M1.T3.S1 (query integration) reads
+   *  this. */
+  isPhraseCandidate(key: string): boolean {
+    return this.#phraseCandidates.has(key);
+  }
+
+  /** Defensive snapshot of the candidate phrase keys, in admission order.
+   *  Mutating the returned array never touches the store. Consumed by
+   *  P2.M1.T3.S1 and the /acwords M2 dump. */
+  phraseCandidateKeys(): string[] {
+    return [...this.#phraseCandidates];
+  }
+
+  /** Did the fast path admit this phrase (PRD §06 h3.7)? Provenance for
+   *  T2.S2's demotion sweep — fast-path admits are the ones it re-
+   *  examines — also surfaced for /acwords. False for repetition-only
+   *  phrases and after removePhraseCandidacy (provenance is cleared and
+   *  never re-derived: the fast path is first sight only). */
+  isFastPathPhrase(key: string): boolean {
+    return this.#fastPathAdmitted.has(key);
+  }
+
+  /** Demotion primitive (PRD §06 h3.7): drop candidacy and fast-path
+   *  provenance ONLY. #phrases counts, ordinals, and sticky are untouched
+   *  — once sticky, always sticky (same never-unset semantics as
+   *  userTyped). Called by T2.S2's 40-ordinal demotion sweep; a later
+   *  recurrence re-admits through the repetition path's live count ≥ 2
+   *  check. Unknown key → no-op (never creates anything). */
+  removePhraseCandidacy(key: string): void {
+    this.#phraseCandidates.delete(key);
+    this.#fastPathAdmitted.delete(key);
   }
 
   /** Exact phrase-key lookup ("word word" joined lowercase). Returns the

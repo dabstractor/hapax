@@ -9,6 +9,10 @@
  * deterministic byte-lex tie-breaking, the reader accessors downstream
  * tasks consume (getPhrase / phraseSize / phraseEntries / iteratePhrases),
  * and independence from the word store (map, entries, prefix index).
+ * Finally the admission suite (P2.M1.T2.S1, PRD §06 h3.7): the hybrid
+ * repetition / first-sight-all-rare candidate rule, sticky on both
+ * paths, demotion (removePhraseCandidacy) that keeps counts, and the
+ * readers downstream tasks consume.
  *
  * Lines are fabricated inline per the ingest contract — the store takes
  * the pipeline's per-line admitted whole-token keys on faith; key strings
@@ -355,6 +359,169 @@ describe("phrase layer (PRD §06 M2) — cap eviction", () => {
     expect(s.size).toBe(3);
     expect(s.entries()).toEqual(wordsBefore);
     expect(s.prefixRange("al")).toEqual([0, 1]);
+    expect(s.sortedKeysSnapshot()).toEqual(sortedBefore);
+  });
+});
+
+// ── Phrase admission (P2.M1.T2.S1, PRD §06 h3.7) ─────────────────────────
+
+describe("phrase admission (PRD §06 h3.7)", () => {
+  /** Upsert a constituent word so the fast path can see it (rankGroup
+   *  0 = dictionary-absent, 1 = rare-but-attested, 2 = mid-frequency;
+   *  properName overrides exercise the name arm at any group). */
+  const seed = (s: CandidateStore, key: string, over: Partial<Sighting> = {}): void => {
+    s.upsert(sighting({ key, display: key, rankGroup: 0, ...over }));
+  };
+
+  it("repetition path: count ≥ 2 admits rank-1 constituents; not sticky, not fast-path", () => {
+    const s = new CandidateStore();
+    seed(s, "alpha", { rankGroup: 1 });
+    seed(s, "beta", { rankGroup: 1 });
+    s.recordPhraseLines([["alpha", "beta"]], 1);
+    // Count 1 with rank-1 constituents: repetition hasn't fired, fast
+    // path is blocked → nothing.
+    expect(s.isPhraseCandidate("alpha beta")).toBe(false);
+    s.recordPhraseLines([["alpha", "beta"]], 2);
+    expect(s.isPhraseCandidate("alpha beta")).toBe(true);
+    expect(s.getPhrase("alpha beta")!.count).toBe(2);
+    expect(s.getPhrase("alpha beta")!.sticky).toBe(false); // one path only
+    expect(s.isFastPathPhrase("alpha beta")).toBe(false);
+  });
+
+  it("fast path: first sight of an all-rare n-gram admits immediately (count 1, not sticky)", () => {
+    const s = new CandidateStore();
+    for (const w of ["nova", "quark", "sol", "wind", "geo"]) seed(s, w);
+    s.recordPhraseLines([["nova", "quark"]], 1);
+    expect(s.isPhraseCandidate("nova quark")).toBe(true); // admitted at sight 1
+    expect(s.getPhrase("nova quark")!.count).toBe(1);
+    expect(s.isFastPathPhrase("nova quark")).toBe(true);
+    expect(s.getPhrase("nova quark")!.sticky).toBe(false); // repetition hasn't fired
+    // Trigram keys get the same treatment. The ≤ 5-word guard is
+    // defense-in-depth: capture produces ≤ 3-word keys today, so the
+    // bound is trivially satisfied and reviewed in store.ts, not
+    // synthesizable through the public API (no internal exports).
+    s.recordPhraseLines([["sol", "wind", "geo"]], 1);
+    expect(s.isPhraseCandidate("sol wind")).toBe(true);
+    expect(s.isPhraseCandidate("wind geo")).toBe(true);
+    expect(s.isPhraseCandidate("sol wind geo")).toBe(true);
+  });
+
+  it("a properName constituent counts as rare on the fast path (even at rankGroup 2)", () => {
+    const s = new CandidateStore();
+    seed(s, "darwin", { rankGroup: 2, properName: true });
+    seed(s, "finch"); // rank 0
+    s.recordPhraseLines([["darwin", "finch"]], 1);
+    expect(s.isPhraseCandidate("darwin finch")).toBe(true);
+    expect(s.isFastPathPhrase("darwin finch")).toBe(true);
+    expect(s.getPhrase("darwin finch")!.sticky).toBe(false);
+  });
+
+  it("mixed constituents block the fast path; repetition admits on the second sighting", () => {
+    const s = new CandidateStore();
+    seed(s, "arcane"); // rank 0
+    seed(s, "plain", { rankGroup: 1 });
+    s.recordPhraseLines([["arcane", "plain"]], 1);
+    expect(s.isPhraseCandidate("arcane plain")).toBe(false);
+    expect(s.isFastPathPhrase("arcane plain")).toBe(false);
+    s.recordPhraseLines([["arcane", "plain"]], 2); // count 2 → repetition
+    expect(s.isPhraseCandidate("arcane plain")).toBe(true);
+    expect(s.getPhrase("arcane plain")!.sticky).toBe(false);
+    expect(s.isFastPathPhrase("arcane plain")).toBe(false); // never re-evaluated
+  });
+
+  it("an absent constituent word fails the fast path (cannot prove all-rare)", () => {
+    const s = new CandidateStore();
+    seed(s, "orphan"); // rank 0, present
+    // "ghost" is never upserted → get() returns undefined → path fails.
+    s.recordPhraseLines([["orphan", "ghost"]], 1);
+    expect(s.isPhraseCandidate("orphan ghost")).toBe(false);
+    expect(s.isFastPathPhrase("orphan ghost")).toBe(false);
+    s.recordPhraseLines([["orphan", "ghost"]], 2); // count 2 → repetition admits
+    expect(s.isPhraseCandidate("orphan ghost")).toBe(true);
+    expect(s.isFastPathPhrase("orphan ghost")).toBe(false);
+  });
+
+  it("sticky (both paths) survives an eviction pass that drops higher-score non-sticky phrases", () => {
+    const s = new CandidateStore();
+    seed(s, "nova");
+    seed(s, "quark");
+    s.nextOrdinal(); // ordinal 1
+    s.recordPhraseLines([["nova", "quark"]], 1); // fast path → candidate
+    s.recordPhraseLines([["nova", "quark"]], 1); // count 2 + provenance → sticky
+    expect(s.getPhrase("nova quark")!.sticky).toBe(true);
+    for (let i = 0; i < 39; i++) s.nextOrdinal(); // eviction "now" = 40
+    const base: string[][] = [];
+    for (let i = 0; i < 9_999; i++) base.push([`p${padded(i)}`, `q${padded(i)}`]);
+    s.recordPhraseLines(base, s.currentOrdinal()); // score 1.0 each; absent words → no admits
+    expect(s.phraseSize).toBe(10_000);
+    // Sticky score: 2 · e^(−39/50) ≈ 0.92 — strictly the LOWEST in the
+    // map, so its survival is protection, not score.
+    s.recordPhraseLines([["zzz", "final"]], s.currentOrdinal());
+    expect(s.phraseSize).toBe(PHRASE_CAP);
+    expect(s.getPhrase("nova quark")).toBeDefined();
+    expect(s.getPhrase("nova quark")!.sticky).toBe(true);
+    expect(s.getPhrase("p00000 q00000")).toBeUndefined(); // byte-first score-1 victim
+  });
+
+  it("removePhraseCandidacy drops candidacy + provenance, keeps counts and sticky; recurrence re-admits", () => {
+    const s = new CandidateStore();
+    seed(s, "lumen");
+    seed(s, "volta");
+    s.recordPhraseLines([["lumen", "volta"]], 1); // fast path
+    s.recordPhraseLines([["lumen", "volta"]], 2); // count 2 → sticky
+    s.removePhraseCandidacy("lumen volta");
+    expect(s.isPhraseCandidate("lumen volta")).toBe(false);
+    expect(s.isFastPathPhrase("lumen volta")).toBe(false);
+    expect(s.getPhrase("lumen volta")!.count).toBe(2); // counts kept
+    expect(s.getPhrase("lumen volta")!.sticky).toBe(true); // never unset
+    s.recordPhraseLines([["lumen", "volta"]], 3); // count 3 ≥ 2 → repetition re-admits
+    expect(s.isPhraseCandidate("lumen volta")).toBe(true);
+    expect(s.isFastPathPhrase("lumen volta")).toBe(false); // provenance stays cleared
+    expect(s.getPhrase("lumen volta")!.count).toBe(3);
+  });
+
+  it("demotion of a repetition-only phrase: re-admits via repetition, never fast path, never sticky", () => {
+    const s = new CandidateStore();
+    seed(s, "common", { rankGroup: 1 });
+    s.recordPhraseLines([["common", "arcane"]], 1); // mixed/absent → fast path blocked
+    s.recordPhraseLines([["common", "arcane"]], 2); // repetition admits
+    expect(s.isPhraseCandidate("common arcane")).toBe(true);
+    expect(s.getPhrase("common arcane")!.sticky).toBe(false);
+    s.removePhraseCandidacy("common arcane");
+    expect(s.isPhraseCandidate("common arcane")).toBe(false);
+    s.recordPhraseLines([["common", "arcane"]], 3);
+    expect(s.isPhraseCandidate("common arcane")).toBe(true);
+    expect(s.isFastPathPhrase("common arcane")).toBe(false);
+    expect(s.getPhrase("common arcane")!.sticky).toBe(false);
+  });
+
+  it("phraseCandidateKeys snapshots candidacy only; mutating the copy is inert", () => {
+    const s = new CandidateStore();
+    seed(s, "nova");
+    seed(s, "quark");
+    s.recordPhraseLines([["nova", "quark"]], 1); // fast path
+    s.recordPhraseLines([["plain", "text"]], 1); // absent constituents → no admit
+    expect(s.phraseCandidateKeys()).toEqual(["nova quark"]);
+    const copy = s.phraseCandidateKeys();
+    copy.push("GARBAGE");
+    copy[0] = "MUTATED";
+    expect(s.phraseCandidateKeys()).toEqual(["nova quark"]);
+    expect(s.isPhraseCandidate("GARBAGE")).toBe(false);
+  });
+
+  it("admission never touches the word store or its prefix index", () => {
+    const s = new CandidateStore();
+    const ord = s.nextOrdinal();
+    seed(s, "nova");
+    seed(s, "quark");
+    s.prefixRange("n"); // force an index rebuild
+    const entriesBefore = s.entries();
+    const sortedBefore = s.sortedKeysSnapshot();
+    s.recordPhraseLines([["nova", "quark"]], ord); // fast-path admit
+    s.recordPhraseLines([["nova", "quark"]], ord); // sticky
+    expect(s.size).toBe(2);
+    expect(s.entries()).toEqual(entriesBefore);
+    expect(s.prefixRange("nova")).toEqual([0, 1]);
     expect(s.sortedKeysSnapshot()).toEqual(sortedBefore);
   });
 });

@@ -813,7 +813,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S1",
                   "title": "Hybrid admission: count>=2 OR all-rare first sight; sticky",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M1.T1.S1"
