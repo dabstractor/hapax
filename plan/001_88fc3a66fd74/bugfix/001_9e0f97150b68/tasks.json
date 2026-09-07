@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Dictionary recalibration (BUG-001, Critical)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Replace the length-sorted provisional artifact with a real frequency-ranked dictionary and recalibrate the admission bands so ordinary English prose never triggers menus, restoring PRD §04/§07 admission semantics.",
           "tasks": [
             {
@@ -60,7 +60,7 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Admission-band recalibration + shipped-dict calibration gates",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Recalibrate the §04 admission bands in src/core/score.ts against the real-corpus rank distribution so the top ~1,000 English words reject, and add calibration tests that pin the artifact so this class of drift can never ship silently again.",
               "subtasks": [
                 {
@@ -84,7 +84,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "Shipped-dict calibration test + prose no-menu e2e gate",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1",

@@ -185,16 +185,29 @@ describe('acceptance item 1 — session jargon completes (zendesk-lwlock.jsonl)'
 
 describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () => {
   /**
-   * The 2-char probe fragments from expected.md: each IS a prefix of words
-   * occurring in the transcript, but every such source word is shorter than
-   * the shape gate's 4-char minimum, so the store holds no key under these
-   * prefixes → zero candidates → the provider MUST delegate. (With the
-   * real-corpus shipped dictionary the ≥100 reject band IS populated
-   * ('the', 'you', …), so common prose words are rejected at admission;
-   * the prose store is not EMPTY — mid/rare words still admit. The
+   * Two probe families — together they close the BUG-001 masking hole:
+   *
+   * SHORT_PROBES — the 2-char fragments from expected.md: each IS a
+   * prefix of words occurring in the transcript, but every such source
+   * word is shorter than the shape gate's 4-char minimum, so the store
+   * holds no key under these prefixes → zero candidates → the provider
+   * MUST delegate.
+   *
+   * COMMON_PROBES — ≥4-char top-common English words (all measured zero
+   * candidates; artifact quants that=215, with=179, this=197, them=156,
+   * have=190, would=156). These PASS the shape gate, so they exercise
+   * the dictionary admission band directly: pre-bugfix item 2 probed
+   * ONLY ≤3-char fragments, which the shape gate rejects by length
+   * regardless of calibration — exactly how BUG-001 (every common word
+   * admitted as rare) stayed invisible to this suite. The ≥4-char
+   * probes make that blind spot impossible again. (With the real-corpus
+   * shipped dictionary the REJECT band IS populated ('the', 'you', …),
+   * so common prose words are rejected at admission; the prose store is not EMPTY — mid/rare words still admit. The
    * no-hijack contract is what these probes pin down.)
    */
-  const PROBES = ["of","on","at","be","by","do","go","he","in","it","no","or","so","to","up","we","me","my","us","if","re","men"];
+  const SHORT_PROBES = ["of","on","at","be","by","do","go","he","in","it","no","or","so","to","up","we","me","my","us","if","re","men"];
+  const COMMON_PROBES = ["that", "with", "this", "them", "have", "would"];
+  const PROBES = [...SHORT_PROBES, ...COMMON_PROBES];
 
   it("ingests with the default config and stores only gate-passed words", async () => {
     const { store } = await ingestFixture(`${FIXTURES}/prose.jsonl`);
@@ -206,7 +219,10 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
 
   it("every 2-char prose probe → zero candidates → delegates with unchanged args", async () => {
     const { store } = await ingestFixture(`${FIXTURES}/prose.jsonl`);
-    for (const probe of PROBES) {
+    // SHORT_PROBES only: queried mid-word (col 2), where prefixes of
+    // ADMITTED words like "window" would legitimately open a menu for the
+    // longer common words — the full-word common-probe gate lives below.
+    for (const probe of SHORT_PROBES) {
       const current = mockCurrent(SENTINEL);
       const provider = createHapaxProvider(store, cfg(), current);
       const lines = [probe];
@@ -219,6 +235,28 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
       expect(args[0]).toBe(lines); // same array object — never cloned
       expect(args[1]).toBe(0);
       expect(args[2]).toBe(2);
+      expect(args[3]).toBe(options); // same options object
+    }
+  });
+
+  it("common ≥4-char probes → zero candidates → delegates (BUG-001 gate)", async () => {
+    // The full typed word at the cursor — the exact BUG-001 repro shape.
+    // These probes pass the shape gate (≥4 chars), so delegation here can
+    // only come from dictionary-band rejection, never the length rule.
+    const { store } = await ingestFixture(`${FIXTURES}/prose.jsonl`);
+    for (const probe of COMMON_PROBES) {
+      const current = mockCurrent(SENTINEL);
+      const provider = createHapaxProvider(store, cfg(), current);
+      const lines = [probe];
+      const options = opts();
+      const result = await provider.getSuggestions(lines, 0, probe.length, options);
+      expect(result, `probe "${probe}" must return the delegate's result`).toBe(SENTINEL);
+      expect(provider.__hapaxLive(), `probe "${probe}" must clear the live cache`).toBeNull();
+      expect(current.getSuggestions, `probe "${probe}" must delegate to current`).toHaveBeenCalledOnce();
+      const args = current.getSuggestions.mock.calls[0]!;
+      expect(args[0]).toBe(lines); // same array object — never cloned
+      expect(args[1]).toBe(0);
+      expect(args[2]).toBe(probe.length); // cursor after the full word
       expect(args[3]).toBe(options); // same options object
     }
   });
