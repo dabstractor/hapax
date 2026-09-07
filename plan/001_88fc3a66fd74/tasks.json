@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Foundation: scaffold & dictionary subsystem",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Project scaffold (package.json with pi manifest, tsconfig, vitest), shared core types, packed-binary dictionary loader with FNV-1a lookup, offline build script, and the shipped dict artifact path.",
           "tasks": [
             {
@@ -104,14 +104,14 @@
               "type": "Task",
               "id": "P1.M1.T3",
               "title": "Dictionary build pipeline (tools/build-dict.mjs)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Stdlib-only offline build script: merge TSV frequency lists, filter, quantize, emit the packed binary, self-verify, and document corpus acquisition for the shipped artifact.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T3.S1",
                   "title": "Merge/filter/sort/quantize/emit pipeline + CLI",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S1"
@@ -128,7 +128,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T3.S2",
                   "title": "Self-verification pass + size summary",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T3.S1"
@@ -145,7 +145,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T3.S3",
                   "title": "Shipped dict artifact + corpus acquisition documentation",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T3.S2"
