@@ -167,7 +167,7 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Core pipeline (pure, agent-agnostic computation layer)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "All of src/core/ with zero pi imports: segmentation, shape gate, admission/salience scoring, candidate store with prefix index and eviction, and the query/ranking function. Every module unit-tested standalone per PRD §09.",
           "tasks": [
             {
@@ -357,14 +357,14 @@
               "type": "Task",
               "id": "P1.M2.T5",
               "title": "Query & ranking (src/core/query.ts)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "The keystroke-path function: prefix range gather, salience sort, tiebreaks, top-N with provenance descriptions — pure and allocation-light.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T5.S1",
                   "title": "rankMatches: prefix search + salience ranking + top-N",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T4.S2",
@@ -393,14 +393,14 @@
               "type": "Task",
               "id": "P1.M3.T1",
               "title": "Configuration (src/pi/config.ts)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Tiny JSON config surface with defaults, two-file merge, clamping/repair, and warn-on-malformed.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T1.S1",
                   "title": "Config load/merge/validate with defaults + repair",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1",
@@ -427,7 +427,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T2.S1",
                   "title": "extractText: AgentMessage role/content handling",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S2",
