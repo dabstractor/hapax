@@ -27,7 +27,7 @@ import { join } from "node:path";
 
 /**
  * Extension settings — deliberately tiny (PRD §08). Never extend this
- * with tuning constants: salience weights, admission bands (220/120),
+ * with tuning constants: salience weights, admission bands (100/50),
  * shape-gate rules, the eviction cap, debounce intervals, and popup
  * timing are NOT configurable (settled decision).
  */

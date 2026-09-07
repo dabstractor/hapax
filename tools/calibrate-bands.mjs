@@ -1,0 +1,179 @@
+#!/usr/bin/env node
+/**
+ * Calibration probe for score.ts admission bands (BUG-001, 001_9e0f97150b68).
+ *
+ * BUG-001: with the frozen log-quantization curve quant(r) = 255 −
+ * floor(254·log2(1+r)/log2(1+DICT_N)) (denominator pinned at DICT_N = 70,000,
+ * tools/build-dict.mjs), the old bands REJECT=220/MID=120 covered only ranks
+ * ≤ 3 / ≤ 391 — "the"/"with"/"this" could never be rejected, no matter how
+ * good the corpus. This script measures the REAL artifact so the band
+ * constants in src/core/score.ts stay pinned by measurement, not guesswork:
+ *
+ *   1. artifact header + band populations (parsed straight from the scores
+ *      section — 24-byte header + u32 offsets + u8 scores, HAPX v1);
+ *   2. rank↔word↔q table at corpus probe ranks (TSV line order filtered
+ *      through build-dict's KEY_RE — TSV line ≠ dictionary rank because the
+ *      filter legally drops ~10 top entries like 'a'/'i'/"'s");
+ *   3. the BUG-001 word set with its band under the CURRENT constants;
+ *   4. a threshold sweep (dictionary-rank boundary per candidate constant);
+ *   5. acceptance assertions — the/with/this/them must reject, context-class
+ *      must reject or land group 2, a tail word must stay group 1, and the
+ *      band populations must stay near their calibration targets.
+ *
+ * Exit 0 = the constants in src/core/score.ts still satisfy the contract
+ * (run it after any future retune or artifact regen). Exit 1 = drift.
+ *
+ * Usage: node tools/calibrate-bands.mjs
+ * Requires Node ≥ 23.6 (native TS type stripping) — the repo's floor; the
+ * type-only imports inside src/core/*.ts are erased, so the real loader and
+ * admit() run directly (no duplication of the format or the banding logic).
+ */
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { loadDictionary, DICT_VERSION } from "../src/core/dictionary.ts";
+import {
+  admit,
+  MID_FREQ_THRESHOLD,
+  REJECT_COMMON_THRESHOLD,
+} from "../src/core/score.ts";
+import { DICT_N, KEY_RE, quant } from "./build-dict.mjs";
+
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const dictPath = join(root, "dict", "common-en.bin");
+const tsvPath = join(root, "tools", "corpus", "en-50k.tsv");
+
+// ── 1. Artifact header + raw band populations ──────────────────────────────
+const buf = readFileSync(dictPath);
+const dv = new DataView(buf.buffer, buf.byteOffset, buf.length);
+if (buf.readUInt16LE(4) !== DICT_VERSION) {
+  console.error(`artifact version ${buf.readUInt16LE(4)} ≠ DICT_VERSION — regenerate first`);
+  process.exit(1);
+}
+const entryCount = buf.readUInt32LE(8);
+const blobLen = buf.readUInt32LE(12);
+const bucketCount = buf.readUInt32LE(16);
+const scoresOff = 24 + blobLen + 4 * (entryCount + 1);
+if (scoresOff + entryCount + 4 * bucketCount > buf.length) {
+  console.error("artifact truncated — regenerate first");
+  process.exit(1);
+}
+// scores are u8[entryCount]; entry i carries quant(dictionary rank i).
+const scores = buf.subarray(scoresOff, scoresOff + entryCount);
+const popReject = (T) => scores.reduce((n, q) => n + (q >= T ? 1 : 0), 0);
+const popBand2 = (M, R) =>
+  scores.reduce((n, q) => n + (q >= M && q < R ? 1 : 0), 0);
+
+console.log(
+  `artifact  dict/common-en.bin  v${buf.readUInt16LE(4)}  entries=${entryCount}  ` +
+    `blob=${blobLen}B  buckets=${bucketCount}`,
+);
+console.log(
+  `constants REJECT_COMMON_THRESHOLD=${REJECT_COMMON_THRESHOLD}  ` +
+    `MID_FREQ_THRESHOLD=${MID_FREQ_THRESHOLD}  (curve denominator DICT_N=${DICT_N})\n`,
+);
+console.log(
+  `band populations: reject(q≥${REJECT_COMMON_THRESHOLD})=${popReject(REJECT_COMMON_THRESHOLD)}  ` +
+    `group2(${MID_FREQ_THRESHOLD}≤q<${REJECT_COMMON_THRESHOLD})=${popBand2(MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD)}  ` +
+    `group1(q<${MID_FREQ_THRESHOLD}, attested)=${popBand2(0, MID_FREQ_THRESHOLD)}`,
+);
+
+// ── 2. rank↔word↔q table at corpus probe ranks ─────────────────────────────
+// The k-th TSV line matching KEY_RE is dictionary rank k (build-dict sorts by
+// count DESC; en_50k.tsv arrives pre-sorted with distinct counts, so line
+// order is rank order after the filter drops 'a'/'i'/"'s"-style keys).
+const dict = loadDictionary(dictPath);
+const probeRanks = new Set([100, 500, 1000, 2000, 5000, 10000, 20000, 40000]);
+const lines = readFileSync(tsvPath, "utf8").split("\n");
+const rankWord = []; // rankWord[k] = word at dictionary rank k (kept order)
+for (const line of lines) {
+  const tab = line.indexOf("\t");
+  if (tab <= 0) continue;
+  const word = line.slice(0, tab);
+  if (KEY_RE.test(word)) rankWord.push(word);
+}
+console.log(`\nrank → word → q  (quant(r) predicted vs artifact lookup):`);
+for (const k of [...probeRanks].sort((a, b) => a - b)) {
+  const word = rankWord[k];
+  const q = dict.lookup(word);
+  console.log(
+    `  ${String(k).padStart(6)}  ${word.padEnd(12)} q=${String(q).padStart(3)}  (quant=${quant(k)})`,
+  );
+}
+
+// ── 3. BUG-001 word set under the current constants ────────────────────────
+const draft = (key) => ({
+  key,
+  display: key,
+  properName: false,
+  isSubword: false,
+});
+const band = (result) => (result === "reject" ? "REJECT" : `group ${result}`);
+console.log(`\nBUG-001 word set (admit() vs shipped artifact):`);
+for (const w of [
+  "the", "of", "and", "to", "in", "that", "is", "was", "it", "for", "with",
+  "as", "his", "on", "be", "at", "by", "this", "had", "not", "are", "but",
+  "from", "have", "they", "context", "because", "would", "them", "first",
+  "time", "people", "world", "work", "system", "data", "code",
+]) {
+  const q = dict.lookup(w);
+  const result = admit(draft(w), dict);
+  console.log(`  ${w.padEnd(10)} q=${String(q).padStart(3)}  → ${band(result)}`);
+}
+
+// ── 4. Threshold sweep — dictionary-rank boundary per candidate constant ───
+console.log(`\nthreshold sweep (max dictionary rank covered by q ≥ T):`);
+for (let T = 40; T <= 255; T += 5) {
+  const boundary = popReject(T); // q = quant(rank) is non-increasing, so the
+  // population of q ≥ T IS the boundary rank (0-based count of covered ranks).
+  console.log(
+    `  T=${String(T).padStart(3)}  → top ${String(boundary).padStart(6)} ranks` +
+      (T === REJECT_COMMON_THRESHOLD ? "  ← REJECT" : T === MID_FREQ_THRESHOLD ? "  ← MID" : ""),
+  );
+}
+
+// ── 5. Acceptance assertions (BUG-001 inverted) ─────────────────────────────
+let failures = 0;
+const check = (ok, label) => {
+  if (!ok) failures++;
+  console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`);
+};
+console.log(`\nacceptance (constants vs shipped artifact):`);
+for (const w of ["the", "with", "this", "them"]) {
+  check(admit(draft(w), dict) === "reject", `admit('${w}') rejects`);
+}
+for (const w of ["context", "because", "would"]) {
+  const r = admit(draft(w), dict);
+  check(r === "reject" || r === 2, `admit('${w}') rejects or lands group 2 (${band(r)})`);
+}
+check(
+  admit(draft("hapax"), dict) === 0,
+  "dictionary-absent word stays group 0",
+);
+const tailWord = rankWord[30000];
+check(
+  admit(draft(tailWord), dict) === 1,
+  `tail word '${tailWord}' (rank 30000) stays group 1`,
+);
+const rejectPop = popReject(REJECT_COMMON_THRESHOLD);
+check(
+  rejectPop >= 800 && rejectPop <= 1300,
+  `reject band covers ~top 1,000 ranks (measured ${rejectPop})`,
+);
+const group2Pop = popBand2(MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD);
+check(
+  group2Pop >= 3000 && group2Pop <= 15000,
+  `group-2 band covers the next few thousand ranks (measured ${group2Pop})`,
+);
+let monotone = true;
+for (let i = 1; i < 500; i++) {
+  if (dict.lookup(rankWord[i]) > dict.lookup(rankWord[i - 1])) monotone = false;
+}
+check(monotone, "artifact q is non-increasing over the top 500 ranks");
+
+if (failures > 0) {
+  console.error(`\ncalibration DRIFT: ${failures} assertion(s) failed`);
+  process.exit(1);
+}
+console.log("\ncalibration OK — constants match the shipped artifact");

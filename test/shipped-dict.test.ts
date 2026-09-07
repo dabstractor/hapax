@@ -43,9 +43,9 @@ describe("shipped dict/common-en.bin", () => {
   });
 
   it("orders quants by real word frequency", () => {
-    // 'the' outranks 'this' in the corpus (rank ~2 vs ~8); a mid-frequency
-    // word scores below both. Ordering only — band calibration (q >= 220
-    // REJECT) is P1.M1.T2's concern, NOT asserted here.
+    // 'the' outranks 'this' in the corpus (rank ~1 vs ~12); a mid-frequency
+    // word scores below both. Ordering only — band calibration (the score.ts
+    // REJECT band) is P1.M1.T2's concern, NOT asserted here.
     const the = dict.lookup("the");
     expect(the).not.toBeNull();
     const thisQ = dict.lookup("this");

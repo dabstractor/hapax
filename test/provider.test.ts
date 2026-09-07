@@ -276,7 +276,7 @@ describe("never-hijack acceptance (PRD §07)", () => {
   });
 
   describe("case (e) — common words never produce hapax items", () => {
-    it("admission: q ≥ 220 rejects 'the' and 'context' before the store ever sees them", () => {
+    it("admission: q ≥ REJECT_COMMON_THRESHOLD rejects 'the' and 'context' before the store ever sees them", () => {
       const commonAt = (q: number): Dictionary => ({
         lookup: () => q,
         version: 1,
@@ -291,7 +291,8 @@ describe("never-hijack acceptance (PRD §07)", () => {
 
       expect(admit(draft("the"), commonAt(REJECT_COMMON_THRESHOLD))).toBe("reject");
       expect(admit(draft("context"), commonAt(REJECT_COMMON_THRESHOLD + 35))).toBe("reject");
-      // The boundary is q ≥ 220 exactly: just below it the word is admitted.
+      // The boundary is q ≥ REJECT_COMMON_THRESHOLD exactly: just below it
+      // the word is admitted.
       expect(admit(draft("the"), commonAt(REJECT_COMMON_THRESHOLD - 1))).not.toBe("reject");
     });
 

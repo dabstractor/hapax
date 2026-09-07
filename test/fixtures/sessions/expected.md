@@ -11,30 +11,28 @@ ranked top-8 `display` strings hapax's menu should show, in order.
 Label casing matters: the menu shows the stored display casing verbatim
 (most recent sighting wins).
 
-- Corpus recorded: 2026-09 (P1.M4.T1.S1) against shipped `dict/common-en.bin`
-  (HAPX v1, 50,927 entries) with DEFAULT_CONFIG (trigger `#`, threshold 2,
+- Corpus recorded: 2026-09 (P1.M4.T1.S1) against shipped `dict/common-en.bin`;
+  re-labeled 2026-09 (bugfix 001_9e0f97150b68) after the REAL-corpus
+  regeneration (hermitdave/FrequencyWords en_50k, HAPX v1, 48,802 entries)
+  and the admission-band recalibration in score.ts
+  (REJECT_COMMON_THRESHOLD=100, MID_FREQ_THRESHOLD=50 — measured by
+  tools/calibrate-bands.mjs), with DEFAULT_CONFIG (trigger `#`, threshold 2,
   maxSuggestions 8) — no network, deterministic fixtures.
-- Re-label after any change to: admission bands (score.ts 120/220),
+- Re-label after any change to: admission bands (score.ts 100/50),
   salience weights/taus, STORE_CAP/eviction, the fixture files, or the
   shipped dictionary artifact.
-- **Provisional-dictionary caveat**: the shipped `common-en.bin` is built
-  from the PROVISIONAL position-derived TSV (tools/gen-provisional-tsv.mjs),
-  so its quantized ranks do not reflect real corpus frequencies and the
-  ≥220 "very common" reject band is essentially unpopulated. Admission
-  therefore keeps most dictionary words (only length/entropy/secret/consonant
-  gate rules reject). The `prose.jsonl` labels below reflect that reality:
-  an ordinary-prose session DOES admit its longer words, and the no-hijack
-  guarantee is exercised through fragments whose only in-session source
-  words are shorter than the gate's 4-char minimum. When a real corpus
-  dictionary lands, re-run the corpus and re-label before trusting
-  precision@8 numbers.
+- **Calibrated-band reality**: with the real corpus the reject band
+  (q ≥ 100 = top ~945 corpus ranks) is fully populated, so formerly
+  admitted common prose words (`water` q=121, `morning` q=129, `more`
+  q=150, `look` q=157, `long` q=138) are rejected at admission and never
+  reach a menu; mid/rare words still admit (prose store: 66 keys).
 
 ## zendesk-lwlock.jsonl (item 1 — jargon picked up mid-session)
 
 | fragment | mode | expected top-8 (in rank order) |
 | --- | --- | --- |
 | `ze` | threshold | `["Zendesk"]` — exactly one candidate, cased `Zendesk` |
-| `#l` | trigger | `["lwlock","locks","look","logs","long","loses"]` — `lwlock` first |
+| `#l` | trigger | `["lwlock","locks","logs","loses"]` — `lwlock` first; `look`/`long` reject-band (q ≥ 100) |
 | `we` | threshold | `["webhook"]` |
 | `pos` | threshold | `["Postgres"]` |
 | `fix` | threshold | `["fixRoundingError"]` (camelCase token, stored casing) |
@@ -57,9 +55,10 @@ must delegate (never a menu).
 | `of`,`on`,`at`,`be`,`by`,`do`,`go`,`he`,`in`,`it`,`no`,`or`,`so`,`to`,`up`,`we`,`me`,`my`,`us`,`if` | `[]` for every one | source words are all <4 chars → gate-rejected at ingest |
 | `re` | `[]` | item 6 slash-command probe: no stored key starts `re` |
 | `men` | `[]` | item 6 @mention probe: no stored key starts `men` |
-| `wate` | `["Water"]` | positive control: a menu DOES appear for stored words |
+| `garde` | `["garden"]` | positive control: a menu DOES appear for stored words (garden q=86 → group 2) |
+| `wate` | `[]` | `water` q=121 ≥ REJECT → rejected at admission, never stored |
 | `kit` | `["kitchen"]` | |
-| `mor` | `["morning","more"]` | |
+| `mor` | `[]` | `morning` q=129 and `more` q=150 both reject-band → never stored |
 | `wind` | `["window","wind"]` | |
 | `fresh` | `["fresh"]` | |
 | `bread` | `["bread"]` | |

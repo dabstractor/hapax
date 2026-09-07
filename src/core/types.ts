@@ -10,8 +10,9 @@
  */
 
 /** Admission rank group. PRD §04: 0 = dictionary-absent (rare-by-default),
- * 1 = rare-but-attested (q < 120), 2 = mid-frequency (120 ≤ q < 220).
- * q ≥ 220 is rejected, never stored. */
+ * 1 = rare-but-attested (q < 50), 2 = mid-frequency (50 ≤ q < 100).
+ * q ≥ 100 is rejected, never stored. Band values live in score.ts
+ * (MID_FREQ_THRESHOLD / REJECT_COMMON_THRESHOLD, calibrated per BUG-001). */
 export type RankGroup = 0 | 1 | 2;
 
 /** A word admitted to the session store. One entry per lowercase key.

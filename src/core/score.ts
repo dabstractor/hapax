@@ -12,12 +12,19 @@
  *   q < REJECT_COMMON_THRESHOLD → group 2   mid-frequency
  *   otherwise                  → 'reject'   very common ("the", "context")
  *
+ * Band values are pinned by MEASUREMENT against the shipped artifact —
+ * tools/calibrate-bands.mjs prints the rank↔word↔q table and re-verifies the
+ * constants (BUG-001 history: the original 220/120 bands covered only ranks
+ * ≤ 3 / ≤ 391 of the real corpus, so "the"/"with"/"this" could never be
+ * rejected no matter how good the dictionary data was).
+ *
  * Smaller groups rank better (rare words are the most valuable completions),
  * so the subword clamp RAISES the numeric group: a sub-word never ranks above
  * its parent whole token's group + 1 — final group is
  * max(tableGroup, parentGroup + 1), saturated at 2 (RankGroup has no 3).
- * 'reject' is immune to the clamp: a table-rejected subword (q ≥ 220) stays
- * rejected; the clamp only ever demotes admitted groups.
+ * 'reject' is immune to the clamp: a table-rejected subword
+ * (q ≥ REJECT_COMMON_THRESHOLD) stays rejected; the clamp only ever demotes
+ * admitted groups.
  *
  * Pipeline order (ingest, P1.M3.T2): whole tokens are admitted BEFORE their
  * sub-words so the parent's group is known — pass it as `parentGroup` when
@@ -58,13 +65,26 @@
 import type { CandidateDraft } from "./segment.js";
 import type { Candidate, Dictionary, RankGroup } from "./types.js";
 
-/** Reject at/above this commonness rank (q ≥ 220 — very common English).
- *  PRD §04 h2.24; baked per PRD §08. */
-export const REJECT_COMMON_THRESHOLD = 220 as const;
+/** Reject at/above this commonness rank — very common English that must
+ *  never trigger a menu ("the", "with", "this", "them"). PRD §04 h2.24;
+ *  baked per PRD §08 (the ONLY tuning surface — never config/env).
+ *
+ *  Calibrated against the shipped artifact (tools/calibrate-bands.mjs,
+ *  BUG-001 fix): under the frozen quant curve the original value 220 covered
+ *  only ranks ≤ 3, making rejection mathematically unreachable. q ≥ 100 ⇔
+ *  the top ~945 dictionary ranks of 48,802; the BUG-001 word set
+ *  (the=240, with=179, this=197, them=156) clears it with margin. */
+export const REJECT_COMMON_THRESHOLD = 100 as const;
 
 /** Demote to group 2 at/above this commonness rank
- *  (120 ≤ q < 220 — mid-frequency). PRD §04 h2.24; baked per PRD §08. */
-export const MID_FREQ_THRESHOLD = 120 as const;
+ *  (50 ≤ q < 100 — mid-frequency, e.g. "context"/"data"/"code").
+ *  PRD §04 h2.24; baked per PRD §08.
+ *
+ *  Calibrated against the shipped artifact (tools/calibrate-bands.mjs,
+ *  BUG-001 fix): q ≥ 50 ⇔ dictionary ranks ~945–~8,501 land group 2; the
+ *  attested tail below stays group 1. 50 is the largest clean value that
+ *  still keeps "context" (q = 51) in group 2 rather than group 1. */
+export const MID_FREQ_THRESHOLD = 50 as const;
 
 /** Admission outcome: a rank group (0 = rarest/best … 2 = mid-frequency)
  *  or 'reject' (never enters the store). */

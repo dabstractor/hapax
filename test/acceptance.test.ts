@@ -171,9 +171,10 @@ describe('acceptance item 1 — session jargon completes (zendesk-lwlock.jsonl)'
     const matches = rankMatches(store, "l");
     expect(matches[0]!.display).toBe("lwlock"); // exact cased insertion string
     // expected.md label for "#l" (lwlock must out-rank incidental l-words;
-    // the loses/long tail order follows the real-corpus rank groups —
-    // loses q=62 → group 1 beats long q=138 → group 2):
-    expect(matches.map((m) => m.display)).toEqual(["lwlock", "locks", "look", "logs", "loses", "long"]);
+    // the loses/long tail order follows the real-corpus rank groups under
+    // the calibrated bands — look=157 and long=138 sit in the REJECT band
+    // (≥100) and never reach the store; loses=62, locks=58, logs=49 admit):
+    expect(matches.map((m) => m.display)).toEqual(["lwlock", "locks", "logs", "loses"]);
 
     const provider = createHapaxProvider(store, cfg(), mockCurrent());
     const result = await provider.getSuggestions(["#l"], 0, 2, opts());
@@ -188,17 +189,16 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
    * occurring in the transcript, but every such source word is shorter than
    * the shape gate's 4-char minimum, so the store holds no key under these
    * prefixes → zero candidates → the provider MUST delegate. (With the
-   * real-corpus shipped dictionary the ≥220 reject band IS populated
+   * real-corpus shipped dictionary the ≥100 reject band IS populated
    * ('the', 'you', …), so common prose words are rejected at admission;
-   * the prose store is not EMPTY — mid/rare words still admit until the
-   * P1.M1.T2 band recalibration. The no-hijack contract is what these
-   * probes pin down.)
+   * the prose store is not EMPTY — mid/rare words still admit. The
+   * no-hijack contract is what these probes pin down.)
    */
   const PROBES = ["of","on","at","be","by","do","go","he","in","it","no","or","so","to","up","we","me","my","us","if","re","men"];
 
   it("ingests with the default config and stores only gate-passed words", async () => {
     const { store } = await ingestFixture(`${FIXTURES}/prose.jsonl`);
-    expect(store.size).toBeGreaterThan(0); // mid/rare prose words still admit (band recalibration is P1.M1.T2)
+    expect(store.size).toBeGreaterThan(0); // mid/rare prose words still admit under the calibrated bands
     for (const probe of PROBES) {
       expect(rankMatches(store, probe), `probe "${probe}" must have zero candidates`).toEqual([]);
     }
@@ -223,13 +223,16 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     }
   });
 
-  it("positive control: a stored word fragment DOES open a hapax menu (wate → Water)", async () => {
+  it("positive control: a stored word fragment DOES open a hapax menu (garde → garden)", async () => {
     const { store } = await ingestFixture(`${FIXTURES}/prose.jsonl`);
     const provider = createHapaxProvider(store, cfg(), mockCurrent(SENTINEL));
-    const result = await provider.getSuggestions(["wate"], 0, 4, opts());
+    const result = await provider.getSuggestions(["garde"], 0, 5, opts());
     expect(result).not.toBe(SENTINEL); // menu, not delegation — the harness can tell the difference
-    expect(result!.items.map((i) => i.value)).toEqual(["Water"]);
-    expect(result!.prefix).toBe("wate");
+    // 'garden' (corpus q=86, mid-frequency group 2) is stored and answers
+    // the fragment; the former control word 'water' (q=121) now correctly
+    // lands in the REJECT band and never reaches the store.
+    expect(result!.items.map((i) => i.value)).toEqual(["garden"]);
+    expect(result!.prefix).toBe("garde");
     expect(provider.__hapaxLive()).not.toBeNull();
   });
 });

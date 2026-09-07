@@ -1,9 +1,13 @@
 /**
  * PRD §04 h2.24 admission suite (P1.M2.T3.S1): the four table rows
- * (q === null → 0, q < 120 → 1, 120 ≤ q < 220 → 2, q ≥ 220 → 'reject'),
- * the exact boundary values 119/120 and 219/220, and the subword clamp (a
- * sub-word never ranks above its parent whole token's group + 1, saturated
- * at 2; 'reject' is immune to the clamp).
+ * (q === null → 0, q < MID → 1, MID ≤ q < REJECT → 2, q ≥ REJECT → 'reject'),
+ * the exact boundary values MID−1/MID and REJECT−1/REJECT, and the subword
+ * clamp (a sub-word never ranks above its parent whole token's group + 1,
+ * saturated at 2; 'reject' is immune to the clamp). MID =
+ * MID_FREQ_THRESHOLD and REJECT = REJECT_COMMON_THRESHOLD — boundary cases
+ * are expressed via the imported constants so the suite survives band
+ * recalibration (BUG-001 retune), while the "baked thresholds" describe
+ * below deliberately pins the current measured values.
  *
  * The Dictionary is stubbed per the types.ts contract — no real binary is
  * loaded in unit tests — so key strings are arbitrary: lookup is a pure
@@ -59,9 +63,11 @@ const cand = (over: Partial<Candidate> = {}): Candidate => ({
 });
 
 describe("admit — baked thresholds (PRD §04/§08)", () => {
-  it("exports REJECT_COMMON_THRESHOLD = 220 and MID_FREQ_THRESHOLD = 120", () => {
-    expect(REJECT_COMMON_THRESHOLD).toBe(220);
-    expect(MID_FREQ_THRESHOLD).toBe(120);
+  // Deliberate pin of the measured values (tools/calibrate-bands.mjs,
+  // BUG-001): P1.M1.T2.S2's calibration test relies on these being exact.
+  it("exports REJECT_COMMON_THRESHOLD = 100 and MID_FREQ_THRESHOLD = 50", () => {
+    expect(REJECT_COMMON_THRESHOLD).toBe(100);
+    expect(MID_FREQ_THRESHOLD).toBe(50);
   });
 });
 
@@ -74,20 +80,28 @@ describe("admit — whole-token bands (PRD §04 h2.24)", () => {
     expect(admit(draft("zzqv"), dict({ zzqv: 0 }))).toBe(1);
   });
 
-  it("q = 119 → group 1 (one below the mid-frequency boundary)", () => {
-    expect(admit(draft("tokenish"), dict({ tokenish: 119 }))).toBe(1);
+  it("q = MID_FREQ_THRESHOLD − 1 → group 1 (one below the mid-frequency boundary)", () => {
+    expect(
+      admit(draft("tokenish"), dict({ tokenish: MID_FREQ_THRESHOLD - 1 })),
+    ).toBe(1);
   });
 
-  it("q = 120 → group 2 (MID_FREQ_THRESHOLD exactly)", () => {
-    expect(admit(draft("tokenish"), dict({ tokenish: 120 }))).toBe(2);
+  it("q = MID_FREQ_THRESHOLD → group 2 (mid-frequency boundary exactly)", () => {
+    expect(admit(draft("tokenish"), dict({ tokenish: MID_FREQ_THRESHOLD }))).toBe(
+      2,
+    );
   });
 
-  it("q = 219 → group 2 (one below the reject boundary)", () => {
-    expect(admit(draft("tokenish"), dict({ tokenish: 219 }))).toBe(2);
+  it("q = REJECT_COMMON_THRESHOLD − 1 → group 2 (one below the reject boundary)", () => {
+    expect(
+      admit(draft("tokenish"), dict({ tokenish: REJECT_COMMON_THRESHOLD - 1 })),
+    ).toBe(2);
   });
 
-  it("q = 220 → reject (REJECT_COMMON_THRESHOLD exactly)", () => {
-    expect(admit(draft("the"), dict({ the: 220 }))).toBe("reject");
+  it("q = REJECT_COMMON_THRESHOLD → reject (reject boundary exactly)", () => {
+    expect(admit(draft("the"), dict({ the: REJECT_COMMON_THRESHOLD }))).toBe(
+      "reject",
+    );
   });
 
   it("q = 255 (most common) → reject", () => {
@@ -115,32 +129,36 @@ describe("admit — subword clamp (PRD §04 h2.24)", () => {
   });
 
   it("parent group 0 + table group 1 → 1 (table already at parent + 1)", () => {
-    expect(admit(draft("token", true), dict({ token: 50 }), 0)).toBe(1);
+    // q = 20: attested but below MID_FREQ_THRESHOLD → table group 1.
+    expect(admit(draft("token", true), dict({ token: 20 }), 0)).toBe(1);
   });
 
   it("parent group 1 + table group 2 → 2", () => {
-    expect(admit(draft("token", true), dict({ token: 150 }), 1)).toBe(2);
+    // q = 70: mid-frequency band → table group 2.
+    expect(admit(draft("token", true), dict({ token: 70 }), 1)).toBe(2);
   });
 
   it("parent group 0 + table group 2 → 2", () => {
-    expect(admit(draft("token", true), dict({ token: 150 }), 0)).toBe(2);
+    expect(admit(draft("token", true), dict({ token: 70 }), 0)).toBe(2);
   });
 
-  it("subword with q ≥ 220 → 'reject' regardless of parent (clamp never rescues)", () => {
+  it("subword with q ≥ REJECT_COMMON_THRESHOLD → 'reject' regardless of parent (clamp never rescues)", () => {
     for (const parent of [0, 1, 2] as const) {
-      expect(admit(draft("the", true), dict({ the: 220 }), parent)).toBe(
-        "reject",
-      );
+      expect(
+        admit(draft("the", true), dict({ the: REJECT_COMMON_THRESHOLD }), parent),
+      ).toBe("reject");
     }
   });
 
   it("subword without parentGroup → unclamped table result", () => {
     // Defensive path: ingest always supplies parentGroup for subwords, but
     // a missing one must not fabricate a clamp — every table row passes
-    // through raw: q = null → 0, q = 0 → 1, q = 219 → 2.
+    // through raw: q = null → 0, q = 0 → 1, q = REJECT−1 → 2.
     expect(admit(draft("token", true), dict({}))).toBe(0);
     expect(admit(draft("token", true), dict({ token: 0 }))).toBe(1);
-    expect(admit(draft("token", true), dict({ token: 219 }))).toBe(2);
+    expect(
+      admit(draft("token", true), dict({ token: REJECT_COMMON_THRESHOLD - 1 })),
+    ).toBe(2);
   });
 });
 

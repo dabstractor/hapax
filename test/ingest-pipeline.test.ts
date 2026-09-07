@@ -14,6 +14,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CandidateStore } from "../src/core/store.js";
+import {
+  MID_FREQ_THRESHOLD,
+  REJECT_COMMON_THRESHOLD,
+} from "../src/core/score.js";
 import type { Dictionary } from "../src/core/types.js";
 import { IngestPipeline, type AgentMessage } from "../src/pi/ingest.js";
 
@@ -69,11 +73,19 @@ function deepFreeze<T>(value: T): T {
 
 // --- stub dictionary + pipeline harness -------------------------------------
 
-/** q ≥ 220 → admit 'reject' band; q in [120, 220) → group 2; null → 0. */
+/** COMMON words sit in the reject band, MIDFREQ in group 2 — values built
+ *  from the score.ts constants so a retune can't silently invert intent:
+ *  q ≥ REJECT_COMMON_THRESHOLD → admit 'reject'; q in [MID_FREQ_THRESHOLD,
+ *  REJECT_COMMON_THRESHOLD) → group 2; null → 0. */
 const COMMON = new Set(["context", "contextzephyr"]);
 const MIDFREQ = new Set(["granite", "graniteore"]);
 const stubDict = (): Dictionary => ({
-  lookup: (w) => (COMMON.has(w) ? 230 : MIDFREQ.has(w) ? 150 : null),
+  lookup: (w) =>
+    COMMON.has(w)
+      ? REJECT_COMMON_THRESHOLD + 30
+      : MIDFREQ.has(w)
+        ? MID_FREQ_THRESHOLD + 20
+        : null,
   version: 1,
   entryCount: 0,
 });
@@ -210,7 +222,7 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     });
     expect(h.store.get("zephyr")?.sessionCount).toBe(2);
     expect(h.store.get("zephyr")?.rankGroup).toBe(0); // dictionary-absent
-    expect(h.store.get("granite")?.rankGroup).toBe(2); // 120 ≤ 150 < 220
+    expect(h.store.get("granite")?.rankGroup).toBe(2); // mid band: MID ≤ q < REJECT
     expect(h.store.get("context")).toBeUndefined(); // admission reject
     expect(h.store.get("abc")).toBeUndefined();
     // getStats returns a copy — mutating it must not touch the pipeline.

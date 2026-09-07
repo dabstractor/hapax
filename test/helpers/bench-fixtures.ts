@@ -29,6 +29,7 @@
  */
 
 import { CandidateStore, STORE_CAP } from "../../src/core/store.js";
+import { MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD } from "../../src/core/score.js";
 import type { RankGroup, Sighting } from "../../src/core/types.js";
 import { buildDictBinary, type DictEntry } from "./dict-writer.js";
 
@@ -130,14 +131,24 @@ export function makeStore(cap: number = STORE_CAP, seed = 42): CandidateStore {
 }
 
 /** 8-bit quantized commonness spanning every admission band (score.ts
- *  admit()): 50% group 1 (0–119), 30% group 2 (120–219), 20% rejected
- *  (220–255) — so ingest over this dictionary exercises admits AND the
- *  commonness-reject path realistically. */
+ *  admit()): 50% group 1 (q < MID_FREQ_THRESHOLD), 30% group 2
+ *  (MID ≤ q < REJECT_COMMON_THRESHOLD), 20% rejected (q ≥ REJECT) — so
+ *  ingest over this dictionary exercises admits AND the commonness-reject
+ *  path realistically. Expressed via the imported constants so the
+ *  50/30/20 group mix survives band recalibration. */
 function pickQuant(rng: () => number): number {
   const r = rng();
-  if (r < 0.5) return Math.floor(rng() * 120);
-  if (r < 0.8) return 120 + Math.floor(rng() * 100);
-  return 220 + Math.floor(rng() * 36);
+  if (r < 0.5) return Math.floor(rng() * MID_FREQ_THRESHOLD);
+  if (r < 0.8) {
+    return (
+      MID_FREQ_THRESHOLD +
+      Math.floor(rng() * (REJECT_COMMON_THRESHOLD - MID_FREQ_THRESHOLD))
+    );
+  }
+  return (
+    REJECT_COMMON_THRESHOLD +
+    Math.floor(rng() * (256 - REJECT_COMMON_THRESHOLD))
+  );
 }
 
 export interface SyntheticDict {
@@ -188,7 +199,8 @@ export function makeAbsentWords(count = 1000, seed = 131): string[] {
 // BOUNDED, pre-built pools: repeated processText runs (bench iterations)
 // keep the distinct-key count well under STORE_CAP so eviction never fires
 // mid-measurement, while the mix still exercises every pipeline path —
-// dictionary hits (groups 1/2), commonness rejects (quant ≥ 220),
+// dictionary hits (groups 1/2), commonness rejects (quant ≥
+// REJECT_COMMON_THRESHOLD),
 // dictionary-absent defaults, camelCase subword expansion, and hexish
 // opaque tokens.
 

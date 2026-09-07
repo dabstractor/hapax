@@ -24,7 +24,7 @@ import type {
 import type { HapaxConfig } from "./config.js";
 import type { IngestPipeline } from "./ingest.js";
 
-/** Human labels for the admission groups (score.ts bands 220/120). */
+/** Human labels for the admission groups (score.ts bands 100/50). */
 const GROUP_LABEL: Record<RankGroup, string> = {
   0: "rare",
   1: "mid",
