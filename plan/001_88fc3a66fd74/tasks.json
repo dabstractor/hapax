@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "M1 — Session vocabulary autocomplete (v1): fully usable tool",
-      "status": "Ready",
+      "status": "Planned",
       "description": "Implement the complete M1 scope of the hapax PRD: packed dictionary subsystem, pure core extraction/scoring/store pipeline, pi extension wiring (ingest, autocomplete provider, config, debug command), integration acceptance, performance gates, and changeset-level documentation. Greenfield build in /home/dustin/projects/hapax per the PRD module layout. Research complete — see plan/001_88fc3a66fd74/architecture/.",
       "milestones": [
         {
@@ -18,28 +18,41 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Project scaffold & tooling",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Create the repo skeleton per PRD module layout with zero runtime dependencies and a strict typecheck + test loop that stands in for the nonexistent 'pi --check'.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T1.S1",
                   "title": "package.json, tsconfig, vitest, directory skeleton",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
-                  "prd_selectors": ["h1.2", "h2.11", "h2.1", "h2.56"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Greenfield repo at /home/dustin/projects/hapax (only spec/ and plan/ exist). pi v0.84.4 loads extensions via jiti (TS transpiled at load, no build step). 'pi --check' DOES NOT EXIST — the DoD's check requirement is satisfied by 'tsc --noEmit' + 'vitest --run' (see plan/001_88fc3a66fd74/architecture/system_context.md).\n2. INPUT: Nothing — this is the first subtask. PRD §02 module layout is authoritative: src/core/{dictionary,segment,shapeGate,score,store,query,types}.ts, src/pi/{index,ingest,provider,config}.ts, tools/build-dict.mjs, dict/, test/.\n3. LOGIC: Create package.json exactly as PRD §02 specifies: { 'name': 'hapax', 'version': '0.1.0', 'type': 'module', 'pi': { 'extensions': ['./src/pi/index.ts'] } } plus scripts: check='tsc --noEmit', test='vitest --run', bench='vitest bench'. devDependencies ONLY: typescript ^5, vitest ^4, @earendil-works/pi-coding-agent ~0.84.4, @earendil-works/pi-tui (version matching ~0.84.4; latest npm 0.85.1 must NOT float ahead of installed runtime). NO runtime dependencies. tsconfig: strict true, module NodeNext/ESNext, types for vitest, include src+test. Empty placeholder files NOT required — just directories and configs. Create README.md stub (title + one-liner; later subtasks fill it). Add a lint/review note file or CI check idea is out of scope.\n4. OUTPUT: A repo where 'npm run check' and 'npm test' both succeed trivially (0 tests), and the pi manifest field points at src/pi/index.ts (file created by P1.M3.T5.S1 later — acceptable for now, exclude it from tsc until then via files list or create an empty stub exporting nothing).\n5. DOCS: none beyond the README stub — no user-facing/config/API surface change yet."
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Greenfield repo at /home/dustin/projects/hapax (only spec/ and plan/ exist). pi v0.84.4 loads extensions via jiti (TS transpiled at load, no build step). 'pi --check' DOES NOT EXIST — the DoD's check requirement is satisfied by 'tsc --noEmit' + 'vitest --run' (see plan/001_88fc3a66fd74/architecture/system_context.md).\n2. INPUT: Nothing — this is the first subtask. PRD §02 module layout is authoritative: src/core/{dictionary,segment,shapeGate,score,store,query,types}.ts, src/pi/{index,ingest,provider,config}.ts, tools/build-dict.mjs, dict/, test/.\n3. LOGIC: Create package.json exactly as PRD §02 specifies: { 'name': 'hapax', 'version': '0.1.0', 'type': 'module', 'pi': { 'extensions': ['./src/pi/index.ts'] } } plus scripts: check='tsc --noEmit', test='vitest --run', bench='vitest bench'. devDependencies ONLY: typescript ^5, vitest ^4, @earendil-works/pi-coding-agent ~0.84.4, @earendil-works/pi-tui (version matching ~0.84.4; latest npm 0.85.1 must NOT float ahead of installed runtime). NO runtime dependencies. tsconfig: strict true, module NodeNext/ESNext, types for vitest, include src+test. Empty placeholder files NOT required — just directories and configs. Create README.md stub (title + one-liner; later subtasks fill it). Add a lint/review note file or CI check idea is out of scope.\n4. OUTPUT: A repo where 'npm run check' and 'npm test' both succeed trivially (0 tests), and the pi manifest field points at src/pi/index.ts (file created by P1.M3.T5.S1 later — acceptable for now, exclude it from tsc until then via files list or create an empty stub exporting nothing).\n5. DOCS: none beyond the README stub — no user-facing/config/API surface change yet.",
+                  "prd_selectors": [
+                    "h1.2",
+                    "h2.11",
+                    "h2.1",
+                    "h2.56"
+                  ]
                 },
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "src/core/types.ts — shared core contracts",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1"],
-                  "prd_selectors": ["h1.4", "h2.4", "h2.35", "h1.6", "h2.22"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The two-layer split is load-bearing: src/core/** must import NOTHING from pi packages (enforced in review). types.ts is the single vocabulary every later core module and the pi adapter share (see plan/001_88fc3a66fd74/architecture/core_contracts.md).\n2. INPUT: PRD §04/§06 type definitions verbatim.\n3. LOGIC: Define and export from src/core/types.ts: type RankGroup = 0|1|2; interface Candidate { key: string; display: string; sessionCount: number; lastSeenOrdinal: number; firstSeenOrdinal: number; userTyped: boolean; properName: boolean; rankGroup: RankGroup; isSubword: boolean } (PRD §06 exactly); interface Sighting { key: string; display: string; ordinal: number; fromUser: boolean; properName: boolean; rankGroup: RankGroup; isSubword: boolean; parentKey?: string } — the unit the ingest pipeline feeds store.upsert; type GateRejectReason (union covering: tooShort, tooLong, lowEntropy, unigramRun, secret, consonantRun) and interface GateResult { ok: boolean; reason?: GateRejectReason }; interface Dictionary { lookup(word: string): number | null; readonly version: number; readonly entryCount: number } (loader interface only — implementation lives in dictionary.ts); interface IngestStats { wordsSeen: number; admitted: number; rejectedByGate: Record<GateRejectReason, number> }; interface RankedMatch { key: string; display: string; description: string; salience: number }.\n4. OUTPUT: All downstream subtasks import these by name. Do not duplicate these shapes anywhere else.\n5. DOCS: none — internal type surface only."
+                  "dependencies": [
+                    "P1.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The two-layer split is load-bearing: src/core/** must import NOTHING from pi packages (enforced in review). types.ts is the single vocabulary every later core module and the pi adapter share (see plan/001_88fc3a66fd74/architecture/core_contracts.md).\n2. INPUT: PRD §04/§06 type definitions verbatim.\n3. LOGIC: Define and export from src/core/types.ts: type RankGroup = 0|1|2; interface Candidate { key: string; display: string; sessionCount: number; lastSeenOrdinal: number; firstSeenOrdinal: number; userTyped: boolean; properName: boolean; rankGroup: RankGroup; isSubword: boolean } (PRD §06 exactly); interface Sighting { key: string; display: string; ordinal: number; fromUser: boolean; properName: boolean; rankGroup: RankGroup; isSubword: boolean; parentKey?: string } — the unit the ingest pipeline feeds store.upsert; type GateRejectReason (union covering: tooShort, tooLong, lowEntropy, unigramRun, secret, consonantRun) and interface GateResult { ok: boolean; reason?: GateRejectReason }; interface Dictionary { lookup(word: string): number | null; readonly version: number; readonly entryCount: number } (loader interface only — implementation lives in dictionary.ts); interface IngestStats { wordsSeen: number; admitted: number; rejectedByGate: Record<GateRejectReason, number> }; interface RankedMatch { key: string; display: string; description: string; salience: number }.\n4. OUTPUT: All downstream subtasks import these by name. Do not duplicate these shapes anywhere else.\n5. DOCS: none — internal type surface only.",
+                  "prd_selectors": [
+                    "h1.4",
+                    "h2.4",
+                    "h2.35",
+                    "h1.6",
+                    "h2.22"
+                  ]
                 }
               ]
             },
@@ -54,11 +67,19 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "Loader + FNV-1a lookup, zero per-entry allocation",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T1.S2"],
-                  "prd_selectors": ["h1.3", "h2.17", "h2.18", "h2.19", "h2.21"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Format validated as feasible — little-endian header (magic 'HAPX', u16 version=1, u16 flags, u32 entryCount, u32 blobLen, u32 bucketCount, u32 seed) then wordBlob, offsets u32[entryCount+1], scores u8[entryCount], buckets u32[bucketCount] with value = entryIndex+1, 0 = empty (PRD §03 exact offsets). Runtime is Node — fs, Buffer, DataView/typed arrays available.\n2. INPUT: A file path to a HAPX binary; the Dictionary interface from P1.M1.T1.S2 (src/core/types.ts).\n3. LOGIC: Implement loadDictionary(path: string): Dictionary in src/core/dictionary.ts per PRD §03 'Loader contract': fs.readFileSync once; validate magic + version (exact match, version 1) — throw on mismatch; construct Uint8Array view over wordBlob, Uint32Array views over offsets and buckets (byte offsets per header: offsets at 24+blobLen, scores at 24+blobLen+4*(entryCount+1), buckets after scores), u8 view over scores; retain the single Buffer as the only allocation. lookup(word): reject words > 64 bytes before encoding; encode into a module-level reused scratch buffer (TextEncoder); FNV-1a 32-bit over UTF-8 bytes XOR-folded with seed; index = hash & (bucketCount-1); linear probe: slot 0 = miss(null), else entry i = slot-1, compare length (offsets[i+1]-offsets[i]) then byte-compare against blob slice — on match return scores[i], else next slot. No allocation inside lookup.\n4. OUTPUT: Dictionary instances consumed by score.ts admission (P1.M2.T3.S1) and lazily by the extension (P1.M3.T5.S1). File also exports a const DICT_VERSION = 1 used by the version check.\n5. DOCS: none — internal module; JSDoc on loadDictionary and lookup explaining the format offsets (rides with work)."
+                  "dependencies": [
+                    "P1.M1.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Format validated as feasible — little-endian header (magic 'HAPX', u16 version=1, u16 flags, u32 entryCount, u32 blobLen, u32 bucketCount, u32 seed) then wordBlob, offsets u32[entryCount+1], scores u8[entryCount], buckets u32[bucketCount] with value = entryIndex+1, 0 = empty (PRD §03 exact offsets). Runtime is Node — fs, Buffer, DataView/typed arrays available.\n2. INPUT: A file path to a HAPX binary; the Dictionary interface from P1.M1.T1.S2 (src/core/types.ts).\n3. LOGIC: Implement loadDictionary(path: string): Dictionary in src/core/dictionary.ts per PRD §03 'Loader contract': fs.readFileSync once; validate magic + version (exact match, version 1) — throw on mismatch; construct Uint8Array view over wordBlob, Uint32Array views over offsets and buckets (byte offsets per header: offsets at 24+blobLen, scores at 24+blobLen+4*(entryCount+1), buckets after scores), u8 view over scores; retain the single Buffer as the only allocation. lookup(word): reject words > 64 bytes before encoding; encode into a module-level reused scratch buffer (TextEncoder); FNV-1a 32-bit over UTF-8 bytes XOR-folded with seed; index = hash & (bucketCount-1); linear probe: slot 0 = miss(null), else entry i = slot-1, compare length (offsets[i+1]-offsets[i]) then byte-compare against blob slice — on match return scores[i], else next slot. No allocation inside lookup.\n4. OUTPUT: Dictionary instances consumed by score.ts admission (P1.M2.T3.S1) and lazily by the extension (P1.M3.T5.S1). File also exports a const DICT_VERSION = 1 used by the version check.\n5. DOCS: none — internal module; JSDoc on loadDictionary and lookup explaining the format offsets (rides with work).",
+                  "prd_selectors": [
+                    "h1.3",
+                    "h2.17",
+                    "h2.18",
+                    "h2.19",
+                    "h2.21"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -66,9 +87,16 @@
                   "title": "test/dictionary.test.ts + independent binary-writer test helper",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T2.S1"],
-                  "prd_selectors": ["h1.3", "h2.17", "h2.19", "h2.49"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: PRD §09 dictionary tests require a tiny in-memory table; the writer must be INDEPENDENT of the loader (double-checks the format by cross-reading). The build script (P1.M1.T3) is .mjs and duplicates the writer there — that duplication is intentional and documented.\n2. INPUT: loadDictionary from P1.M1.T2.S1; format spec PRD §03 (all integers little-endian; header field order and sizes fixed).\n3. LOGIC: Create test/helpers/dict-writer.ts exporting buildDictBinary(entries: Array<{ word: string; quant: number }>): Buffer — writes header (bucketCount = next power of two >= 1.3 * entryCount, seed 0, flags bit0 set), lexicographically-sorted blob, offsets, scores, and FNV-1a-built buckets. Write test/dictionary.test.ts per PRD §09: round-trip 10 words via temp file (fs.mkdtempSync) asserting every lookup(w) === quant; absent word -> null; corrupt magic -> load throws; truncated file -> load throws; version mismatch -> throws. Optional no-alloc smoke via node --expose-gc guarded by env flag. Mock nothing — pure fs.\n4. OUTPUT: buildDictBinary is ALSO the fixture generator for score/store/acceptance tests (e.g. quant fixtures for admission bands) and for the benchmark synthetic dictionary (P1.M4.T1.S2). Reuse it; do not hand-craft binaries elsewhere.\n5. DOCS: none — test infrastructure."
+                  "dependencies": [
+                    "P1.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: PRD §09 dictionary tests require a tiny in-memory table; the writer must be INDEPENDENT of the loader (double-checks the format by cross-reading). The build script (P1.M1.T3) is .mjs and duplicates the writer there — that duplication is intentional and documented.\n2. INPUT: loadDictionary from P1.M1.T2.S1; format spec PRD §03 (all integers little-endian; header field order and sizes fixed).\n3. LOGIC: Create test/helpers/dict-writer.ts exporting buildDictBinary(entries: Array<{ word: string; quant: number }>): Buffer — writes header (bucketCount = next power of two >= 1.3 * entryCount, seed 0, flags bit0 set), lexicographically-sorted blob, offsets, scores, and FNV-1a-built buckets. Write test/dictionary.test.ts per PRD §09: round-trip 10 words via temp file (fs.mkdtempSync) asserting every lookup(w) === quant; absent word -> null; corrupt magic -> load throws; truncated file -> load throws; version mismatch -> throws. Optional no-alloc smoke via node --expose-gc guarded by env flag. Mock nothing — pure fs.\n4. OUTPUT: buildDictBinary is ALSO the fixture generator for score/store/acceptance tests (e.g. quant fixtures for admission bands) and for the benchmark synthetic dictionary (P1.M4.T1.S2). Reuse it; do not hand-craft binaries elsewhere.\n5. DOCS: none — test infrastructure.",
+                  "prd_selectors": [
+                    "h1.3",
+                    "h2.17",
+                    "h2.19",
+                    "h2.49"
+                  ]
                 }
               ]
             },
@@ -85,9 +113,16 @@
                   "title": "Merge/filter/sort/quantize/emit pipeline + CLI",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T2.S1"],
-                  "prd_selectors": ["h1.3", "h2.16", "h2.17", "h2.20"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Script must be plain .mjs, node stdlib only (PRD: 'build script uses only node stdlib. Do not add dependencies'). Corpus preparation is OUT OF SCOPE for this repo — the script is corpus-agnostic and consumes word<TAB>count TSVs.\n2. INPUT: One or more TSV paths + --out path via CLI: 'node tools/build-dict.mjs --out dict/common-en.bin input1.tsv [input2.tsv ...]'. Binary format contract identical to P1.M1.T2.S1 (header + blob + offsets + scores + buckets).\n3. LOGIC: Implement per PRD §03 'Build pipeline' steps 1-6: merge TSVs summing counts per lowercase key; drop keys not matching /^[a-z][a-z0-9_-]{1,31}$/ and pure digits; sort count desc; keep top N=70_000; quantize by rank: quant = 255 - floor(254 * log2(1+rank) / log2(1+N)); sort entries lexicographically; emit packed file with bucketCount = next pow2 >= 1.3*N, FNV-1a insertion (seed 0). Duplicate the writer logic locally (do not import TS from the .mjs) but assert header layout constants in a shared comment referencing §03.\n4. OUTPUT: A runnable CLI producing dict/common-en.bin consumable by loadDictionary (verified by P1.M1.T3.S2). Exit non-zero on empty input or TSV parse errors with a clear message.\n5. DOCS: none — CLI usage doc lands with P1.M1.T3.S3."
+                  "dependencies": [
+                    "P1.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Script must be plain .mjs, node stdlib only (PRD: 'build script uses only node stdlib. Do not add dependencies'). Corpus preparation is OUT OF SCOPE for this repo — the script is corpus-agnostic and consumes word<TAB>count TSVs.\n2. INPUT: One or more TSV paths + --out path via CLI: 'node tools/build-dict.mjs --out dict/common-en.bin input1.tsv [input2.tsv ...]'. Binary format contract identical to P1.M1.T2.S1 (header + blob + offsets + scores + buckets).\n3. LOGIC: Implement per PRD §03 'Build pipeline' steps 1-6: merge TSVs summing counts per lowercase key; drop keys not matching /^[a-z][a-z0-9_-]{1,31}$/ and pure digits; sort count desc; keep top N=70_000; quantize by rank: quant = 255 - floor(254 * log2(1+rank) / log2(1+N)); sort entries lexicographically; emit packed file with bucketCount = next pow2 >= 1.3*N, FNV-1a insertion (seed 0). Duplicate the writer logic locally (do not import TS from the .mjs) but assert header layout constants in a shared comment referencing §03.\n4. OUTPUT: A runnable CLI producing dict/common-en.bin consumable by loadDictionary (verified by P1.M1.T3.S2). Exit non-zero on empty input or TSV parse errors with a clear message.\n5. DOCS: none — CLI usage doc lands with P1.M1.T3.S3.",
+                  "prd_selectors": [
+                    "h1.3",
+                    "h2.16",
+                    "h2.17",
+                    "h2.20"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -95,9 +130,16 @@
                   "title": "Self-verification pass + size summary",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T3.S1"],
-                  "prd_selectors": ["h1.3", "h2.20", "h2.17", "h2.21"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: PRD step 7 requires the script to verify its own output — load it and re-look up every entry. The .mjs script embeds a minimal reader (header parse + FNV-1a probe) mirroring the loader contract; a mismatch between the two implementations is exactly what this pass catches.\n2. INPUT: The written output file path from P1.M1.T3.S1 plus the in-memory entries list.\n3. LOGIC: After emitting: re-open the file with an embedded minimal reader; assert lookup(w) === quant for EVERY entry; assert no duplicate keys (implicit via bucket collision check during build + entry count); print a size summary (blob/offsets/scores/buckets bytes + total, expected ~1.3 MB at 70k entries) and entryCount. Exit non-zero on any assertion failure.\n4. OUTPUT: 'node tools/build-dict.mjs' becomes the single trusted producer of dict/common-en.bin; downstream (P1.M1.T3.S3) commits the artifact.\n5. DOCS: none — script behavior; usage documented in P1.M1.T3.S3."
+                  "dependencies": [
+                    "P1.M1.T3.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: PRD step 7 requires the script to verify its own output — load it and re-look up every entry. The .mjs script embeds a minimal reader (header parse + FNV-1a probe) mirroring the loader contract; a mismatch between the two implementations is exactly what this pass catches.\n2. INPUT: The written output file path from P1.M1.T3.S1 plus the in-memory entries list.\n3. LOGIC: After emitting: re-open the file with an embedded minimal reader; assert lookup(w) === quant for EVERY entry; assert no duplicate keys (implicit via bucket collision check during build + entry count); print a size summary (blob/offsets/scores/buckets bytes + total, expected ~1.3 MB at 70k entries) and entryCount. Exit non-zero on any assertion failure.\n4. OUTPUT: 'node tools/build-dict.mjs' becomes the single trusted producer of dict/common-en.bin; downstream (P1.M1.T3.S3) commits the artifact.\n5. DOCS: none — script behavior; usage documented in P1.M1.T3.S3.",
+                  "prd_selectors": [
+                    "h1.3",
+                    "h2.20",
+                    "h2.17",
+                    "h2.21"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -105,9 +147,17 @@
                   "title": "Shipped dict artifact + corpus acquisition documentation",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T3.S2"],
-                  "prd_selectors": ["h1.3", "h2.16", "h2.20", "h2.56", "h2.21"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: dict/common-en.bin is a build artifact, shipped with the extension (PRD §02/§03). Corpus prep is out of repo scope, but M1 must be a 'fully usable tool', so the repo documents exactly how an operator regenerates the artifact.\n2. INPUT: build-dict.mjs CLI from P1.M1.T3.S2.\n3. LOGIC: Produce/commit dict/common-en.bin: run the build against operator-provided frequency TSVs if available; otherwise generate a PROVISIONAL dictionary from any local word list with synthetic rank ordering (documented as provisional in the README), so integration acceptance (P1.M4.T1.S1) exercises the real code path. Document in README: where TSVs come from (Google Books unigrams / wordfreq-style lists, cross-checked against tokenizer vocab per PRD §03), the exact rebuild command, and the versioning contract (version bump on any regen with different quantization; extension refuses mismatched files).\n4. OUTPUT: dict/common-en.bin present in repo + README section 'Dictionary build' with reproducible instructions.\n5. DOCS: [Mode A] Update README.md 'Dictionary build' section — this rides WITH the work."
+                  "dependencies": [
+                    "P1.M1.T3.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: dict/common-en.bin is a build artifact, shipped with the extension (PRD §02/§03). Corpus prep is out of repo scope, but M1 must be a 'fully usable tool', so the repo documents exactly how an operator regenerates the artifact.\n2. INPUT: build-dict.mjs CLI from P1.M1.T3.S2.\n3. LOGIC: Produce/commit dict/common-en.bin: run the build against operator-provided frequency TSVs if available; otherwise generate a PROVISIONAL dictionary from any local word list with synthetic rank ordering (documented as provisional in the README), so integration acceptance (P1.M4.T1.S1) exercises the real code path. Document in README: where TSVs come from (Google Books unigrams / wordfreq-style lists, cross-checked against tokenizer vocab per PRD §03), the exact rebuild command, and the versioning contract (version bump on any regen with different quantization; extension refuses mismatched files).\n4. OUTPUT: dict/common-en.bin present in repo + README section 'Dictionary build' with reproducible instructions.\n5. DOCS: [Mode A] Update README.md 'Dictionary build' section — this rides WITH the work.",
+                  "prd_selectors": [
+                    "h1.3",
+                    "h2.16",
+                    "h2.20",
+                    "h2.56",
+                    "h2.21"
+                  ]
                 }
               ]
             }
@@ -133,9 +183,15 @@
                   "title": "Base tokenization: identifiers, hexish tokens, CJK skip",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S2"],
-                  "prd_selectors": ["h1.4", "h2.22", "h3.3"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Pure module — NO pi imports. Segmentation is one regex pass + a second hexish scan (PRD §04). Keep it allocation-light: it runs on every ingested message in <=64KB slices.\n2. INPUT: Raw text (string) from the ingest pipeline; types from src/core/types.ts (P1.M1.T1.S2).\n3. LOGIC: Implement tokenize(text: string): RawToken[] in src/core/segment.ts. RawToken = { raw: string; hexish: boolean }. Base regex /[A-Za-z][A-Za-z0-9_]{0,63}/g capturing identifiers; second scan /(?=[0-9a-fA-F]*[A-Fa-f])(?:[0-9a-fA-F]{6,40})\\b/g for letter-containing hex (dedupe tokens already captured). CJK/non-ASCII runs: if a codepoint >= 0x3000 opens a run, skip to the next ASCII word boundary (no CJK tokens emitted). Punctuation/whitespace terminate tokens — no hyphen/apostrophe joining ('state-of-the-art' -> 3 tokens). Unit tests per PRD §09 segment cases: hexish f3a9c2e captured; 123456 not; 41+ hex chars not; CJK run skipped with ASCII resuming after.\n4. OUTPUT: RawToken[] consumed by P1.M2.T1.S2 (subword expansion). Whole tokens length 2-64; hexish 6-40 — bounds asserted.\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M1.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Pure module — NO pi imports. Segmentation is one regex pass + a second hexish scan (PRD §04). Keep it allocation-light: it runs on every ingested message in <=64KB slices.\n2. INPUT: Raw text (string) from the ingest pipeline; types from src/core/types.ts (P1.M1.T1.S2).\n3. LOGIC: Implement tokenize(text: string): RawToken[] in src/core/segment.ts. RawToken = { raw: string; hexish: boolean }. Base regex /[A-Za-z][A-Za-z0-9_]{0,63}/g capturing identifiers; second scan /(?=[0-9a-fA-F]*[A-Fa-f])(?:[0-9a-fA-F]{6,40})\\b/g for letter-containing hex (dedupe tokens already captured). CJK/non-ASCII runs: if a codepoint >= 0x3000 opens a run, skip to the next ASCII word boundary (no CJK tokens emitted). Punctuation/whitespace terminate tokens — no hyphen/apostrophe joining ('state-of-the-art' -> 3 tokens). Unit tests per PRD §09 segment cases: hexish f3a9c2e captured; 123456 not; 41+ hex chars not; CJK run skipped with ASCII resuming after.\n4. OUTPUT: RawToken[] consumed by P1.M2.T1.S2 (subword expansion). Whole tokens length 2-64; hexish 6-40 — bounds asserted.\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.4",
+                    "h2.22",
+                    "h3.3"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -143,9 +199,16 @@
                   "title": "camelCase/snake_case subword splitting + normalization",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T1.S1"],
-                  "prd_selectors": ["h1.4", "h2.22", "h3.4", "h3.5"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Each base token yields the WHOLE token plus sub-words as separate candidate drafts; sub-words < 4 chars are dropped as standalone candidates but the whole token survives (PRD §04).\n2. INPUT: RawToken[] from P1.M2.T1.S1.\n3. LOGIC: Implement expandCandidates(token: RawToken): CandidateDraft[] where CandidateDraft = { key: string (lowercase); display: string (casing as seen); properName: boolean (first char uppercase at extraction); isSubword: boolean; parentKey?: string (set on sub-words, = whole token's lowercase key) }. Split on '_' segments; split camelCase boundaries: lowercase->uppercase (fixR -> fix|R) and acronym-lowercase (HTTPServer -> HTTP|Server). Emit whole token (isSubword false) + each sub-word with length >= 4 (isSubword true, parentKey set). Tests per PRD §09: fixRoundingError -> whole + Rounding + Error (fix dropped, <4); HTTPServer -> HTTP + Server; session_token_valid -> whole + session + token + valid. Normalization: keys lowercase; display = most-recent-casing is a STORE concern — here display = casing of this sighting.\n4. OUTPUT: CandidateDraft[] — the exact shape the shape gate (P1.M2.T2.*) filters and score.ts (P1.M2.T3.S1) admits. Export the type from segment.ts (do not move to types.ts without updating consumers).\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M2.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Each base token yields the WHOLE token plus sub-words as separate candidate drafts; sub-words < 4 chars are dropped as standalone candidates but the whole token survives (PRD §04).\n2. INPUT: RawToken[] from P1.M2.T1.S1.\n3. LOGIC: Implement expandCandidates(token: RawToken): CandidateDraft[] where CandidateDraft = { key: string (lowercase); display: string (casing as seen); properName: boolean (first char uppercase at extraction); isSubword: boolean; parentKey?: string (set on sub-words, = whole token's lowercase key) }. Split on '_' segments; split camelCase boundaries: lowercase->uppercase (fixR -> fix|R) and acronym-lowercase (HTTPServer -> HTTP|Server). Emit whole token (isSubword false) + each sub-word with length >= 4 (isSubword true, parentKey set). Tests per PRD §09: fixRoundingError -> whole + Rounding + Error (fix dropped, <4); HTTPServer -> HTTP + Server; session_token_valid -> whole + session + token + valid. Normalization: keys lowercase; display = most-recent-casing is a STORE concern — here display = casing of this sighting.\n4. OUTPUT: CandidateDraft[] — the exact shape the shape gate (P1.M2.T2.*) filters and score.ts (P1.M2.T3.S1) admits. Export the type from segment.ts (do not move to types.ts without updating consumers).\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.4",
+                    "h2.22",
+                    "h3.4",
+                    "h3.5"
+                  ]
                 }
               ]
             },
@@ -162,9 +225,14 @@
                   "title": "Length, entropy, unigram-run, consonant-run rules",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S2"],
-                  "prd_selectors": ["h1.4", "h2.23"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The gate runs on EVERY segmented candidate BEFORE dictionary lookup (PRD §04) — order matters and is enforced by the ingest pipeline wiring (P1.M3.T2.S2), not here.\n2. INPUT: CandidateDraft from P1.M2.T1.S2; GateResult/GateRejectReason from src/core/types.ts.\n3. LOGIC: Implement passesShape(draft: CandidateDraft): GateResult in src/core/shapeGate.ts. Rules per PRD §04 shape gate: whole-token candidates must be 4-64 chars, sub-words 4-32 (reject tooShort/tooLong); character-entropy < 1.5 bits/char rejects (lowEntropy) — entropy over the draft's character distribution; any single-char run >= 4 rejects (unigramRun — kills aaaaa, aaaaaaa); consonant run >= 6 with no vowel and no digit rejects (consonantRun — qqqxxxzzzvvv). Reason precedence: tooShort/tooLong first, then secret (P1.M2.T2.S2), then lowEntropy, unigramRun, consonantRun. Accepts must include: zendesk, lwlock, NREL, f3a9c2e (hexish 6-12 passes).\n4. OUTPUT: GateResult consumed inline by the ingest pipeline; reject reasons feed IngestStats.rejectedByGate surfaced by /acwords (P1.M3.T4.S1).\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M1.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The gate runs on EVERY segmented candidate BEFORE dictionary lookup (PRD §04) — order matters and is enforced by the ingest pipeline wiring (P1.M3.T2.S2), not here.\n2. INPUT: CandidateDraft from P1.M2.T1.S2; GateResult/GateRejectReason from src/core/types.ts.\n3. LOGIC: Implement passesShape(draft: CandidateDraft): GateResult in src/core/shapeGate.ts. Rules per PRD §04 shape gate: whole-token candidates must be 4-64 chars, sub-words 4-32 (reject tooShort/tooLong); character-entropy < 1.5 bits/char rejects (lowEntropy) — entropy over the draft's character distribution; any single-char run >= 4 rejects (unigramRun — kills aaaaa, aaaaaaa); consonant run >= 6 with no vowel and no digit rejects (consonantRun — qqqxxxzzzvvv). Reason precedence: tooShort/tooLong first, then secret (P1.M2.T2.S2), then lowEntropy, unigramRun, consonantRun. Accepts must include: zendesk, lwlock, NREL, f3a9c2e (hexish 6-12 passes).\n4. OUTPUT: GateResult consumed inline by the ingest pipeline; reject reasons feed IngestStats.rejectedByGate surfaced by /acwords (P1.M3.T4.S1).\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.4",
+                    "h2.23"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -172,9 +240,15 @@
                   "title": "Secret-shape rejection rules (always-on, not configurable)",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T2.S1"],
-                  "prd_selectors": ["h1.4", "h2.23", "h2.9"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Acceptance-critical: pasted API keys must NEVER appear in suggestions (PRD §09 integration item 5). These rules are default-on with NO config escape hatch (PRD §08 'Not configurable').\n2. INPUT: passesShape skeleton from P1.M2.T2.S1 (add the secret check into the precedence chain before entropy rules).\n3. LOGIC: Add rule 'secret' (GateRejectReason 'secret') rejecting drafts that: match known key prefixes sk-, sk_, ghp_, gho_, github_pat_, xox[bpars]-, AKIA, AIza, eyJ (JWT bodies) — case-insensitive prefix match on the raw candidate; digit+symbol character ratio > 0.4 for length >= 16; base64-shaped run >= 24 chars with mixed case + digits + at least one of +//; pure-hex length >= 20 (private-key-shaped; NOTE: hexish 6-12 pass, hexish >= 20 reject — the 13-19 band is admitted-by-gate and only dictionary/admission can demote it); contains '@' plus a dot (belt and braces — emails segment out anyway). Tests per PRD §09: sk-abc123DEF456..., ghp_..., eyJhbG..., 20+ pure hex all rejected.\n4. OUTPUT: Complete GateResult contract — the pipeline never bypasses the gate, even for dictionary-hits (gate first, then lookup, per PRD §04).\n5. DOCS: none — internal module (security behavior is summarized changeset-level in P1.M4.T2)."
+                  "dependencies": [
+                    "P1.M2.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Acceptance-critical: pasted API keys must NEVER appear in suggestions (PRD §09 integration item 5). These rules are default-on with NO config escape hatch (PRD §08 'Not configurable').\n2. INPUT: passesShape skeleton from P1.M2.T2.S1 (add the secret check into the precedence chain before entropy rules).\n3. LOGIC: Add rule 'secret' (GateRejectReason 'secret') rejecting drafts that: match known key prefixes sk-, sk_, ghp_, gho_, github_pat_, xox[bpars]-, AKIA, AIza, eyJ (JWT bodies) — case-insensitive prefix match on the raw candidate; digit+symbol character ratio > 0.4 for length >= 16; base64-shaped run >= 24 chars with mixed case + digits + at least one of +//; pure-hex length >= 20 (private-key-shaped; NOTE: hexish 6-12 pass, hexish >= 20 reject — the 13-19 band is admitted-by-gate and only dictionary/admission can demote it); contains '@' plus a dot (belt and braces — emails segment out anyway). Tests per PRD §09: sk-abc123DEF456..., ghp_..., eyJhbG..., 20+ pure hex all rejected.\n4. OUTPUT: Complete GateResult contract — the pipeline never bypasses the gate, even for dictionary-hits (gate first, then lookup, per PRD §04).\n5. DOCS: none — internal module (security behavior is summarized changeset-level in P1.M4.T2).",
+                  "prd_selectors": [
+                    "h1.4",
+                    "h2.23",
+                    "h2.9"
+                  ]
                 }
               ]
             },
@@ -191,9 +265,16 @@
                   "title": "Admission decision: bands 220/120, subword clamp",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T2.S1", "P1.M2.T1.S2", "P1.M2.T2.S2"],
-                  "prd_selectors": ["h1.4", "h2.24"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Dictionary interface from P1.M1.T2.S1 returns quantized 0-255 or null. Constants 220/120 are the ONLY tuning surface and are baked, not configurable (PRD §04/§08).\n2. INPUT: A gated CandidateDraft (from P1.M2.T1.S2 + P1.M2.T2.S2), a Dictionary instance (from P1.M1.T2.S1 — mockable: stub lookup() in unit tests), and the parent whole token's resolved group when processing a sub-word.\n3. LOGIC: Implement admit(draft: CandidateDraft, dictionary: Dictionary, parentGroup?: RankGroup): RankGroup | 'reject' in src/core/score.ts. Bands per PRD §04 table: q !== null && q >= 220 -> reject (the, context); 120 <= q < 220 -> group 2 (tokenizer); q < 120 -> group 1 (rare-but-attested); q === null -> group 0 (rare-by-default, post shape gate). Sub-word candidates take the same table but their group is clamped to <= parentGroup + 1 (never rank above parent + 1). Export REJECT_COMMON_THRESHOLD=220 and MID_FREQ_THRESHOLD=120 as named constants.\n4. OUTPUT: RankGroup (or reject) that the ingest pipeline (P1.M3.T2.S2) folds into a Sighting for store.upsert (P1.M2.T4.S1).\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M1.T2.S1",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Dictionary interface from P1.M1.T2.S1 returns quantized 0-255 or null. Constants 220/120 are the ONLY tuning surface and are baked, not configurable (PRD §04/§08).\n2. INPUT: A gated CandidateDraft (from P1.M2.T1.S2 + P1.M2.T2.S2), a Dictionary instance (from P1.M1.T2.S1 — mockable: stub lookup() in unit tests), and the parent whole token's resolved group when processing a sub-word.\n3. LOGIC: Implement admit(draft: CandidateDraft, dictionary: Dictionary, parentGroup?: RankGroup): RankGroup | 'reject' in src/core/score.ts. Bands per PRD §04 table: q !== null && q >= 220 -> reject (the, context); 120 <= q < 220 -> group 2 (tokenizer); q < 120 -> group 1 (rare-but-attested); q === null -> group 0 (rare-by-default, post shape gate). Sub-word candidates take the same table but their group is clamped to <= parentGroup + 1 (never rank above parent + 1). Export REJECT_COMMON_THRESHOLD=220 and MID_FREQ_THRESHOLD=120 as named constants.\n4. OUTPUT: RankGroup (or reject) that the ingest pipeline (P1.M3.T2.S2) folds into a Sighting for store.upsert (P1.M2.T4.S1).\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.4",
+                    "h2.24"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -201,9 +282,16 @@
                   "title": "Salience formula, eviction score, ranking comparators",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T3.S1", "P1.M1.T1.S2"],
-                  "prd_selectors": ["h1.4", "h2.25", "h2.26"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Salience is computed at QUERY time from store stats (PRD §04) — never stored, never persisted. Weights 2.0/3.0/1.5/0.8/1.0 are baked constants, NOT configurable; tuning is fixture-driven per PRD §09 protocol.\n2. INPUT: Candidate from src/core/types.ts + the session's current message ordinal.\n3. LOGIC: Implement in src/core/score.ts: salience(c: Candidate, currentOrdinal: number): number = 2.0*log2(1+sessionCount) + 3.0*exp(-(currentOrdinal - lastSeenOrdinal)/20) + 1.5*(userTyped?1:0) + 0.8*(properName?1:0) + 1.0*(rankGroup===0?1.0:rankGroup===1?0.5:0). evictionScore(c, currentOrdinal) = salience * exp(-(currentOrdinal - lastSeenOrdinal)/50). compareCandidates(a, b, currentOrdinal): salience desc, then shorter candidate first, then lexicographic byte order on lowercase key. Tests per PRD §09: hand-computed orderings (frequency beats rare-once; recency decay tau=20; userTyped flips a tie).\n4. OUTPUT: These three functions are the ONLY ranking math in the codebase — query.ts (P1.M2.T5.S1) and store eviction (P1.M2.T4.S3) both call them; never reimplement.\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M2.T3.S1",
+                    "P1.M1.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Salience is computed at QUERY time from store stats (PRD §04) — never stored, never persisted. Weights 2.0/3.0/1.5/0.8/1.0 are baked constants, NOT configurable; tuning is fixture-driven per PRD §09 protocol.\n2. INPUT: Candidate from src/core/types.ts + the session's current message ordinal.\n3. LOGIC: Implement in src/core/score.ts: salience(c: Candidate, currentOrdinal: number): number = 2.0*log2(1+sessionCount) + 3.0*exp(-(currentOrdinal - lastSeenOrdinal)/20) + 1.5*(userTyped?1:0) + 0.8*(properName?1:0) + 1.0*(rankGroup===0?1.0:rankGroup===1?0.5:0). evictionScore(c, currentOrdinal) = salience * exp(-(currentOrdinal - lastSeenOrdinal)/50). compareCandidates(a, b, currentOrdinal): salience desc, then shorter candidate first, then lexicographic byte order on lowercase key. Tests per PRD §09: hand-computed orderings (frequency beats rare-once; recency decay tau=20; userTyped flips a tie).\n4. OUTPUT: These three functions are the ONLY ranking math in the codebase — query.ts (P1.M2.T5.S1) and store eviction (P1.M2.T4.S3) both call them; never reimplement.\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.4",
+                    "h2.25",
+                    "h2.26"
+                  ]
                 }
               ]
             },
@@ -220,9 +308,15 @@
                   "title": "Candidate map, upsert semantics, ordinal counter",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T3.S1"],
-                  "prd_selectors": ["h1.6", "h2.35", "h2.36"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: One entry per lowercase key; casing variants merge with display = most recent (PRD §04/§06). No persistence — the store is created at session_start and dropped at session_shutdown; nothing here touches disk.\n2. INPUT: Sighting from src/core/types.ts (produced by the ingest pipeline from CandidateDraft + admit()).\n3. LOGIC: Implement class CandidateStore in src/core/store.ts: Map<string, Candidate> primary; a per-session monotonic message ordinal counter (nextOrdinal()/currentOrdinal() — the pipeline calls nextOrdinal() once per message BEFORE processing its sightings); upsert(sighting: Sighting): absent -> create entry (sessionCount=1, first/lastSeenOrdinal=ordinal, flags set); present -> sessionCount++, lastSeenOrdinal=ordinal, refresh display casing to this sighting's, OR-in userTyped/properName, rankGroup = min(existing, new). Expose size, get(key), entries snapshot for tests. Stats accessor: rankGroupHistogram().\n4. OUTPUT: CandidateStore consumed by P1.M2.T4.S2 (prefix index), P1.M2.T4.S3 (eviction), P1.M2.T5.S1 (query), the restore replay (P1.M3.T2.S3), and /acwords (P1.M3.T4.S1).\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M2.T3.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: One entry per lowercase key; casing variants merge with display = most recent (PRD §04/§06). No persistence — the store is created at session_start and dropped at session_shutdown; nothing here touches disk.\n2. INPUT: Sighting from src/core/types.ts (produced by the ingest pipeline from CandidateDraft + admit()).\n3. LOGIC: Implement class CandidateStore in src/core/store.ts: Map<string, Candidate> primary; a per-session monotonic message ordinal counter (nextOrdinal()/currentOrdinal() — the pipeline calls nextOrdinal() once per message BEFORE processing its sightings); upsert(sighting: Sighting): absent -> create entry (sessionCount=1, first/lastSeenOrdinal=ordinal, flags set); present -> sessionCount++, lastSeenOrdinal=ordinal, refresh display casing to this sighting's, OR-in userTyped/properName, rankGroup = min(existing, new). Expose size, get(key), entries snapshot for tests. Stats accessor: rankGroupHistogram().\n4. OUTPUT: CandidateStore consumed by P1.M2.T4.S2 (prefix index), P1.M2.T4.S3 (eviction), P1.M2.T5.S1 (query), the restore replay (P1.M3.T2.S3), and /acwords (P1.M3.T4.S1).\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.6",
+                    "h2.35",
+                    "h2.36"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -230,9 +324,15 @@
                   "title": "Prefix index: dirty-flag lazy rebuild + binary search",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T4.S1"],
-                  "prd_selectors": ["h1.6", "h2.35", "h3.1"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The prefix index is maintained AT INGEST time so the keystroke-path query stays < 1 ms (PRD §02 query path). Lazy rebuild amortizes the ~20k-item sort: dirty on new-key insert, re-sorted on next query if dirty.\n2. INPUT: CandidateStore from P1.M2.T4.S1.\n3. LOGIC: Add to CandidateStore: private sortedKeys: string[] + dirty flag set in upsert() when a NEW key is created; method prefixRange(prefix: string): [start, end) indices into sortedKeys — triggers rebuild (Array.from(map.keys()).sort() byte-lexicographic) when dirty, then two binary searches (lower bound for prefix start, first key not starting with prefix). Case handling: prefix must arrive lowercased (query.ts lowercases; assert in test). Unit tests: insert 20k synthetic keys, query correctness after dirty and after rebuild; interleaved insert/query sequences.\n4. OUTPUT: prefixRange() consumed exclusively by query.ts (P1.M2.T5.S1). Nothing else may binary-search the store.\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M2.T4.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The prefix index is maintained AT INGEST time so the keystroke-path query stays < 1 ms (PRD §02 query path). Lazy rebuild amortizes the ~20k-item sort: dirty on new-key insert, re-sorted on next query if dirty.\n2. INPUT: CandidateStore from P1.M2.T4.S1.\n3. LOGIC: Add to CandidateStore: private sortedKeys: string[] + dirty flag set in upsert() when a NEW key is created; method prefixRange(prefix: string): [start, end) indices into sortedKeys — triggers rebuild (Array.from(map.keys()).sort() byte-lexicographic) when dirty, then two binary searches (lower bound for prefix start, first key not starting with prefix). Case handling: prefix must arrive lowercased (query.ts lowercases; assert in test). Unit tests: insert 20k synthetic keys, query correctness after dirty and after rebuild; interleaved insert/query sequences.\n4. OUTPUT: prefixRange() consumed exclusively by query.ts (P1.M2.T5.S1). Nothing else may binary-search the store.\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.6",
+                    "h2.35",
+                    "h3.1"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -240,9 +340,16 @@
                   "title": "Eviction: 20k cap, batch-256, ageFactor, userTyped protection",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T4.S1", "P1.M2.T3.S2"],
-                  "prd_selectors": ["h1.6", "h2.37", "h2.33"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Eviction applies during restore too (PRD §05 'Eviction interplay') — a huge replay may evict early words; survivors must be the right survivors because evictionScore uses the same salience formula. Sub-words count toward the same cap.\n2. INPUT: CandidateStore (P1.M2.T4.S1) + evictionScore from P1.M2.T3.S2.\n3. LOGIC: Add evictIfOverCap() called at the end of each ingest flush: hard cap 20,000 entries; on overflow, snapshot candidates, compute evictionScore = salience * exp(-(currentOrdinal - lastSeenOrdinal)/50), sort ascending, drop the tail in batches of 256 down to cap (removes from Map AND marks prefix index dirty). NEVER evict userTyped candidates unless the cap is exceeded by userTyped alone. Unit tests per PRD §09: insert 20,001 -> exactly one eviction, lowest evictionScore evicted, userTyped survives.\n4. OUTPUT: Bounded store that restore (P1.M3.T2.S3) and live ingest (P1.M3.T2.S2) both rely on. Export STORE_CAP = 20_000 and EVICT_BATCH = 256 as named constants.\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M2.T4.S1",
+                    "P1.M2.T3.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Eviction applies during restore too (PRD §05 'Eviction interplay') — a huge replay may evict early words; survivors must be the right survivors because evictionScore uses the same salience formula. Sub-words count toward the same cap.\n2. INPUT: CandidateStore (P1.M2.T4.S1) + evictionScore from P1.M2.T3.S2.\n3. LOGIC: Add evictIfOverCap() called at the end of each ingest flush: hard cap 20,000 entries; on overflow, snapshot candidates, compute evictionScore = salience * exp(-(currentOrdinal - lastSeenOrdinal)/50), sort ascending, drop the tail in batches of 256 down to cap (removes from Map AND marks prefix index dirty). NEVER evict userTyped candidates unless the cap is exceeded by userTyped alone. Unit tests per PRD §09: insert 20,001 -> exactly one eviction, lowest evictionScore evicted, userTyped survives.\n4. OUTPUT: Bounded store that restore (P1.M3.T2.S3) and live ingest (P1.M3.T2.S2) both rely on. Export STORE_CAP = 20_000 and EVICT_BATCH = 256 as named constants.\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.6",
+                    "h2.37",
+                    "h2.33"
+                  ]
                 }
               ]
             },
@@ -259,9 +366,17 @@
                   "title": "rankMatches: prefix search + salience ranking + top-N",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T4.S2", "P1.M2.T3.S2"],
-                  "prd_selectors": ["h1.4", "h2.26", "h2.27", "h3.1"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: This function runs on EVERY keystroke (called from the provider, P1.M3.T3.S2) and must complete < 1 ms on a 20k-candidate store (PRD §02/§09 perf gates). No allocation-heavy work; the prefix index does the heavy lifting.\n2. INPUT: store: CandidateStore (P1.M2.T4.S2 prefixRange), salience + compareCandidates from P1.M2.T3.S2, lowercase prefix string, options { limit: number (default 8 = maxSuggestions) }.\n3. LOGIC: Implement rankMatches(store, prefix, opts): RankedMatch[] in src/core/query.ts: lowercase the prefix (case-insensitive matching per PRD §04); store.prefixRange(prefix) -> gather Candidates; compute salience at store.currentOrdinal(); sort via compareCandidates; take top opts.limit; map to RankedMatch { key, display (candidate's display casing — insertion uses it, e.g. typed nrel -> NREL), description: 'session x' + sessionCount, salience }. Empty range -> empty array (provider then delegates — never an empty menu).\n4. OUTPUT: RankedMatch[] mapped by provider.ts (P1.M3.T3.S2) into pi's AutocompleteItem { value, label, description }. This is the M1 ranking contract; M2 phrase suppression (P2.M1.T3.S1) EXTENDS this function, so keep it open for extension (accept an optional suppression/phrase hook parameter).\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M2.T4.S2",
+                    "P1.M2.T3.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: This function runs on EVERY keystroke (called from the provider, P1.M3.T3.S2) and must complete < 1 ms on a 20k-candidate store (PRD §02/§09 perf gates). No allocation-heavy work; the prefix index does the heavy lifting.\n2. INPUT: store: CandidateStore (P1.M2.T4.S2 prefixRange), salience + compareCandidates from P1.M2.T3.S2, lowercase prefix string, options { limit: number (default 8 = maxSuggestions) }.\n3. LOGIC: Implement rankMatches(store, prefix, opts): RankedMatch[] in src/core/query.ts: lowercase the prefix (case-insensitive matching per PRD §04); store.prefixRange(prefix) -> gather Candidates; compute salience at store.currentOrdinal(); sort via compareCandidates; take top opts.limit; map to RankedMatch { key, display (candidate's display casing — insertion uses it, e.g. typed nrel -> NREL), description: 'session x' + sessionCount, salience }. Empty range -> empty array (provider then delegates — never an empty menu).\n4. OUTPUT: RankedMatch[] mapped by provider.ts (P1.M3.T3.S2) into pi's AutocompleteItem { value, label, description }. This is the M1 ranking contract; M2 phrase suppression (P2.M1.T3.S1) EXTENDS this function, so keep it open for extension (accept an optional suppression/phrase hook parameter).\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.4",
+                    "h2.26",
+                    "h2.27",
+                    "h3.1"
+                  ]
                 }
               ]
             }
@@ -287,9 +402,17 @@
                   "title": "Config load/merge/validate with defaults + repair",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2"],
-                  "prd_selectors": ["h1.8", "h2.45", "h2.46", "h2.47"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: pi has NO extension-settings API — the extension reads plain JSON itself (PRD §08). Paths: os.homedir() + '/.pi/agent/hapax.json' (user-global), ctx.cwd + '/.pi/hapax.json' (project-local, ONLY when ctx.isProjectTrusted() — verified to exist on ExtensionContext). Inject the notifier so tests stay pure.\n2. INPUT: Filesystem (two optional JSON files) + an injected notify(msg, 'warning') callback (the real one is ctx.ui.notify; mock in tests). NO pi imports needed beyond types — keep config.ts importable with only node builtins.\n3. LOGIC: Implement loadConfig(opts: { cwd: string; projectTrusted: boolean; notify: (msg: string, level: 'warning') => void }): HapaxConfig in src/pi/config.ts. Defaults: triggerChar '#', threshold 2, maxSuggestions 8, enablePhrases true (INERT in M1), debug false. Load order: defaults -> user-global -> project-local (later wins). Malformed JSON -> notify once ('hapax: malformed <path>, using defaults') + fall back to previous layer; missing files are silent/normal. Validation: triggerChar must match /^[^\\w\\s]$/ or be '' (disables trigger mode); threshold clamped 1-3; maxSuggestions clamped 1-20; enablePhrases/debug coerced boolean — log via notify when a value was repaired. NOT configurable ever: salience weights, admission bands, gate rules, caps, debounce intervals.\n4. OUTPUT: HapaxConfig (type exported from config.ts) consumed by provider.ts (triggerChar/threshold/maxSuggestions), ingest.ts (enablePhrases in M2), index.ts (debug for /acwords).\n5. DOCS: [Mode A] Update README.md 'Configuration' section: schema table, file paths, precedence, repair behavior. Rides WITH the work."
+                  "dependencies": [
+                    "P1.M1.T1.S1",
+                    "P1.M1.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: pi has NO extension-settings API — the extension reads plain JSON itself (PRD §08). Paths: os.homedir() + '/.pi/agent/hapax.json' (user-global), ctx.cwd + '/.pi/hapax.json' (project-local, ONLY when ctx.isProjectTrusted() — verified to exist on ExtensionContext). Inject the notifier so tests stay pure.\n2. INPUT: Filesystem (two optional JSON files) + an injected notify(msg, 'warning') callback (the real one is ctx.ui.notify; mock in tests). NO pi imports needed beyond types — keep config.ts importable with only node builtins.\n3. LOGIC: Implement loadConfig(opts: { cwd: string; projectTrusted: boolean; notify: (msg: string, level: 'warning') => void }): HapaxConfig in src/pi/config.ts. Defaults: triggerChar '#', threshold 2, maxSuggestions 8, enablePhrases true (INERT in M1), debug false. Load order: defaults -> user-global -> project-local (later wins). Malformed JSON -> notify once ('hapax: malformed <path>, using defaults') + fall back to previous layer; missing files are silent/normal. Validation: triggerChar must match /^[^\\w\\s]$/ or be '' (disables trigger mode); threshold clamped 1-3; maxSuggestions clamped 1-20; enablePhrases/debug coerced boolean — log via notify when a value was repaired. NOT configurable ever: salience weights, admission bands, gate rules, caps, debounce intervals.\n4. OUTPUT: HapaxConfig (type exported from config.ts) consumed by provider.ts (triggerChar/threshold/maxSuggestions), ingest.ts (enablePhrases in M2), index.ts (debug for /acwords).\n5. DOCS: [Mode A] Update README.md 'Configuration' section: schema table, file paths, precedence, repair behavior. Rides WITH the work.",
+                  "prd_selectors": [
+                    "h1.8",
+                    "h2.45",
+                    "h2.46",
+                    "h2.47"
+                  ]
                 }
               ]
             },
@@ -306,9 +429,15 @@
                   "title": "extractText: AgentMessage role/content handling",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S2", "P1.M2.T1.S2"],
-                  "prd_selectors": ["h1.5", "h2.28"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE (CRITICAL — validated types): UserMessage.content is string | (TextContent|ImageContent)[]; AssistantMessage.content is (TextContent|ThinkingContent|ToolCall)[]; tool calls are type 'toolCall' (NOT 'tool_use' as the PRD prose says); roles are exactly 'user' | 'assistant' | 'toolResult' (+ custom roles -> ignore). See plan/001_88fc3a66fd74/architecture/pi_extension_api.md §3.\n2. INPUT: An AgentMessage (type-only import from @earendil-works/pi-coding-agent — devDependency; tests construct plain object literals, no pi runtime needed).\n3. LOGIC: Implement extractText(message: AgentMessage): string | null in src/pi/ingest.ts: role 'user' -> if content is string return it; else join blocks where block.type === 'text' (images ignored); role 'assistant' -> join ONLY blocks with type === 'text' (thinking skipped, toolCall skipped — code fences inside text blocks are INCLUDED as agent output); anything else (toolResult, custom) -> null. Join with '\\n'. Never mutate the message; never hold it after return (PRD §05 'must NOT').\n4. OUTPUT: string | null consumed by P1.M3.T2.S2's pipeline. Unit tests with all three roles + string/array user content + text/thinking/toolCall assistant mixes.\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M1.T1.S2",
+                    "P1.M2.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE (CRITICAL — validated types): UserMessage.content is string | (TextContent|ImageContent)[]; AssistantMessage.content is (TextContent|ThinkingContent|ToolCall)[]; tool calls are type 'toolCall' (NOT 'tool_use' as the PRD prose says); roles are exactly 'user' | 'assistant' | 'toolResult' (+ custom roles -> ignore). See plan/001_88fc3a66fd74/architecture/pi_extension_api.md §3.\n2. INPUT: An AgentMessage (type-only import from @earendil-works/pi-coding-agent — devDependency; tests construct plain object literals, no pi runtime needed).\n3. LOGIC: Implement extractText(message: AgentMessage): string | null in src/pi/ingest.ts: role 'user' -> if content is string return it; else join blocks where block.type === 'text' (images ignored); role 'assistant' -> join ONLY blocks with type === 'text' (thinking skipped, toolCall skipped — code fences inside text blocks are INCLUDED as agent output); anything else (toolResult, custom) -> null. Join with '\\n'. Never mutate the message; never hold it after return (PRD §05 'must NOT').\n4. OUTPUT: string | null consumed by P1.M3.T2.S2's pipeline. Unit tests with all three roles + string/array user content + text/thinking/toolCall assistant mixes.\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.5",
+                    "h2.28"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -316,9 +445,21 @@
                   "title": "IngestPipeline: 300ms debounce queue + chunked core pipeline + stats",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T2.S1", "P1.M2.T2.S2", "P1.M2.T3.S1", "P1.M2.T4.S1", "P1.M1.T2.S1"],
-                  "prd_selectors": ["h1.5", "h2.29", "h2.30", "h2.34", "h2.12"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: message_end handlers may be async; pi awaits them. Debounce exists because agents emit several messages in quick succession during tool loops (PRD §05). All ingest work stays OFF the keystroke path by construction (only getSuggestions is on it).\n2. INPUT: extractText (P1.M3.T2.S1); core chain: tokenize (P1.M2.T1.S1), expandCandidates (P1.M2.T1.S2), passesShape (P1.M2.T2.S2), admit (P1.M2.T3.S1), CandidateStore.upsert + evictIfOverCap (P1.M2.T4.S1/S3); Dictionary from P1.M1.T2.S1 (injectable — tests stub lookup()).\n3. LOGIC: Implement class IngestPipeline in src/pi/ingest.ts: onMessageEnd(message) -> text = extractText; null -> return; push to pending queue, (re)start 300ms debounce timer; on fire, process ALL queued texts in order: store.nextOrdinal() once per message, then for each text process in <= 64KB slices, awaiting a yield between slices (scheduler.yield() if available else setImmediate — guard with typeof checks), per slice: tokenize -> expandCandidates -> gate -> admit -> upsert (sub-words only if parent whole token admitted... NO: each candidate admits independently per PRD §04, subword clamp only affects group); accumulate IngestStats (wordsSeen, admitted, rejectedByGate by reason); finish with evictIfOverCap(). The handler returns void — NEVER a { message } result (never mutate, PRD §05). Tests: vi.useFakeTimers for debounce; fake yield fn to assert chunk boundaries; dictionary stub.\n4. OUTPUT: The pipeline instance owned by index.ts (P1.M3.T5.S1); stats accessor for /acwords (P1.M3.T4.S1); M2 n-gram capture (P2.M1.T1.S1) hooks in here (keep the per-message admitted-whole-token sequence accessible via an optional callback parameter).\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M3.T2.S1",
+                    "P1.M2.T2.S2",
+                    "P1.M2.T3.S1",
+                    "P1.M2.T4.S1",
+                    "P1.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: message_end handlers may be async; pi awaits them. Debounce exists because agents emit several messages in quick succession during tool loops (PRD §05). All ingest work stays OFF the keystroke path by construction (only getSuggestions is on it).\n2. INPUT: extractText (P1.M3.T2.S1); core chain: tokenize (P1.M2.T1.S1), expandCandidates (P1.M2.T1.S2), passesShape (P1.M2.T2.S2), admit (P1.M2.T3.S1), CandidateStore.upsert + evictIfOverCap (P1.M2.T4.S1/S3); Dictionary from P1.M1.T2.S1 (injectable — tests stub lookup()).\n3. LOGIC: Implement class IngestPipeline in src/pi/ingest.ts: onMessageEnd(message) -> text = extractText; null -> return; push to pending queue, (re)start 300ms debounce timer; on fire, process ALL queued texts in order: store.nextOrdinal() once per message, then for each text process in <= 64KB slices, awaiting a yield between slices (scheduler.yield() if available else setImmediate — guard with typeof checks), per slice: tokenize -> expandCandidates -> gate -> admit -> upsert (sub-words only if parent whole token admitted... NO: each candidate admits independently per PRD §04, subword clamp only affects group); accumulate IngestStats (wordsSeen, admitted, rejectedByGate by reason); finish with evictIfOverCap(). The handler returns void — NEVER a { message } result (never mutate, PRD §05). Tests: vi.useFakeTimers for debounce; fake yield fn to assert chunk boundaries; dictionary stub.\n4. OUTPUT: The pipeline instance owned by index.ts (P1.M3.T5.S1); stats accessor for /acwords (P1.M3.T4.S1); M2 n-gram capture (P2.M1.T1.S1) hooks in here (keep the per-message admitted-whole-token sequence accessible via an optional callback parameter).\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.5",
+                    "h2.29",
+                    "h2.30",
+                    "h2.34",
+                    "h2.12"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -326,9 +467,15 @@
                   "title": "Session restore: history replay via sessionManager",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T2.S2"],
-                  "prd_selectors": ["h1.5", "h2.31", "h2.33"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE (validated API): history comes from ctx.sessionManager (ReadonlySessionManager): getBranch() returns current-branch entries leaf->root (REVERSE for oldest->newest — faithful to live context; primary source); getEntries() returns ALL append-only entries oldest->newest incl. abandoned branches (fallback when branch is unavailable/empty). Entries: filter type === 'message' -> entry.message. PRD budget: 200k tokens (~800KB) in 30-50ms background.\n2. INPUT: ctx.sessionManager from the session_start handler (P1.M3.T5.S1 passes it in); the IngestPipeline from P1.M3.T2.S2 (identical gates/counters — PRD demands the SAME pipeline).\n3. LOGIC: Implement restoreFromHistory(pipeline, sessionManager): void in src/pi/ingest.ts: read branch (reversed) or fallback entries; if empty -> no-op; else replay oldest->newest through pipeline's queue-processing path in the background (chunked; store fills progressively; debounced startup is fine). Oldest-first ordering is load-bearing: lastSeen ordinals and display casing must end in the correct final state. Runs whenever history exists regardless of session_start reason (reasons 'startup'/'resume' named by PRD; 'reload'/'fork' also carry history — verified). Eviction cap applies during replay (PRD §05 interplay).\n4. OUTPUT: A populated store minutes after session start; completions available. Consumed by index.ts (P1.M3.T5.S1) inside session_start.\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M3.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE (validated API): history comes from ctx.sessionManager (ReadonlySessionManager): getBranch() returns current-branch entries leaf->root (REVERSE for oldest->newest — faithful to live context; primary source); getEntries() returns ALL append-only entries oldest->newest incl. abandoned branches (fallback when branch is unavailable/empty). Entries: filter type === 'message' -> entry.message. PRD budget: 200k tokens (~800KB) in 30-50ms background.\n2. INPUT: ctx.sessionManager from the session_start handler (P1.M3.T5.S1 passes it in); the IngestPipeline from P1.M3.T2.S2 (identical gates/counters — PRD demands the SAME pipeline).\n3. LOGIC: Implement restoreFromHistory(pipeline, sessionManager): void in src/pi/ingest.ts: read branch (reversed) or fallback entries; if empty -> no-op; else replay oldest->newest through pipeline's queue-processing path in the background (chunked; store fills progressively; debounced startup is fine). Oldest-first ordering is load-bearing: lastSeen ordinals and display casing must end in the correct final state. Runs whenever history exists regardless of session_start reason (reasons 'startup'/'resume' named by PRD; 'reload'/'fork' also carry history — verified). Eviction cap applies during replay (PRD §05 interplay).\n4. OUTPUT: A populated store minutes after session start; completions available. Consumed by index.ts (P1.M3.T5.S1) inside session_start.\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.5",
+                    "h2.31",
+                    "h2.33"
+                  ]
                 }
               ]
             },
@@ -345,9 +492,16 @@
                   "title": "extractMatchState: trigger + threshold regexes, priority, delegation gate",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T1.S1", "P1.M2.T5.S1"],
-                  "prd_selectors": ["h1.7", "h2.40", "h2.39"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: pi calls getSuggestions(lines, cursorLine, cursorCol, options) with the full editor buffer; the official docs example matches the SAME trigger regex on text-before-cursor: /(?:^|[ \\t])#([^\\s#]*)$/ — verified in pi docs/extensions.md ~line 2570. getSuggestions is ASYNC (Promise<AutocompleteSuggestions | null>) where AutocompleteSuggestions = { items, prefix } — prefix is what the editor replaces.\n2. INPUT: HapaxConfig from P1.M3.T1.S1 (triggerChar, threshold); the provider contract type from @earendil-works/pi-tui (type-only import).\n3. LOGIC: Implement extractMatchState(lines: string[], line: number, col: number, config): { mode: 'trigger'; fragment: string; prefix: string } | { mode: 'threshold'; fragment: string; prefix: string } | null in src/pi/provider.ts — PURE function. Trigger: regex /(?:^|[ \\t])#([^\\s#]*)$/ built from config.triggerChar (escape it for regex); fragment = group 1 (0-char minimum: '#' alone lists top-salience candidates); prefix = '#' + fragment (trigger char consumed on completion). Threshold: regex /[A-Za-z][A-Za-z0-9_]*$/ on text-before-cursor; fires when fragment length >= config.threshold (1-3), EVERYWHERE, any word start; prefix = bare fragment. Priority: trigger match wins, else threshold, else null (delegate to current). Tests per PRD §09: '#', '#ze', mid-line 'foo #ze' match; 'foo#ze' does NOT (needs start/whitespace); '##' no match; 1-char fragment with threshold 2 -> null (delegates); 2 chars -> match.\n4. OUTPUT: Match state consumed by P1.M3.T3.S2. null means DELEGATE — path/slash completion must keep working exactly as before.\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M3.T1.S1",
+                    "P1.M2.T5.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: pi calls getSuggestions(lines, cursorLine, cursorCol, options) with the full editor buffer; the official docs example matches the SAME trigger regex on text-before-cursor: /(?:^|[ \\t])#([^\\s#]*)$/ — verified in pi docs/extensions.md ~line 2570. getSuggestions is ASYNC (Promise<AutocompleteSuggestions | null>) where AutocompleteSuggestions = { items, prefix } — prefix is what the editor replaces.\n2. INPUT: HapaxConfig from P1.M3.T1.S1 (triggerChar, threshold); the provider contract type from @earendil-works/pi-tui (type-only import).\n3. LOGIC: Implement extractMatchState(lines: string[], line: number, col: number, config): { mode: 'trigger'; fragment: string; prefix: string } | { mode: 'threshold'; fragment: string; prefix: string } | null in src/pi/provider.ts — PURE function. Trigger: regex /(?:^|[ \\t])#([^\\s#]*)$/ built from config.triggerChar (escape it for regex); fragment = group 1 (0-char minimum: '#' alone lists top-salience candidates); prefix = '#' + fragment (trigger char consumed on completion). Threshold: regex /[A-Za-z][A-Za-z0-9_]*$/ on text-before-cursor; fires when fragment length >= config.threshold (1-3), EVERYWHERE, any word start; prefix = bare fragment. Priority: trigger match wins, else threshold, else null (delegate to current). Tests per PRD §09: '#', '#ze', mid-line 'foo #ze' match; 'foo#ze' does NOT (needs start/whitespace); '##' no match; 1-char fragment with threshold 2 -> null (delegates); 2 chars -> match.\n4. OUTPUT: Match state consumed by P1.M3.T3.S2. null means DELEGATE — path/slash completion must keep working exactly as before.\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.7",
+                    "h2.40",
+                    "h2.39"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -355,9 +509,17 @@
                   "title": "Live synchronous query + AutocompleteSuggestions mapping",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M3.T3.S1"],
-                  "prd_selectors": ["h1.7", "h2.40", "h2.44", "h2.27", "h3.1"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: 'Synchronous search, every keystroke' (PRD §07) is implemented INSIDE the async getSuggestions: call rankMatches synchronously (no awaits, no I/O), return an already-resolved { items, prefix }. options.signal is an AbortSignal — check signal.aborted first and delegate/return null when set. Tab resolves against this live cached result and is NEVER gated by the display debounce.\n2. INPUT: extractMatchState (P1.M3.T3.S1); rankMatches from P1.M2.T5.S1; CandidateStore instance (created by index.ts); config.maxSuggestions.\n3. LOGIC: Implement the hapax provider factory createHapaxProvider(store, config, current): AutocompleteProvider in src/pi/provider.ts: triggerCharacters: config.triggerChar ? [config.triggerChar] : undefined; getSuggestions: if signal.aborted -> delegate; state = extractMatchState(...); if null -> return current.getSuggestions(lines, line, col, options) UNCHANGED (delegation — do not touch args); if state -> matches = rankMatches(store, fragment, { limit: maxSuggestions }); if matches.length === 0 -> delegate (zero candidates never render a menu); else cache { matches, prefix } as the live result (for the debounce layer and M2 chain arming) and map to { items: matches.map(m => ({ value: m.display, label: m.display, description: m.description })), prefix: state.prefix }. applyCompletion: delegate to current.applyCompletion(lines, line, col, item, prefix). shouldTriggerFileCompletion: current.shouldTriggerFileCompletion?.(...) ?? true.\n4. OUTPUT: A working provider registered by index.ts (P1.M3.T5.S1); the live-result cache is the INPUT for P1.M3.T3.S3 (debounce/hysteresis) and P2.M2.T2.S1 (chain arming — tag hapax items so Tab acceptance is detectable later, e.g. description prefix or an internal value->key side map).\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M3.T3.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: 'Synchronous search, every keystroke' (PRD §07) is implemented INSIDE the async getSuggestions: call rankMatches synchronously (no awaits, no I/O), return an already-resolved { items, prefix }. options.signal is an AbortSignal — check signal.aborted first and delegate/return null when set. Tab resolves against this live cached result and is NEVER gated by the display debounce.\n2. INPUT: extractMatchState (P1.M3.T3.S1); rankMatches from P1.M2.T5.S1; CandidateStore instance (created by index.ts); config.maxSuggestions.\n3. LOGIC: Implement the hapax provider factory createHapaxProvider(store, config, current): AutocompleteProvider in src/pi/provider.ts: triggerCharacters: config.triggerChar ? [config.triggerChar] : undefined; getSuggestions: if signal.aborted -> delegate; state = extractMatchState(...); if null -> return current.getSuggestions(lines, line, col, options) UNCHANGED (delegation — do not touch args); if state -> matches = rankMatches(store, fragment, { limit: maxSuggestions }); if matches.length === 0 -> delegate (zero candidates never render a menu); else cache { matches, prefix } as the live result (for the debounce layer and M2 chain arming) and map to { items: matches.map(m => ({ value: m.display, label: m.display, description: m.description })), prefix: state.prefix }. applyCompletion: delegate to current.applyCompletion(lines, line, col, item, prefix). shouldTriggerFileCompletion: current.shouldTriggerFileCompletion?.(...) ?? true.\n4. OUTPUT: A working provider registered by index.ts (P1.M3.T5.S1); the live-result cache is the INPUT for P1.M3.T3.S3 (debounce/hysteresis) and P2.M2.T2.S1 (chain arming — tag hapax items so Tab acceptance is detectable later, e.g. description prefix or an internal value->key side map).\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.7",
+                    "h2.40",
+                    "h2.44",
+                    "h2.27",
+                    "h3.1"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -365,9 +527,16 @@
                   "title": "Display debounce (100ms) + flicker hysteresis state machine",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T3.S2"],
-                  "prd_selectors": ["h1.7", "h2.41", "h3.2", "h2.1"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: pi re-invokes getSuggestions per keystroke; OUR provider decides what to RETURN, so the debounce suppresses non-empty result SETS that differ from the currently displayed set within 100ms of last paint (return the previous displayed set instead; schedule a swap on a 100ms timer; a newer keystroke replaces the pending set). Tab is never delayed: it resolves the live result (P1.M3.T3.S2 cache), accepting the documented cosmetic 'Tab-before-paint' limitation (PRD §01).\n2. INPUT: The live result + provider from P1.M3.T3.S2; vi.useFakeTimers in tests.\n3. LOGIC: Add PopupScheduler state to provider.ts: lastPaintAt timestamp, displayedSet signature (e.g. items' values joined), pendingSet + timer. Rules (PRD §07): empty candidate set -> return delegate/empty immediately (empty = invisible, menu never renders with zero candidates); a set arriving < 100ms after last paint that DIFFERS -> return the currently displayed set and schedule the swap at +100ms (superseded by newer keystrokes); NARROWING keystroke (zend -> zendk, new set subset of old) must not close-and-reopen — treat as in-place narrow (same open menu, no close emission); close events: disqualification (zero candidates), cursor move, escape, space; a close followed by a qualifying keystroke within 200ms re-opens fresh (no stale set). Assertion style per PRD §09: record the provider's emission sequence and assert no close+reopen pairs for narrowing.\n4. OUTPUT: Flicker-free provider consumed by index.ts (P1.M3.T5.S1). Timer ownership: all timers stored for session_shutdown cleanup (PRD §02 lifecycle).\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M3.T3.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: pi re-invokes getSuggestions per keystroke; OUR provider decides what to RETURN, so the debounce suppresses non-empty result SETS that differ from the currently displayed set within 100ms of last paint (return the previous displayed set instead; schedule a swap on a 100ms timer; a newer keystroke replaces the pending set). Tab is never delayed: it resolves the live result (P1.M3.T3.S2 cache), accepting the documented cosmetic 'Tab-before-paint' limitation (PRD §01).\n2. INPUT: The live result + provider from P1.M3.T3.S2; vi.useFakeTimers in tests.\n3. LOGIC: Add PopupScheduler state to provider.ts: lastPaintAt timestamp, displayedSet signature (e.g. items' values joined), pendingSet + timer. Rules (PRD §07): empty candidate set -> return delegate/empty immediately (empty = invisible, menu never renders with zero candidates); a set arriving < 100ms after last paint that DIFFERS -> return the currently displayed set and schedule the swap at +100ms (superseded by newer keystrokes); NARROWING keystroke (zend -> zendk, new set subset of old) must not close-and-reopen — treat as in-place narrow (same open menu, no close emission); close events: disqualification (zero candidates), cursor move, escape, space; a close followed by a qualifying keystroke within 200ms re-opens fresh (no stale set). Assertion style per PRD §09: record the provider's emission sequence and assert no close+reopen pairs for narrowing.\n4. OUTPUT: Flicker-free provider consumed by index.ts (P1.M3.T5.S1). Timer ownership: all timers stored for session_shutdown cleanup (PRD §02 lifecycle).\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h1.7",
+                    "h2.41",
+                    "h3.2",
+                    "h2.1"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -375,9 +544,17 @@
                   "title": "Never-hijack acceptance tests (delegation, zero-candidate, pass-through)",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M3.T3.S3"],
-                  "prd_selectors": ["h1.7", "h2.42", "h2.41", "h2.9", "h2.1"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Design invariant #1 (never hijack typing) is acceptance-critical (PRD §01/§07). The provider only ever RETURNS suggestions; pi owns all key handling — so the tests assert delegation correctness and emission discipline rather than key capture.\n2. INPUT: The complete provider from P1.M3.T3.S3 + a mock `current` AutocompleteProvider recording every call (vi.fn wrappers).\n3. LOGIC: Write test/provider.test.ts cases per PRD §09: (a) no fragment (empty line, prose without match) -> current.getSuggestions called with UNCHANGED args (path/slash completion intact, incl. quoted paths); (b) applyCompletion ALWAYS delegates to current.applyCompletion; (c) shouldTriggerFileCompletion delegates with ?? true when current lacks it; (d) zero-candidate query (empty store or common-word-rejected) -> delegation/empty, never a menu; (e) typing prose that only contains common words (the, context — quant >= 220 rejected at admission, never in store) produces no hapax items ever; (f) Tab with no visible/selected suggestion is pi stock behavior — assert provider returns null/delegates so nothing intercepts; (g) case-insensitive match nrel -> item.value === 'NREL' (display casing inserted).\n4. OUTPUT: Green provider.test.ts — the regression net for all later M2 work (P2.M2.T2.S1 must not break it).\n5. DOCS: none — tests."
+                  "dependencies": [
+                    "P1.M3.T3.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Design invariant #1 (never hijack typing) is acceptance-critical (PRD §01/§07). The provider only ever RETURNS suggestions; pi owns all key handling — so the tests assert delegation correctness and emission discipline rather than key capture.\n2. INPUT: The complete provider from P1.M3.T3.S3 + a mock `current` AutocompleteProvider recording every call (vi.fn wrappers).\n3. LOGIC: Write test/provider.test.ts cases per PRD §09: (a) no fragment (empty line, prose without match) -> current.getSuggestions called with UNCHANGED args (path/slash completion intact, incl. quoted paths); (b) applyCompletion ALWAYS delegates to current.applyCompletion; (c) shouldTriggerFileCompletion delegates with ?? true when current lacks it; (d) zero-candidate query (empty store or common-word-rejected) -> delegation/empty, never a menu; (e) typing prose that only contains common words (the, context — quant >= 220 rejected at admission, never in store) produces no hapax items ever; (f) Tab with no visible/selected suggestion is pi stock behavior — assert provider returns null/delegates so nothing intercepts; (g) case-insensitive match nrel -> item.value === 'NREL' (display casing inserted).\n4. OUTPUT: Green provider.test.ts — the regression net for all later M2 work (P2.M2.T2.S1 must not break it).\n5. DOCS: none — tests.",
+                  "prd_selectors": [
+                    "h1.7",
+                    "h2.42",
+                    "h2.41",
+                    "h2.9",
+                    "h2.1"
+                  ]
                 }
               ]
             },
@@ -394,9 +571,15 @@
                   "title": "registerCommand('acwords') store/stats dump",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M3.T2.S2", "P1.M3.T1.S1"],
-                  "prd_selectors": ["h1.8", "h2.48"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE (validated API): pi.registerCommand(name, { description, handler: async (args, ctx) => void }) registers /acwords. ctx.ui.notify(message, 'info'|'warning'|'error') — the PRD's 'warn' level does not exist; use 'info'/'warning'. Registration happens inside session_start (config is loaded there); guard ctx.hasUI/mode === 'tui' for widget output.\n2. INPUT: CandidateStore (P1.M2.T4.S1) — top-50 by salience, size, rank-group histogram; IngestStats (P1.M3.T2.S2) — shape-gate rejection counts; config.debug flag.\n3. LOGIC: In src/pi/index.ts (or a small src/pi/debug.ts helper), when config.debug === true: pi.registerCommand('acwords', { description: 'hapax: dump candidate store stats', handler }) — dump via ctx.ui.notify (multi-line string): top-50 candidates by salience (display + count + group), store size, rank-group histogram, gate rejection counts. NEVER logs message bodies (store holds words + counters only — PRD §08). Registration is per-session (idempotent re-registration on session_start 'reload' is acceptable).\n4. OUTPUT: /acwords usable in a live session for tuning-protocol work (PRD §09). M2 extends the dump (P2.M2.T3.S1).\n5. DOCS: [Mode A] Update README.md 'Debug' section: enabling debug flag, what /acwords prints. Rides WITH the work."
+                  "dependencies": [
+                    "P1.M3.T2.S2",
+                    "P1.M3.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE (validated API): pi.registerCommand(name, { description, handler: async (args, ctx) => void }) registers /acwords. ctx.ui.notify(message, 'info'|'warning'|'error') — the PRD's 'warn' level does not exist; use 'info'/'warning'. Registration happens inside session_start (config is loaded there); guard ctx.hasUI/mode === 'tui' for widget output.\n2. INPUT: CandidateStore (P1.M2.T4.S1) — top-50 by salience, size, rank-group histogram; IngestStats (P1.M3.T2.S2) — shape-gate rejection counts; config.debug flag.\n3. LOGIC: In src/pi/index.ts (or a small src/pi/debug.ts helper), when config.debug === true: pi.registerCommand('acwords', { description: 'hapax: dump candidate store stats', handler }) — dump via ctx.ui.notify (multi-line string): top-50 candidates by salience (display + count + group), store size, rank-group histogram, gate rejection counts. NEVER logs message bodies (store holds words + counters only — PRD §08). Registration is per-session (idempotent re-registration on session_start 'reload' is acceptable).\n4. OUTPUT: /acwords usable in a live session for tuning-protocol work (PRD §09). M2 extends the dump (P2.M2.T3.S1).\n5. DOCS: [Mode A] Update README.md 'Debug' section: enabling debug flag, what /acwords prints. Rides WITH the work.",
+                  "prd_selectors": [
+                    "h1.8",
+                    "h2.48"
+                  ]
                 }
               ]
             },
@@ -413,9 +596,21 @@
                   "title": "Factory: session_start/message_end/session_shutdown wiring, lazy dict, disable-on-bad-dict",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T2.S3", "P1.M3.T3.S3", "P1.M3.T4.S1", "P1.M3.T1.S1", "P1.M1.T2.S1"],
-                  "prd_selectors": ["h1.2", "h2.13", "h2.12", "h2.10", "h2.19"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE (validated API): export default function (pi: ExtensionAPI): void — handlers register on `pi`, UI on `ctx.ui`; session_start reasons: 'startup'|'reload'|'new'|'resume'|'fork'; message_end result may replace the message — hapax MUST return nothing (never mutate). Factory must NOT start background resources; everything defers to session_start (PRD §02).\n2. INPUT: loadConfig (P1.M3.T1.S1), loadDictionary (P1.M1.T2.S1), IngestPipeline + restoreFromHistory (P1.M3.T2.S2/S3), createHapaxProvider (P1.M3.T3.S3), /acwords registration (P1.M3.T4.S1). Type-only imports: ExtensionAPI from @earendil-works/pi-coding-agent.\n3. LOGIC: Implement src/pi/index.ts: factory registers ONLY pi.on handlers. session_start(event, ctx): if event.reason is 'new' AND no history -> fresh store only; else (any reason with existing history — startup/resume/reload/fork) -> load config (ctx.cwd, ctx.isProjectTrusted(), ctx.ui.notify bound), lazily loadDictionary(dictPath) on FIRST use (fail -> ctx.ui.notify('hapax: dictionary failed to load', 'error') + permanent disabled flag, PRD §03), create CandidateStore, construct IngestPipeline, ctx.ui.addAutocompleteProvider(current => createHapaxProvider(store, config, current)), register /acwords if debug, kick restoreFromHistory in background. message_end: pipeline.onMessageEnd(event.message) — return undefined ALWAYS. session_shutdown: drop store/dictionary/pipeline references, clear all pending timers (debounce + popup scheduler). before_agent_start: no-op stub in M1 (M2 chain reset lands in P2.M2.T2.S1). session compaction events: intentionally NOT handled (store survives compaction, PRD §05).\n4. OUTPUT: The complete extension; entry point referenced by package.json pi manifest. Integration acceptance (P1.M4.T1.S1) exercises exactly this wiring.\n5. DOCS: none — internal module (README architecture summary is changeset-level, P1.M4.T2)."
+                  "dependencies": [
+                    "P1.M3.T2.S3",
+                    "P1.M3.T3.S3",
+                    "P1.M3.T4.S1",
+                    "P1.M3.T1.S1",
+                    "P1.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE (validated API): export default function (pi: ExtensionAPI): void — handlers register on `pi`, UI on `ctx.ui`; session_start reasons: 'startup'|'reload'|'new'|'resume'|'fork'; message_end result may replace the message — hapax MUST return nothing (never mutate). Factory must NOT start background resources; everything defers to session_start (PRD §02).\n2. INPUT: loadConfig (P1.M3.T1.S1), loadDictionary (P1.M1.T2.S1), IngestPipeline + restoreFromHistory (P1.M3.T2.S2/S3), createHapaxProvider (P1.M3.T3.S3), /acwords registration (P1.M3.T4.S1). Type-only imports: ExtensionAPI from @earendil-works/pi-coding-agent.\n3. LOGIC: Implement src/pi/index.ts: factory registers ONLY pi.on handlers. session_start(event, ctx): if event.reason is 'new' AND no history -> fresh store only; else (any reason with existing history — startup/resume/reload/fork) -> load config (ctx.cwd, ctx.isProjectTrusted(), ctx.ui.notify bound), lazily loadDictionary(dictPath) on FIRST use (fail -> ctx.ui.notify('hapax: dictionary failed to load', 'error') + permanent disabled flag, PRD §03), create CandidateStore, construct IngestPipeline, ctx.ui.addAutocompleteProvider(current => createHapaxProvider(store, config, current)), register /acwords if debug, kick restoreFromHistory in background. message_end: pipeline.onMessageEnd(event.message) — return undefined ALWAYS. session_shutdown: drop store/dictionary/pipeline references, clear all pending timers (debounce + popup scheduler). before_agent_start: no-op stub in M1 (M2 chain reset lands in P2.M2.T2.S1). session compaction events: intentionally NOT handled (store survives compaction, PRD §05).\n4. OUTPUT: The complete extension; entry point referenced by package.json pi manifest. Integration acceptance (P1.M4.T1.S1) exercises exactly this wiring.\n5. DOCS: none — internal module (README architecture summary is changeset-level, P1.M4.T2).",
+                  "prd_selectors": [
+                    "h1.2",
+                    "h2.13",
+                    "h2.12",
+                    "h2.10",
+                    "h2.19"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -423,9 +618,16 @@
                   "title": "jiti-safe dict path + manifest + local dev-load verification",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M3.T5.S1", "P1.M1.T3.S3"],
-                  "prd_selectors": ["h1.2", "h2.11", "h2.13"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Extensions are transpiled by jiti 2.7.0 — import.meta.url support is NOT guaranteed for TS transpiled to CJS. Use the dual pattern: const here = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url)); then resolve dict/common-en.bin relative to `here` (repo-root/dict since index.ts lives in src/pi/). Verified loading options: 'pi -e /home/dustin/projects/hapax' (repeatable -e/--extension flag) or a symlink at ~/.pi/agent/extensions/hapax -> repo (loader resolves package.json pi manifest in subdirs; no recursion beyond one level). Project-local .pi/extensions/ requires project trust (first-run prompt) — see plan/001_88fc3a66fd74/architecture/system_context.md.\n2. INPUT: The factory from P1.M3.T5.S1; package.json pi manifest from P1.M1.T1.S1; the dict artifact from P1.M1.T3.S3.\n3. LOGIC: Implement the dict path resolution with the dual __dirname/import.meta.url pattern in src/pi/index.ts (or a tiny src/pi/paths.ts). Manually verify a real load: run pi with -e pointing at the repo, confirm the extension banner-less load with no errors, type a known session word and observe suggestions (smoke). Verify graceful disable when dict/common-en.bin is temporarily renamed (notify shown, pi otherwise unaffected).\n4. OUTPUT: Verified end-to-end load path + documented dev loop (pi -e) — the setup integration acceptance (P1.M4.T1.S1) builds on.\n5. DOCS: [Mode A] Update README.md 'Development' section: dev loop commands, jiti notes, symlink option. Rides WITH the work."
+                  "dependencies": [
+                    "P1.M3.T5.S1",
+                    "P1.M1.T3.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Extensions are transpiled by jiti 2.7.0 — import.meta.url support is NOT guaranteed for TS transpiled to CJS. Use the dual pattern: const here = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url)); then resolve dict/common-en.bin relative to `here` (repo-root/dict since index.ts lives in src/pi/). Verified loading options: 'pi -e /home/dustin/projects/hapax' (repeatable -e/--extension flag) or a symlink at ~/.pi/agent/extensions/hapax -> repo (loader resolves package.json pi manifest in subdirs; no recursion beyond one level). Project-local .pi/extensions/ requires project trust (first-run prompt) — see plan/001_88fc3a66fd74/architecture/system_context.md.\n2. INPUT: The factory from P1.M3.T5.S1; package.json pi manifest from P1.M1.T1.S1; the dict artifact from P1.M1.T3.S3.\n3. LOGIC: Implement the dict path resolution with the dual __dirname/import.meta.url pattern in src/pi/index.ts (or a tiny src/pi/paths.ts). Manually verify a real load: run pi with -e pointing at the repo, confirm the extension banner-less load with no errors, type a known session word and observe suggestions (smoke). Verify graceful disable when dict/common-en.bin is temporarily renamed (notify shown, pi otherwise unaffected).\n4. OUTPUT: Verified end-to-end load path + documented dev loop (pi -e) — the setup integration acceptance (P1.M4.T1.S1) builds on.\n5. DOCS: [Mode A] Update README.md 'Development' section: dev loop commands, jiti notes, symlink option. Rides WITH the work.",
+                  "prd_selectors": [
+                    "h1.2",
+                    "h2.11",
+                    "h2.13"
+                  ]
                 }
               ]
             }
@@ -451,9 +653,15 @@
                   "title": "Scripted integration acceptance (PRD §09 items 1-6) + session fixtures",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T5.S2"],
-                  "prd_selectors": ["h1.9", "h2.50", "h2.53"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Acceptance runs against the real extension via the verified dev loop (pi -e; see P1.M3.T5.S2). Fixtures live in test/fixtures/sessions/ and double as the tuning-protocol corpus (PRD §09: fixed 3-session corpus for precision@8 checks).\n2. INPUT: The complete extension (P1.M3.T5.S2); dict artifact (P1.M1.T3.S3); scripted pi sessions (pi -p/--print mode can drive deterministic prompts; interactive items verified manually where automation is impractical — document which).\n3. LOGIC: Create test/fixtures/sessions/ with 3 synthetic session transcripts exercising: Zendesk + lwlock vocabulary (item 1 happy path: 'ze' -> Zendesk cased insertion; '#l' -> lwlock); ordinary prose (item 2 no-hijack); a 100k+ token session for /resume restore (item 3: store rebuilt < 100ms background, completions within first second); compaction trigger (item 4: store survives); pasted API key (item 5: key never suggested). Item 6 (path completion regression: quoted paths, slash commands, @-mentions identical to stock) verified by comparing suggestion behavior with/without -e flag. Record results in test/fixtures/sessions/RESULTS.md (checklist per item).\n4. OUTPUT: Passing acceptance checklist + reusable fixtures consumed by the tuning protocol (PRD §09) and M2 acceptance (P2.M2.T3.S1).\n5. DOCS: none — test artifacts (RESULTS.md is a test record, not user docs)."
+                  "dependencies": [
+                    "P1.M3.T5.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Acceptance runs against the real extension via the verified dev loop (pi -e; see P1.M3.T5.S2). Fixtures live in test/fixtures/sessions/ and double as the tuning-protocol corpus (PRD §09: fixed 3-session corpus for precision@8 checks).\n2. INPUT: The complete extension (P1.M3.T5.S2); dict artifact (P1.M1.T3.S3); scripted pi sessions (pi -p/--print mode can drive deterministic prompts; interactive items verified manually where automation is impractical — document which).\n3. LOGIC: Create test/fixtures/sessions/ with 3 synthetic session transcripts exercising: Zendesk + lwlock vocabulary (item 1 happy path: 'ze' -> Zendesk cased insertion; '#l' -> lwlock); ordinary prose (item 2 no-hijack); a 100k+ token session for /resume restore (item 3: store rebuilt < 100ms background, completions within first second); compaction trigger (item 4: store survives); pasted API key (item 5: key never suggested). Item 6 (path completion regression: quoted paths, slash commands, @-mentions identical to stock) verified by comparing suggestion behavior with/without -e flag. Record results in test/fixtures/sessions/RESULTS.md (checklist per item).\n4. OUTPUT: Passing acceptance checklist + reusable fixtures consumed by the tuning protocol (PRD §09) and M2 acceptance (P2.M2.T3.S1).\n5. DOCS: none — test artifacts (RESULTS.md is a test record, not user docs).",
+                  "prd_selectors": [
+                    "h1.9",
+                    "h2.50",
+                    "h2.53"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -461,9 +669,17 @@
                   "title": "CI-scriptable micro-benchmarks against hard budgets",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T5.S2"],
-                  "prd_selectors": ["h1.9", "h2.51", "h2.15", "h2.53", "h1.2"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Benchmarks run with a SYNTHETIC dictionary fixture (buildDictBinary from P1.M1.T2.S2 — never the 1.3MB artifact); numbers asserted loosely for CI variance; hard regressions (> 3x budget) fail (PRD §09). vitest bench or a node script under tools/ — pick vitest bench for CI integration via npm run bench.\n2. INPUT: Core modules (store/query/dictionary/ingest pipeline) + buildDictBinary helper.\n3. LOGIC: Implement benchmarks per PRD §09 gate table: (a) 20k-candidate prefix query + rank + top 8 < 1ms p99 (repeat 1000x, measure distribution); (b) dictionary load + full lookup sweep of 20k words < 60ms; (c) ingest 800KB synthetic session text < 60ms with yield-every-<=64KB asserted via a counting yield hook; (d) steady-state heap delta (dict + store) < 6MB via process.memoryUsage() before/after. Assert with 3x headroom in CI; log actuals. Run: npm run bench.\n4. OUTPUT: Green benchmark suite wired into package.json scripts; failure blocks M1 DoD.\n5. DOCS: [Mode A] Note benchmark commands in README 'Development' section (one line). Rides WITH the work."
+                  "dependencies": [
+                    "P1.M3.T5.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Benchmarks run with a SYNTHETIC dictionary fixture (buildDictBinary from P1.M1.T2.S2 — never the 1.3MB artifact); numbers asserted loosely for CI variance; hard regressions (> 3x budget) fail (PRD §09). vitest bench or a node script under tools/ — pick vitest bench for CI integration via npm run bench.\n2. INPUT: Core modules (store/query/dictionary/ingest pipeline) + buildDictBinary helper.\n3. LOGIC: Implement benchmarks per PRD §09 gate table: (a) 20k-candidate prefix query + rank + top 8 < 1ms p99 (repeat 1000x, measure distribution); (b) dictionary load + full lookup sweep of 20k words < 60ms; (c) ingest 800KB synthetic session text < 60ms with yield-every-<=64KB asserted via a counting yield hook; (d) steady-state heap delta (dict + store) < 6MB via process.memoryUsage() before/after. Assert with 3x headroom in CI; log actuals. Run: npm run bench.\n4. OUTPUT: Green benchmark suite wired into package.json scripts; failure blocks M1 DoD.\n5. DOCS: [Mode A] Note benchmark commands in README 'Development' section (one line). Rides WITH the work.",
+                  "prd_selectors": [
+                    "h1.9",
+                    "h2.51",
+                    "h2.15",
+                    "h2.53",
+                    "h1.2"
+                  ]
                 }
               ]
             },
@@ -480,9 +696,45 @@
                   "title": "README.md changeset sync: features, usage, architecture, security",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M1.T3.S1", "P1.M1.T3.S2", "P1.M1.T3.S3", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T2.S1", "P1.M2.T2.S2", "P1.M2.T3.S1", "P1.M2.T3.S2", "P1.M2.T4.S1", "P1.M2.T4.S2", "P1.M2.T4.S3", "P1.M2.T5.S1", "P1.M3.T1.S1", "P1.M3.T2.S1", "P1.M3.T2.S2", "P1.M3.T2.S3", "P1.M3.T3.S1", "P1.M3.T3.S2", "P1.M3.T3.S3", "P1.M3.T3.S4", "P1.M3.T4.S1", "P1.M3.T5.S1", "P1.M3.T5.S2"],
-                  "prd_selectors": ["h1.0", "h2.2", "h2.5", "h2.9", "h2.56", "h2.1"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Mode B final sweep — per-feature docs already rode with their subtasks (Configuration, Dictionary build, Debug, Development sections exist from Mode A lines). This subtask makes the README a coherent whole-feature document, not a patchwork.\n2. INPUT: The entire implemented M1 changeset (all dependencies listed) — read the final state of src/ and the existing README sections.\n3. LOGIC: Rewrite/expand README.md: what hapax is (one paragraph, the hapax legomenon hook); feature list (trigger # completion from 1st char, threshold matching from N chars, session salience ranking, case-preserving insertion, secrets never suggested, zero persistence/telemetry/network); quick start (install as pi extension: pi -e / symlink / .pi/extensions); usage examples mirroring PRD §09 happy path; architecture summary (core/pi two-layer split diagram in prose, ingest/query/popup paths); the four design invariants verbatim; known limitations (English-only dictionary, Tab-before-paint cosmetic, absence-vs-rarity conflation) linked from PRD §01; non-goals. Verify every README claim against shipped behavior — delete anything not implemented.\n4. OUTPUT: README.md reflecting the complete M1 delta.\n5. DOCS: [Mode B] This IS the changeset-level docs subtask for M1."
+                  "dependencies": [
+                    "P1.M1.T1.S1",
+                    "P1.M1.T1.S2",
+                    "P1.M1.T2.S1",
+                    "P1.M1.T2.S2",
+                    "P1.M1.T3.S1",
+                    "P1.M1.T3.S2",
+                    "P1.M1.T3.S3",
+                    "P1.M2.T1.S1",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T2.S1",
+                    "P1.M2.T2.S2",
+                    "P1.M2.T3.S1",
+                    "P1.M2.T3.S2",
+                    "P1.M2.T4.S1",
+                    "P1.M2.T4.S2",
+                    "P1.M2.T4.S3",
+                    "P1.M2.T5.S1",
+                    "P1.M3.T1.S1",
+                    "P1.M3.T2.S1",
+                    "P1.M3.T2.S2",
+                    "P1.M3.T2.S3",
+                    "P1.M3.T3.S1",
+                    "P1.M3.T3.S2",
+                    "P1.M3.T3.S3",
+                    "P1.M3.T3.S4",
+                    "P1.M3.T4.S1",
+                    "P1.M3.T5.S1",
+                    "P1.M3.T5.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Mode B final sweep — per-feature docs already rode with their subtasks (Configuration, Dictionary build, Debug, Development sections exist from Mode A lines). This subtask makes the README a coherent whole-feature document, not a patchwork.\n2. INPUT: The entire implemented M1 changeset (all dependencies listed) — read the final state of src/ and the existing README sections.\n3. LOGIC: Rewrite/expand README.md: what hapax is (one paragraph, the hapax legomenon hook); feature list (trigger # completion from 1st char, threshold matching from N chars, session salience ranking, case-preserving insertion, secrets never suggested, zero persistence/telemetry/network); quick start (install as pi extension: pi -e / symlink / .pi/extensions); usage examples mirroring PRD §09 happy path; architecture summary (core/pi two-layer split diagram in prose, ingest/query/popup paths); the four design invariants verbatim; known limitations (English-only dictionary, Tab-before-paint cosmetic, absence-vs-rarity conflation) linked from PRD §01; non-goals. Verify every README claim against shipped behavior — delete anything not implemented.\n4. OUTPUT: README.md reflecting the complete M1 delta.\n5. DOCS: [Mode B] This IS the changeset-level docs subtask for M1.",
+                  "prd_selectors": [
+                    "h1.0",
+                    "h2.2",
+                    "h2.5",
+                    "h2.9",
+                    "h2.56",
+                    "h2.1"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -490,9 +742,18 @@
                   "title": "M1 definition-of-done verification sweep",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M4.T2.S1", "P1.M4.T1.S1", "P1.M4.T1.S2"],
-                  "prd_selectors": ["h1.9", "h2.53", "h2.52", "h2.56"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: PRD M1 DoD says 'pi --check (or lint) clean' — pi --check DOES NOT EXIST (validated); the equivalent is tsc --noEmit strict + vitest --run green (see system_context.md). The no-persistence assertion must be explicit (PRD: 'assert store dir untouched').\n2. INPUT: Everything green from dependencies: unit tests, acceptance checklist (P1.M4.T1.S1), benchmarks (P1.M4.T1.S2), README (P1.M4.T2.S1).\n3. LOGIC: Run and record the full DoD gauntlet: (1) npm run check (tsc --noEmit) clean; (2) npm test all green; (3) npm run bench within budgets; (4) integration items 1-6 checklist complete; (5) persistence assertion — run a scripted session, snapshot the filesystem (find . -newer marker in repo + ~/.pi/agent for hapax-named writes), assert no files written by hapax at runtime; (6) document the tuning protocol pointer (constants live in score.ts; fixture-driven A/B per PRD §09). Fix any drift found (this subtask may make small code/doc fixes).\n4. OUTPUT: M1 declared done with recorded evidence; P2 unblocked.\n5. DOCS: [Mode B] Update README 'Status' to reflect M1 complete; record DoD evidence location."
+                  "dependencies": [
+                    "P1.M4.T2.S1",
+                    "P1.M4.T1.S1",
+                    "P1.M4.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: PRD M1 DoD says 'pi --check (or lint) clean' — pi --check DOES NOT EXIST (validated); the equivalent is tsc --noEmit strict + vitest --run green (see system_context.md). The no-persistence assertion must be explicit (PRD: 'assert store dir untouched').\n2. INPUT: Everything green from dependencies: unit tests, acceptance checklist (P1.M4.T1.S1), benchmarks (P1.M4.T1.S2), README (P1.M4.T2.S1).\n3. LOGIC: Run and record the full DoD gauntlet: (1) npm run check (tsc --noEmit) clean; (2) npm test all green; (3) npm run bench within budgets; (4) integration items 1-6 checklist complete; (5) persistence assertion — run a scripted session, snapshot the filesystem (find . -newer marker in repo + ~/.pi/agent for hapax-named writes), assert no files written by hapax at runtime; (6) document the tuning protocol pointer (constants live in score.ts; fixture-driven A/B per PRD §09). Fix any drift found (this subtask may make small code/doc fixes).\n4. OUTPUT: M1 declared done with recorded evidence; P2 unblocked.\n5. DOCS: [Mode B] Update README 'Status' to reflect M1 complete; record DoD evidence location.",
+                  "prd_selectors": [
+                    "h1.9",
+                    "h2.53",
+                    "h2.52",
+                    "h2.56"
+                  ]
                 }
               ]
             }
@@ -527,9 +788,17 @@
                   "title": "Within-line n-gram capture + PhraseEntry map + cap/eviction",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T2.S2", "P1.M3.T1.S1"],
-                  "prd_selectors": ["h1.6", "h2.38", "h3.6", "h2.6"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The ingest pipeline (P1.M3.T2.S2) was built with an optional per-message callback exposing the sequence of admitted whole-token candidates — this subtask consumes it. Phrases are gated by config.enablePhrases (inert in M1, now live); n-gram windows are WITHIN A LINE only (newline breaks the window); sub-words excluded; keys = lowercase words joined by single spaces (PRD §06).\n2. INPUT: Admitted-whole-token sequences per message line (from the pipeline callback); HapaxConfig.enablePhrases.\n3. LOGIC: Extend src/core/store.ts with the phrase layer: Map<string, PhraseEntry> where PhraseEntry = { key, count, lastSeenOrdinal, firstSeenOrdinal, sticky } (PRD §06 exact); for each line, for each consecutive window of 2 and 3 admitted whole tokens, upsert the phrase (count++, ordinals refresh). Cap 10,000 phrases with the same eviction policy (lowest evictionScore, batches of 256; sticky resists eviction like userTyped). Unit tests: window breaks on newline; sub-words excluded; counts increment; cap eviction honors sticky.\n4. OUTPUT: Phrase counts consumed by P2.M1.T2.S1 (admission) and P2.M2.T1.S1 (successor index built from the SAME bigram counts — expose a phrase-iteration accessor).\n5. DOCS: none — internal module (README phrase feature blurb is changeset-level P2.M2.T4)."
+                  "dependencies": [
+                    "P1.M3.T2.S2",
+                    "P1.M3.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The ingest pipeline (P1.M3.T2.S2) was built with an optional per-message callback exposing the sequence of admitted whole-token candidates — this subtask consumes it. Phrases are gated by config.enablePhrases (inert in M1, now live); n-gram windows are WITHIN A LINE only (newline breaks the window); sub-words excluded; keys = lowercase words joined by single spaces (PRD §06).\n2. INPUT: Admitted-whole-token sequences per message line (from the pipeline callback); HapaxConfig.enablePhrases.\n3. LOGIC: Extend src/core/store.ts with the phrase layer: Map<string, PhraseEntry> where PhraseEntry = { key, count, lastSeenOrdinal, firstSeenOrdinal, sticky } (PRD §06 exact); for each line, for each consecutive window of 2 and 3 admitted whole tokens, upsert the phrase (count++, ordinals refresh). Cap 10,000 phrases with the same eviction policy (lowest evictionScore, batches of 256; sticky resists eviction like userTyped). Unit tests: window breaks on newline; sub-words excluded; counts increment; cap eviction honors sticky.\n4. OUTPUT: Phrase counts consumed by P2.M1.T2.S1 (admission) and P2.M2.T1.S1 (successor index built from the SAME bigram counts — expose a phrase-iteration accessor).\n5. DOCS: none — internal module (README phrase feature blurb is changeset-level P2.M2.T4).",
+                  "prd_selectors": [
+                    "h1.6",
+                    "h2.38",
+                    "h3.6",
+                    "h2.6"
+                  ]
                 }
               ]
             },
@@ -546,9 +815,15 @@
                   "title": "Hybrid admission: count>=2 OR all-rare first sight; sticky",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P2.M1.T1.S1"],
-                  "prd_selectors": ["h2.6", "h2.38", "h3.7"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: An n-gram becomes a completion CANDIDATE (separate from being counted) per the settled hybrid rule (PRD §06). Candidate phrases are what the query path may surface; counts persist regardless.\n2. INPUT: PhraseEntry counts from P2.M1.T1.S1; constituent word Candidates (rankGroup, properName) from the word store.\n3. LOGIC: Implement phrase candidacy in store.ts: promote to candidate when (a) repetition path: count >= 2, OR (b) fast path first sight: EVERY constituent word is rank group 0 (dictionary-absent) or properName, AND n-gram length in words <= 5. sticky = true when both paths fire; sticky phrases resist eviction. Candidate phrases live in a set/map distinct from raw counts (demotion removes candidacy, keeps counts).\n4. OUTPUT: Candidate-phrase set consumed by P2.M1.T3.S1 (query integration). Unit tests per PRD §06 semantics.\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P2.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: An n-gram becomes a completion CANDIDATE (separate from being counted) per the settled hybrid rule (PRD §06). Candidate phrases are what the query path may surface; counts persist regardless.\n2. INPUT: PhraseEntry counts from P2.M1.T1.S1; constituent word Candidates (rankGroup, properName) from the word store.\n3. LOGIC: Implement phrase candidacy in store.ts: promote to candidate when (a) repetition path: count >= 2, OR (b) fast path first sight: EVERY constituent word is rank group 0 (dictionary-absent) or properName, AND n-gram length in words <= 5. sticky = true when both paths fire; sticky phrases resist eviction. Candidate phrases live in a set/map distinct from raw counts (demotion removes candidacy, keeps counts).\n4. OUTPUT: Candidate-phrase set consumed by P2.M1.T3.S1 (query integration). Unit tests per PRD §06 semantics.\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h2.6",
+                    "h2.38",
+                    "h3.7"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -556,9 +831,14 @@
                   "title": "40-ordinal demotion sweep for unconfirmed fast-path phrases",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P2.M1.T2.S1"],
-                  "prd_selectors": ["h2.38", "h3.7"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Fast-path phrases that never reach count >= 2 were one-off noise — demoted (removed from candidates) but kept in counts in case they recur (PRD §06).\n2. INPUT: Candidate phrases with their entry state from P2.M1.T2.S1; current message ordinal.\n3. LOGIC: Add a sweep to the phrase layer run at the end of each ingest flush: for fast-path-only candidate phrases where currentOrdinal - firstSeenOrdinal > 40 AND count < 2 -> demote (remove from candidate set; counts retained). Sweep must be O(candidates) and cheap — iterate a candidates snapshot, not the whole counts map. Unit tests: fast-path phrase at ordinal 41 with count 1 -> demoted; same phrase recurring later -> re-promoted via repetition path; count>=2 phrases never demoted.\n4. OUTPUT: Bounded, self-cleaning phrase candidate set feeding P2.M1.T3.S1.\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P2.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Fast-path phrases that never reach count >= 2 were one-off noise — demoted (removed from candidates) but kept in counts in case they recur (PRD §06).\n2. INPUT: Candidate phrases with their entry state from P2.M1.T2.S1; current message ordinal.\n3. LOGIC: Add a sweep to the phrase layer run at the end of each ingest flush: for fast-path-only candidate phrases where currentOrdinal - firstSeenOrdinal > 40 AND count < 2 -> demote (remove from candidate set; counts retained). Sweep must be O(candidates) and cheap — iterate a candidates snapshot, not the whole counts map. Unit tests: fast-path phrase at ordinal 41 with count 1 -> demoted; same phrase recurring later -> re-promoted via repetition path; count>=2 phrases never demoted.\n4. OUTPUT: Bounded, self-cleaning phrase candidate set feeding P2.M1.T3.S1.\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h2.38",
+                    "h3.7"
+                  ]
                 }
               ]
             },
@@ -575,9 +855,17 @@
                   "title": "Phrase salience + constituent suppression in rankMatches",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P2.M1.T2.S2", "P1.M2.T5.S1"],
-                  "prd_selectors": ["h2.6", "h2.38", "h3.8", "h2.26"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: rankMatches (P1.M2.T5.S1) was built open for extension via an optional hook — this subtask uses it. Phrase salience = sum of constituent word saliences x 1.2 + 2.0 * log2(1 + count) when repetition-path (PRD §06 exact formula).\n2. INPUT: rankMatches from P1.M2.T5.S1; candidate phrases (P2.M1.T2.S2); constituent word Candidates for salience computation.\n3. LOGIC: Extend query.ts: when the typed fragment prefixes a phrase's first word (case-insensitive), the phrase competes in the same ranked set: phrase items get value/label = display-cased phrase (constituent display casings joined with single spaces), description 'phrase'. CONSTITUENT SUPPRESSION (settled ranking rule): when a phrase candidate matches and its salience >= a single-word candidate's salience, and that word is a PREFIX WORD of the phrase, suppress the word from the same result set (offering both 'renewable' and 'renewable energy laboratory' wastes slots — keep only the phrase when the phrase outranks). Merge phrases + words, sort by salience with the same tiebreaks, top maxSuggestions. Unit tests: suppression fires only when phrase salience >= word's; both kept when the word outranks.\n4. OUTPUT: RankedMatch[] that may contain phrases — the provider (P1.M3.T3.S2 mapping) needs NO changes (value/label/description flow through) except accepting longer values. Consumed by M2 acceptance (P2.M2.T3.S1).\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P2.M1.T2.S2",
+                    "P1.M2.T5.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: rankMatches (P1.M2.T5.S1) was built open for extension via an optional hook — this subtask uses it. Phrase salience = sum of constituent word saliences x 1.2 + 2.0 * log2(1 + count) when repetition-path (PRD §06 exact formula).\n2. INPUT: rankMatches from P1.M2.T5.S1; candidate phrases (P2.M1.T2.S2); constituent word Candidates for salience computation.\n3. LOGIC: Extend query.ts: when the typed fragment prefixes a phrase's first word (case-insensitive), the phrase competes in the same ranked set: phrase items get value/label = display-cased phrase (constituent display casings joined with single spaces), description 'phrase'. CONSTITUENT SUPPRESSION (settled ranking rule): when a phrase candidate matches and its salience >= a single-word candidate's salience, and that word is a PREFIX WORD of the phrase, suppress the word from the same result set (offering both 'renewable' and 'renewable energy laboratory' wastes slots — keep only the phrase when the phrase outranks). Merge phrases + words, sort by salience with the same tiebreaks, top maxSuggestions. Unit tests: suppression fires only when phrase salience >= word's; both kept when the word outranks.\n4. OUTPUT: RankedMatch[] that may contain phrases — the provider (P1.M3.T3.S2 mapping) needs NO changes (value/label/description flow through) except accepting longer values. Consumed by M2 acceptance (P2.M2.T3.S1).\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h2.6",
+                    "h2.38",
+                    "h3.8",
+                    "h2.26"
+                  ]
                 }
               ]
             }
@@ -603,9 +891,14 @@
                   "title": "Successor index build (top-3 per word) at ingest",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P2.M1.T1.S1"],
-                  "prd_selectors": ["h2.38", "h3.9"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The successor index is trivially sized (top 3 per word) and updated at INGEST time — never on the keystroke path (PRD §06 M2 structure).\n2. INPUT: Bigram counts from the phrase layer (P2.M1.T1.S1 exposes phrase iteration).\n3. LOGIC: Add to store.ts: successorIndex: Map<string, Array<{ next: string; count: number }>> — for each bigram 'w1 w2', bump (w1 -> w2, count); keep only the top-3 successors per word (rebuild incrementally or recompute per word on change — either is fine at this scale; keep allocation small). Expose topSuccessors(word): Array<{next, count}> for the provider chain. Unit tests: ordering by count; top-3 truncation; restore replay builds it identically (same bigram stream).\n4. OUTPUT: topSuccessors() consumed by the chain state machine (P2.M2.T2.S1) and the /acwords dump (P2.M2.T3.S1).\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P2.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: The successor index is trivially sized (top 3 per word) and updated at INGEST time — never on the keystroke path (PRD §06 M2 structure).\n2. INPUT: Bigram counts from the phrase layer (P2.M1.T1.S1 exposes phrase iteration).\n3. LOGIC: Add to store.ts: successorIndex: Map<string, Array<{ next: string; count: number }>> — for each bigram 'w1 w2', bump (w1 -> w2, count); keep only the top-3 successors per word (rebuild incrementally or recompute per word on change — either is fine at this scale; keep allocation small). Expose topSuccessors(word): Array<{next, count}> for the provider chain. Unit tests: ordering by count; top-3 truncation; restore replay builds it identically (same bigram stream).\n4. OUTPUT: topSuccessors() consumed by the chain state machine (P2.M2.T2.S1) and the /acwords dump (P2.M2.T3.S1).\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h2.38",
+                    "h3.9"
+                  ]
                 }
               ]
             },
@@ -622,9 +915,18 @@
                   "title": "armed(W) chain machine: arm on Tab accept, filter successors, reset rules",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P2.M2.T1.S1", "P1.M3.T3.S3", "P1.M3.T5.S1"],
-                  "prd_selectors": ["h2.6", "h2.43", "h3.9", "h2.41"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Chaining arms ONLY from hapax's own candidates — never from path completion (PRD §07). Tab acceptance is detectable because pi calls our (delegated) applyCompletion with the accepted item: the provider's internal value->key side map (built in P1.M3.T3.S2) identifies hapax items. The machine feeds the SUGGESTION SET only — it never blocks or captures typing (invariant #1).\n2. INPUT: topSuccessors() from P2.M2.T1.S1; provider internals from P1.M3.T3.S3 (live-result cache, popup scheduler); index.ts wiring from P1.M3.T5.S1 (add before_agent_start handler).\n3. LOGIC: Implement chain state in src/pi/provider.ts per PRD §07 state machine: idle --Tab accepts hapax whole-word W--> armed(W); armed(W): next word start (any char) offers top successors (lookup W -> top-3, filtered live by typed fragment; threshold = 1 char during chain); Tab with highlighted successor -> insert (delegated applyCompletion), transition armed(next); non-Tab disqualifying input (space, escape, punctuation) -> idle; typing continues to filter normally; no successors for W -> idle (normal threshold matching resumes). Trigger-char completions also arm (whole-word insertions). RESET: index.ts adds pi.on('before_agent_start') -> chain.reset() (new user turn; validated event exists with prompt field). Chain must compose with the popup debounce/hysteresis (armed-set swaps follow the same 100ms rules). Unit tests: full state machine transitions incl. resets; provider.test.ts never-hijack suite (P1.M3.T3.S4) stays green.\n4. OUTPUT: Chained completion live in the provider; exercised end-to-end by P2.M2.T3.S1.\n5. DOCS: none — internal module (usage example lands in P2.M2.T4)."
+                  "dependencies": [
+                    "P2.M2.T1.S1",
+                    "P1.M3.T3.S3",
+                    "P1.M3.T5.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Chaining arms ONLY from hapax's own candidates — never from path completion (PRD §07). Tab acceptance is detectable because pi calls our (delegated) applyCompletion with the accepted item: the provider's internal value->key side map (built in P1.M3.T3.S2) identifies hapax items. The machine feeds the SUGGESTION SET only — it never blocks or captures typing (invariant #1).\n2. INPUT: topSuccessors() from P2.M2.T1.S1; provider internals from P1.M3.T3.S3 (live-result cache, popup scheduler); index.ts wiring from P1.M3.T5.S1 (add before_agent_start handler).\n3. LOGIC: Implement chain state in src/pi/provider.ts per PRD §07 state machine: idle --Tab accepts hapax whole-word W--> armed(W); armed(W): next word start (any char) offers top successors (lookup W -> top-3, filtered live by typed fragment; threshold = 1 char during chain); Tab with highlighted successor -> insert (delegated applyCompletion), transition armed(next); non-Tab disqualifying input (space, escape, punctuation) -> idle; typing continues to filter normally; no successors for W -> idle (normal threshold matching resumes). Trigger-char completions also arm (whole-word insertions). RESET: index.ts adds pi.on('before_agent_start') -> chain.reset() (new user turn; validated event exists with prompt field). Chain must compose with the popup debounce/hysteresis (armed-set swaps follow the same 100ms rules). Unit tests: full state machine transitions incl. resets; provider.test.ts never-hijack suite (P1.M3.T3.S4) stays green.\n4. OUTPUT: Chained completion live in the provider; exercised end-to-end by P2.M2.T3.S1.\n5. DOCS: none — internal module (usage example lands in P2.M2.T4).",
+                  "prd_selectors": [
+                    "h2.6",
+                    "h2.43",
+                    "h3.9",
+                    "h2.41"
+                  ]
                 }
               ]
             },
@@ -641,9 +943,19 @@
                   "title": "Integration item 7 + enablePhrases gating + /acwords M2 dump",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P2.M2.T2.S1", "P2.M1.T3.S1", "P1.M3.T4.S1"],
-                  "prd_selectors": ["h1.9", "h2.54", "h2.50", "h2.48", "h2.6"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: M2 DoD (PRD §09): M1 done + phrase admission paths (repetition + fast-path + 40-message decay), constituent suppression, successor-index chaining state machine, chain resets on before_agent_start, and integration item 7. Fixtures from P1.M4.T1.S1 (test/fixtures/sessions/) provide the National Renewable Energy Laboratory vocabulary.\n2. INPUT: Complete M2 build (chain machine, phrase query, successor index); M1 acceptance fixtures; /acwords registration from P1.M3.T4.S1.\n3. LOGIC: (a) Integration item 7: scripted session where accepting 'National' chains -> Tab inserts 'Renewable' -> chains -> 'Energy' -> 'Laboratory' with ZERO additional typed characters; record evidence in test/fixtures/sessions/RESULTS.md. (b) enablePhrases=false: phrase layer fully inert (no phrase items, no suppression, no successor chaining) while word completion still works — assert in tests. (c) /acwords extended: top-10 phrases + successor index sample in the dump. (d) M1 never-hijack + perf suites re-run green (phrases add ingest cost only).\n4. OUTPUT: M2 DoD evidence recorded; P2.M2.T4 unblocked.\n5. DOCS: [Mode A] Update README 'Debug' section for the extended /acwords output. Rides WITH the work."
+                  "dependencies": [
+                    "P2.M2.T2.S1",
+                    "P2.M1.T3.S1",
+                    "P1.M3.T4.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: M2 DoD (PRD §09): M1 done + phrase admission paths (repetition + fast-path + 40-message decay), constituent suppression, successor-index chaining state machine, chain resets on before_agent_start, and integration item 7. Fixtures from P1.M4.T1.S1 (test/fixtures/sessions/) provide the National Renewable Energy Laboratory vocabulary.\n2. INPUT: Complete M2 build (chain machine, phrase query, successor index); M1 acceptance fixtures; /acwords registration from P1.M3.T4.S1.\n3. LOGIC: (a) Integration item 7: scripted session where accepting 'National' chains -> Tab inserts 'Renewable' -> chains -> 'Energy' -> 'Laboratory' with ZERO additional typed characters; record evidence in test/fixtures/sessions/RESULTS.md. (b) enablePhrases=false: phrase layer fully inert (no phrase items, no suppression, no successor chaining) while word completion still works — assert in tests. (c) /acwords extended: top-10 phrases + successor index sample in the dump. (d) M1 never-hijack + perf suites re-run green (phrases add ingest cost only).\n4. OUTPUT: M2 DoD evidence recorded; P2.M2.T4 unblocked.\n5. DOCS: [Mode A] Update README 'Debug' section for the extended /acwords output. Rides WITH the work.",
+                  "prd_selectors": [
+                    "h1.9",
+                    "h2.54",
+                    "h2.50",
+                    "h2.48",
+                    "h2.6"
+                  ]
                 }
               ]
             },
@@ -660,9 +972,24 @@
                   "title": "README.md M2 sync: phrases, chaining, config flag, status",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P2.M2.T3.S1", "P2.M2.T2.S1", "P2.M2.T1.S1", "P2.M1.T3.S1", "P2.M1.T2.S1", "P2.M1.T2.S2", "P2.M1.T1.S1", "P1.M4.T2.S2"],
-                  "prd_selectors": ["h1.0", "h2.2", "h2.6", "h2.56", "h2.54"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Mode B final sweep — the whole M2 changeset must ship with a coherent README; per-feature docs (debug dump) already rode with P2.M2.T3.S1.\n2. INPUT: The complete M2 implementation (all dependencies) + the M1 README from P1.M4.T2.S1.\n3. LOGIC: Update README.md: M2 feature section (phrase completions with admission rules in one sentence each — repetition >= 2 or all-rare first sight, 40-message decay; constituent suppression; chained Tab completion with the National→Renewable→Energy→Laboratory example); enablePhrases config flag now LIVE (update the Configuration table note from 'inert'); usage examples; limitations unchanged; status → M2 complete with DoD evidence pointer. Verify every claim against shipped behavior.\n4. OUTPUT: README reflecting the full M1+M2 delta.\n5. DOCS: [Mode B] This IS the changeset-level docs subtask for M2."
+                  "dependencies": [
+                    "P2.M2.T3.S1",
+                    "P2.M2.T2.S1",
+                    "P2.M2.T1.S1",
+                    "P2.M1.T3.S1",
+                    "P2.M1.T2.S1",
+                    "P2.M1.T2.S2",
+                    "P2.M1.T1.S1",
+                    "P1.M4.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Mode B final sweep — the whole M2 changeset must ship with a coherent README; per-feature docs (debug dump) already rode with P2.M2.T3.S1.\n2. INPUT: The complete M2 implementation (all dependencies) + the M1 README from P1.M4.T2.S1.\n3. LOGIC: Update README.md: M2 feature section (phrase completions with admission rules in one sentence each — repetition >= 2 or all-rare first sight, 40-message decay; constituent suppression; chained Tab completion with the National→Renewable→Energy→Laboratory example); enablePhrases config flag now LIVE (update the Configuration table note from 'inert'); usage examples; limitations unchanged; status → M2 complete with DoD evidence pointer. Verify every claim against shipped behavior.\n4. OUTPUT: README reflecting the full M1+M2 delta.\n5. DOCS: [Mode B] This IS the changeset-level docs subtask for M2.",
+                  "prd_selectors": [
+                    "h1.0",
+                    "h2.2",
+                    "h2.6",
+                    "h2.56",
+                    "h2.54"
+                  ]
                 }
               ]
             }

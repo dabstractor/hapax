@@ -1,0 +1,20 @@
+{
+  "name": "hapax",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "pi": {
+    "extensions": ["./src/pi/index.ts"]
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest --run",
+    "bench": "vitest bench"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "~0.84.4",
+    "@earendil-works/pi-tui": "~0.84.4",
+    "typescript": "^5",
+    "vitest": "^4"
+  }
+}
