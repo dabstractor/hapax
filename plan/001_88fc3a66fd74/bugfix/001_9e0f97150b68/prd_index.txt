@@ -1,0 +1,15 @@
+h1.0 Bug Fix Requirements
+ h2.0 Overview
+ h2.1 Critical Issues (Must Fix)
+  h3.0 Issue 1: Shipped dictionary is mis-calibrated: every common English word is admitted as a rare candidate and pops completion menus during ordinary prose
+ h2.2 Major Issues (Should Fix)
+  h3.1 Issue 1: Display-debounce suppression returns a stale prefix; Tab inside/after a suppressed keystroke corrupts typed text (e.g. 'zzendesk')
+  h3.2 Issue 2: Multi-segment secret keys leak into suggestions: key payloads (AWS secret segments, Slack token tails, JWT signature fragments) become completion candidates
+  h3.3 Issue 3: Disable-on-bad-dictionary contract violated on the restore path: a failed dictionary load still replays the whole session history, admitting every word as rarest-group candidate
+  h3.4 Issue 4: M2 chained completion is unreachable after session restore: constituent suppression permanently removes the bare word from every menu, and phrases never arm the chain
+ h2.3 Minor Issues (Nice to Fix)
+  h3.5 Issue 1: 40-ordinal phrase demotion sweep never runs during session-restore replay, leaving stale fast-path phrase candidates after resume
+ h2.4 Testing Summary
+ h2.5 Recommendations
+---
+para:22 list:3
