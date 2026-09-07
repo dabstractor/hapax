@@ -60,14 +60,14 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Packed dictionary loader (src/core/dictionary.ts)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Zero-copy loader and O(1) lookup for the HAPX packed binary format, with test fixtures built by an independent in-memory writer helper.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "Loader + FNV-1a lookup, zero per-entry allocation",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S2"
@@ -85,7 +85,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "test/dictionary.test.ts + independent binary-writer test helper",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1"
@@ -111,7 +111,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T3.S1",
                   "title": "Merge/filter/sort/quantize/emit pipeline + CLI",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S1"
