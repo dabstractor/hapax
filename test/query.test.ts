@@ -18,8 +18,17 @@
 import { describe, expect, it } from "vitest";
 import { CandidateStore } from "../src/core/store.js";
 import { compareCandidates, salience } from "../src/core/score.js";
-import { DEFAULT_LIMIT, rankMatches } from "../src/core/query.js";
-import type { Sighting } from "../src/core/types.js";
+import {
+  compareRankedMatches,
+  DEFAULT_LIMIT,
+  firstWord,
+  phraseSalience,
+  phraseSuppresses,
+  PHRASE_MULTIPLIER,
+  PHRASE_REPETITION_W,
+  rankMatches,
+} from "../src/core/query.js";
+import type { PhraseEntry, RankedMatch, Sighting } from "../src/core/types.js";
 
 /** Fresh group-2 sighting of "hapax" at ordinal 1; override any field. */
 const sighting = (over: Partial<Sighting> = {}): Sighting => ({
@@ -350,3 +359,287 @@ describe("rankMatches — perf sanity (PRD §02 h3.1: < 1 ms per keystroke)", ()
     }
   });
 });
+
+// ═══ Phrase salience + constituent suppression (P2.M1.T3.S1) ═══════════════
+// PRD §06 h3.8: admitted phrase candidates whose FIRST word the fragment
+// prefixes compete in the same ranked set; a phrase shadows its first word
+// when the phrase's salience is >= the word's (settled tie rule).
+
+const PHRASE = "renewable energy laboratory";
+
+/** PhraseEntry fixture override helper (defaults: repetition-path count 2). */
+const entry = (over: Partial<PhraseEntry> = {}): PhraseEntry => ({
+  key: PHRASE,
+  count: 2,
+  lastSeenOrdinal: 2,
+  firstSeenOrdinal: 1,
+  sticky: false,
+  ...over,
+});
+
+/** Build a store where PHRASE is an admitted candidate via the repetition
+ *  path (recorded twice → count 2), with all three constituents upserted
+ *  as words using the given display casings. */
+const phraseStore = (displays: [string, string, string] = ["renewable", "energy", "laboratory"]): CandidateStore => {
+  const s = new CandidateStore();
+  put(s, "renewable", 1, 1, { display: displays[0] });
+  put(s, "energy", 1, 1, { display: displays[1] });
+  put(s, "laboratory", 1, 1, { display: displays[2] });
+  s.recordPhraseLines([["renewable", "energy", "laboratory"]], 1);
+  s.recordPhraseLines([["renewable", "energy", "laboratory"]], 2);
+  return s;
+};
+
+describe("phrase helpers — baked weights and key math (PRD §06 h3.8/§08)", () => {
+  it("phrase weights are the baked PRD constants: ×1.2, ×2.0", () => {
+    expect(PHRASE_MULTIPLIER).toBe(1.2);
+    expect(PHRASE_REPETITION_W).toBe(2.0);
+  });
+
+  it("firstWord splits on the first space; space-free keys return whole", () => {
+    expect(firstWord(PHRASE)).toBe("renewable");
+    expect(firstWord("alpha beta")).toBe("alpha");
+    expect(firstWord("solo")).toBe("solo"); // defense only — keys are n-grams
+  });
+
+  it("phraseSuppresses is the settled >= (tie goes to the phrase)", () => {
+    expect(phraseSuppresses(5.5, 5.0)).toBe(true); // phrase strictly higher
+    expect(phraseSuppresses(5.0, 5.0)).toBe(true); // exact tie → suppress
+    expect(phraseSuppresses(4.9, 5.0)).toBe(false); // word strictly outranks → keep both
+  });
+
+  it("phraseSalience: Σ × 1.2 + 2.0·log2(1+count) on the repetition path", () => {
+    const s = new CandidateStore();
+    put(s, "renewable", 2, 1, { rankGroup: 0 });
+    put(s, "energy", 1, 3, { rankGroup: 1, properName: true });
+    const constituents = [s.get("renewable"), s.get("energy"), undefined];
+    const expected =
+      (salience(s.get("renewable")!, 10) + salience(s.get("energy")!, 10)) *
+        1.2 +
+      2.0 * Math.log2(1 + 3);
+    expect(phraseSalience(constituents, entry({ count: 3 }), 10)).toBeCloseTo(expected, 12);
+  });
+
+  it("phraseSalience: count 1 (fast path) → multiplier only, no log bonus", () => {
+    const s = new CandidateStore();
+    put(s, "renewable", 1, 1, { rankGroup: 0 });
+    const expected = salience(s.get("renewable")!, 4) * 1.2;
+    expect(
+      phraseSalience([s.get("renewable")], entry({ count: 1 }), 4),
+    ).toBeCloseTo(expected, 12);
+  });
+
+  it("phraseSalience: every constituent missing (evicted) → 0-word sum, never a throw", () => {
+    const expected = 2.0 * Math.log2(1 + 2); // only the repetition bonus
+    expect(phraseSalience([undefined, undefined, undefined], entry(), 7)).toBeCloseTo(expected, 12);
+  });
+});
+
+describe("rankMatches — phrase salience + constituent suppression (PRD §06 h3.8)", () => {
+  it("phrase competes on FIRST-word prefix, case-insensitively; item contract holds", () => {
+    const s = phraseStore(["Renewable", "Energy", "Laboratory"]);
+    const hits = rankMatches(s, "Renew"); // uppercase fragment
+    const m = hits.find((x) => x.key === PHRASE);
+    expect(m).toBeDefined();
+    expect(m!.display).toBe("Renewable Energy Laboratory"); // joined casings
+    expect(m!.description).toBe("phrase"); // exact literal
+    // exact formula: Σ constituent saliences × 1.2 + 2.0·log2(1+2), count 2
+    const sum =
+      salience(s.get("renewable")!, s.currentOrdinal()) +
+      salience(s.get("energy")!, s.currentOrdinal()) +
+      salience(s.get("laboratory")!, s.currentOrdinal());
+    expect(m!.salience).toBeCloseTo(sum * 1.2 + 2.0 * Math.log2(3), 12);
+  });
+
+  it("repetition-path count 3: exact arithmetic ×1.2 + 2.0·log2(4)", () => {
+    const s = new CandidateStore();
+    put(s, "renewable", 2, 1);
+    put(s, "energy", 1, 3, { rankGroup: 0 });
+    put(s, "laboratory", 1, 2, { properName: true });
+    for (let o = 1; o <= 3; o++) {
+      s.recordPhraseLines([["renewable", "energy", "laboratory"]], o);
+    }
+    expect(s.getPhrase(PHRASE)!.count).toBe(3);
+    for (let i = 0; i < 5; i++) s.nextOrdinal(); // "now" = 5
+    const now = s.currentOrdinal();
+    const m = rankMatches(s, "renew").find((x) => x.key === PHRASE)!;
+    const expected =
+      (salience(s.get("renewable")!, now) +
+        salience(s.get("energy")!, now) +
+        salience(s.get("laboratory")!, now)) *
+        1.2 +
+      2.0 * Math.log2(4);
+    expect(m.salience).toBeCloseTo(expected, 12);
+  });
+
+  it("fast-path phrase (count 1): multiplier only, no repetition bonus", () => {
+    const s = new CandidateStore();
+    // all-rare constituents present at first sight → fast-path admission
+    put(s, "renewable", 1, 1, { rankGroup: 0 });
+    put(s, "energy", 1, 1, { rankGroup: 0 });
+    put(s, "laboratory", 1, 1, { rankGroup: 0 });
+    s.recordPhraseLines([["renewable", "energy", "laboratory"]], 1);
+    expect(s.isPhraseCandidate(PHRASE)).toBe(true);
+    expect(s.getPhrase(PHRASE)!.count).toBe(1);
+    for (let i = 0; i < 3; i++) s.nextOrdinal();
+    const now = s.currentOrdinal();
+    const m = rankMatches(s, "renew").find((x) => x.key === PHRASE)!;
+    const sum =
+      salience(s.get("renewable")!, now) +
+      salience(s.get("energy")!, now) +
+      salience(s.get("laboratory")!, now);
+    expect(m.salience).toBeCloseTo(sum * 1.2, 12); // no +2.0·log2 term
+  });
+
+  it("suppression fires: first word dropped when phrase salience >= its salience", () => {
+    const s = phraseStore();
+    put(s, "renewer", 1, 1); // same-prefix word that is NOT the first word
+    const hits = rankMatches(s, "renew");
+    const keys = hits.map((x) => x.key);
+    // the fired arm really is >=: phrase salience strictly exceeds the word's
+    const phraseSal = hits.find((x) => x.key === PHRASE)!.salience;
+    const wordSal = salience(s.get("renewable")!, s.currentOrdinal());
+    expect(phraseSal).toBeGreaterThan(wordSal);
+    expect(keys).not.toContain("renewable"); // suppressed
+    expect(keys).toContain(PHRASE); // phrase kept
+    expect(keys).toContain("renewer"); // unrelated word NEVER suppressed
+  });
+
+  it("a real store can never produce word salience > phrase salience — the first word IS a constituent", () => {
+    // S_P = 1.2·(S_W + rest) + bonus >= 1.2·S_W > S_W, so through rankMatches
+    // the word always yields; the PRD h3.8 "word strictly outranks → both kept"
+    // arm is exercised at the pure-helper level above (phraseSuppresses/compareRankedMatches).
+    const s = new CandidateStore();
+    put(s, "renewable", 10, 9, { rankGroup: 0, fromUser: true }); // monster word
+    put(s, "energy", 1, 1, { rankGroup: 2 }); // weak constituents
+    put(s, "laboratory", 1, 1, { rankGroup: 2 });
+    s.recordPhraseLines([["renewable", "energy", "laboratory"]], 1);
+    s.recordPhraseLines([["renewable", "energy", "laboratory"]], 2);
+    const hits = rankMatches(s, "renew");
+    const phraseSal = hits.find((x) => x.key === PHRASE)!.salience;
+    const wordSal = salience(s.get("renewable")!, s.currentOrdinal());
+    expect(phraseSal).toBeGreaterThan(wordSal); // invariant holds even here
+    expect(hits.map((x) => x.key)).not.toContain("renewable");
+    expect(hits[0]!.key).toBe(PHRASE); // phrase ranks above everything
+  });
+
+  it("word strictly outranking a phrase keeps both, word ranked above (helper level)", () => {
+    // rankMatches can only reach the keep-both arm through fabricated numbers
+    // (see the invariant test above); the pure ladder is pinned here.
+    const word: RankedMatch = {
+      key: "renewable",
+      display: "renewable",
+      description: "session x9",
+      salience: 10.5,
+    };
+    const phrase: RankedMatch = {
+      key: PHRASE,
+      display: PHRASE,
+      description: "phrase",
+      salience: 9.25,
+    };
+    expect(phraseSuppresses(phrase.salience, word.salience)).toBe(false);
+    expect(compareRankedMatches(word, phrase)).toBeLessThan(0); // word first
+    expect(compareRankedMatches(phrase, word)).toBeGreaterThan(0);
+  });
+
+  it("a fragment matching only a middle/last word does NOT surface the phrase", () => {
+    const s = phraseStore();
+    const hits = rankMatches(s, "energy");
+    // the trigram's first word is "renewable" — "energy" cannot surface it
+    expect(hits.some((x) => x.key === PHRASE)).toBe(false);
+    // recordPhraseLines also captured the bigram "energy laboratory" (count 2),
+    // whose FIRST word IS "energy" — so the bigram surfaces and, by the same
+    // h3.8 rule, suppresses the bare word (S_P = 1.2·Σ >= S_word always).
+    expect(hits.map((x) => x.key)).toEqual(["energy laboratory"]);
+  });
+
+  it("missing constituent contributes 0 — phrase still surfaces with exact salience", () => {
+    const s = new CandidateStore();
+    put(s, "renewable", 1, 1, { rankGroup: 0 });
+    put(s, "energy", 1, 1, { rankGroup: 0 });
+    // "laboratory" never upserted — evicted/absent words must not fail the query
+    s.recordPhraseLines([["renewable", "energy", "laboratory"]], 1);
+    s.recordPhraseLines([["renewable", "energy", "laboratory"]], 2);
+    for (let i = 0; i < 2; i++) s.nextOrdinal();
+    const now = s.currentOrdinal();
+    const m = rankMatches(s, "renew").find((x) => x.key === PHRASE);
+    expect(m).toBeDefined();
+    const expected =
+      (salience(s.get("renewable")!, now) + salience(s.get("energy")!, now)) *
+        1.2 +
+      2.0 * Math.log2(3);
+    expect(m!.salience).toBeCloseTo(expected, 12);
+  });
+
+  it("merged order and top-8 truncation across words and phrases (hand-computed)", () => {
+    const s = new CandidateStore();
+    // 10 competing "renew*" words, all count 1 rankGroup 2 at ordinal 1 →
+    // identical salience → tie ladder (length asc, byte-lex) decides among them.
+    for (const w of [
+      "renewable",
+      "renewables",
+      "renewal",
+      "renewing",
+      "renewed",
+      "renewer",
+      "renewment",
+      "renewableness",
+      "renewly",
+    ]) {
+      put(s, w, 1, 1);
+    }
+    put(s, "energy", 1, 1);
+    put(s, "laboratory", 1, 1);
+    s.recordPhraseLines([["renewable", "energy", "laboratory"]], 1);
+    s.recordPhraseLines([["renewable", "energy", "laboratory"]], 2);
+    const hits = rankMatches(s, "renew"); // default limit 8
+    expect(hits).toHaveLength(DEFAULT_LIMIT);
+    // Hand-computed ladder: capture made the trigram AND the bigram
+    // "renewable energy" (both count 2 → candidates; both suppress the word
+    // "renewable"). Trigram salience (1.2·3-word Σ + bonus) > bigram (1.2·
+    // 2-word Σ + bonus) > every count-1 word; surviving words tie → shorter
+    // key first, byte-lex:
+    //   renewal(7) renewed(7) renewer(7) renewly(7) renewing(8)
+    //   renewment(9) renewables(10) renewableness(15)  ← truncated at 8
+    expect(hits.map((x) => x.key)).toEqual([
+      PHRASE,
+      "renewable energy",
+      "renewal",
+      "renewed",
+      "renewer",
+      "renewly",
+      "renewing",
+      "renewment",
+    ]);
+    expect(hits.some((x) => x.key === "renewableness")).toBe(false);
+    expect(hits.some((x) => x.key === "renewables")).toBe(false);
+  });
+
+  it("no phrase candidates → M1 word-only behavior unchanged", () => {
+    const s = new CandidateStore();
+    put(s, "alpha", 2, 1);
+    expect(s.phraseCandidateKeys()).toHaveLength(0);
+    expect(rankMatches(s, "al")).toEqual([
+      {
+        key: "alpha",
+        display: "alpha",
+        description: "session x2",
+        salience: salience(s.get("alpha")!, s.currentOrdinal()),
+      },
+    ]);
+  });
+
+  it("opts.suppress still filters WORD candidates independently of phrases", () => {
+    const s = phraseStore();
+    put(s, "renewer", 1, 1);
+    const hits = rankMatches(s, "renew", {
+      suppress: (c) => c.key === "renewable" || c.key === "renewer",
+    });
+    const keys = hits.map((x) => x.key);
+    expect(keys).not.toContain("renewable"); // caller seam drops the word…
+    expect(keys).not.toContain("renewer");
+    expect(keys).toContain(PHRASE); // …but can never see or drop phrases
+  });
+});
+    

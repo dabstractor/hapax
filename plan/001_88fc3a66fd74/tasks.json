@@ -772,7 +772,7 @@
           "type": "Milestone",
           "id": "P2.M1",
           "title": "Phrase candidates & n-gram store",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Extend the store and query path with bigram/trigram capture, hybrid phrase admission (repetition + all-rare fast path), 40-ordinal demotion, and constituent suppression in ranking.",
           "tasks": [
             {
@@ -846,14 +846,14 @@
               "type": "Task",
               "id": "P2.M1.T3",
               "title": "Phrase query integration (src/core/query.ts extension)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Surface phrase candidates in completion results with phrase salience and constituent suppression.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M1.T3.S1",
                   "title": "Phrase salience + constituent suppression in rankMatches",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M1.T2.S2",
