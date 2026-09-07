@@ -71,6 +71,17 @@ export interface PhraseEntry {
   sticky: boolean;
 }
 
+/** One of a word's most frequent bigram successors (PRD §06 h3.9): an
+ *  element of the top-3-per-word index CandidateStore maintains
+ *  incrementally at phrase ingest (P2.M2.T1.S1) and the chained-completion
+ *  machine (P2.M2.T2.S1) reads per keystroke. */
+export interface Successor {
+  /** the word that followed `word` in a bigram */
+  next: string;
+  /** occurrences of the bigram "word next" this session */
+  count: number;
+}
+
 /** Output of src/core/segment.ts tokenize(). PRD §04 segmentation. */
 export interface RawToken {
   /** the matched text, original casing (normalization is P1.M2.T1.S2) */

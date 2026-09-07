@@ -882,14 +882,14 @@
               "type": "Task",
               "id": "P2.M2.T1",
               "title": "Successor index",
-              "status": "Ready",
+              "status": "Complete",
               "description": "word → top-3 most frequent successors, built from bigram counts at ingest time.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M2.T1.S1",
                   "title": "Successor index build (top-3 per word) at ingest",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T1.S1"
@@ -906,14 +906,14 @@
               "type": "Task",
               "id": "P2.M2.T2",
               "title": "Chained completion state machine (provider)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "idle/armed(W) machine: Tab acceptance arms the word's successors for zero-typing completion, threshold drops to 1 char during the chain, resets on before_agent_start and disqualifying keys.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M2.T2.S1",
                   "title": "armed(W) chain machine: arm on Tab accept, filter successors, reset rules",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M2.T1.S1",
@@ -934,14 +934,14 @@
               "type": "Task",
               "id": "P2.M2.T3",
               "title": "M2 acceptance & debug extensions",
-              "status": "Planned",
+              "status": "Ready",
               "description": "PRD §09 integration item 7 (zero-typing chain), enablePhrases gating validation, and /acwords phrase/successor dump.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M2.T3.S1",
                   "title": "Integration item 7 + enablePhrases gating + /acwords M2 dump",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M2.T2.S1",

@@ -60,10 +60,25 @@
  * in #phraseCandidates, orthogonal to counts; demotion
  * (removePhraseCandidacy, called by T2.S2's sweepPhraseDemotions) drops
  * candidacy while counts, ordinals, and sticky stay.
+ *
+ * SUCCESSOR INDEX (P2.M2.T1.S1, PRD §06 h3.9): every bigram phrase key
+ * ("w1 w2") bumps w1 → w2 in #successorIndex at INGEST time, inside the
+ * phrase upsert — never via a map-wide scan (§05 h2.34) and never on the
+ * keystroke path. Each word keeps at most 3 successors, ordered
+ * count-descending with byte-lex ties; on overflow the sorted tail drops
+ * and eviction never backfills it (a dropped successor returns only when
+ * its bigram recurs). topSuccessors() is a pure O(1) read returning the
+ * live array (read-only contract) or the shared NO_SUCCESSORS constant.
  */
 
 import { evictionScore } from "./score.js";
-import type { Candidate, PhraseEntry, RankGroup, Sighting } from "./types.js";
+import type {
+  Candidate,
+  PhraseEntry,
+  RankGroup,
+  Sighting,
+  Successor,
+} from "./types.js";
 
 /** Hard cap on stored word candidates — whole tokens AND sub-words count
  *  toward the same cap. PRD §06 h2.37; baked, not config (PRD §08 h2.47). */
@@ -94,6 +109,20 @@ function phraseEvictionScore(p: PhraseEntry, currentOrdinal: number): number {
   return p.count * Math.exp(-(currentOrdinal - p.lastSeenOrdinal) / 50);
 }
 
+/** Successor sort key (PRD §06 h3.9): higher count first, byte-lex
+ *  ascending `next` on equal counts — the eviction comparators' inline
+ *  `a < b ? -1 : …` style as a strict "a sorts before b" predicate, used
+ *  by #bumpSuccessor's bounded in-place shifts. */
+function successorBefore(a: Successor, b: Successor): boolean {
+  if (a.count !== b.count) return a.count > b.count;
+  return a.next < b.next;
+}
+
+/** Shared empty successor array (PRD §06 h3.9): topSuccessors() hands
+ *  this constant to every unseen-word caller, so a keystroke-path miss
+ *  allocates nothing — one frozen array for the whole process. */
+const NO_SUCCESSORS: readonly Successor[] = Object.freeze([]);
+
 /** Per-session word-candidate store (PRD §06). Pure in-memory Map from
  *  lowercase key → Candidate, plus the session's message ordinal counter. */
 export class CandidateStore {
@@ -112,6 +141,13 @@ export class CandidateStore {
   // repetition path (count ≥ 2) or the first-sight fast path (every
   // constituent rankGroup 0 / properName, ≤ 5 words) has admitted it.
   #phraseCandidates = new Set<string>();
+  // Successor index (P2.M2.T1.S1, PRD §06 h3.9): word → its top-3 most
+  // frequent bigram successors, ordered count-desc / byte-lex-asc, never
+  // longer than 3 entries. Maintained INCREMENTALLY inside #upsertPhrase
+  // (one bump per bigram key — no scans, §05 h2.34; nothing runs on the
+  // keystroke path) and cleaned by #evictPhrasesIfOverCap when an evicted
+  // key is a bigram. Read O(1) via topSuccessors().
+  #successorIndex = new Map<string, Successor[]>();
   // Provenance of fast-path admission — the "both paths" half of the
   // sticky rule and the filter T2.S2's demotion sweep iterates. Also
   // pins the fast path to FIRST SIGHT: once recorded, a later count-1
@@ -347,6 +383,7 @@ export class CandidateStore {
         sticky: false, // only admission (P2.M1.T2.S1) ever sets this
       };
       this.#phrases.set(key, entry);
+      this.#bumpSuccessorFor(key); // successor tail (PRD §06 h3.9)
       this.#admitPhrase(key, entry); // admission tail (PRD §06 h3.7)
       return;
     }
@@ -354,7 +391,58 @@ export class CandidateStore {
     existing.lastSeenOrdinal = ordinal;
     // firstSeenOrdinal stays frozen at creation; sticky is untouched —
     // except through admission, immediately below.
+    this.#bumpSuccessorFor(key); // successor tail (PRD §06 h3.9)
     this.#admitPhrase(key, existing);
+  }
+
+  /** Successor-index maintenance for one upserted phrase key (P2.M2.T1.S1,
+   *  PRD §06 h3.9): exactly-two-word keys are bigrams and bump w1 → w2;
+   *  trigrams (and anything longer) are no-ops. The single-space guard is
+   *  exact because keys are lowercase single-space joins by construction.
+   *  Runs at the tail of EVERY phrase upsert, AFTER the create-or-bump so
+   *  the entry count is final — one O(1)-ish bump, never a scan over
+   *  #phrases (§05 h2.34), and never on the keystroke path. */
+  #bumpSuccessorFor(key: string): void {
+    const sp = key.indexOf(" ");
+    if (sp !== -1 && sp === key.lastIndexOf(" ")) {
+      this.#bumpSuccessor(key.slice(0, sp), key.slice(sp + 1));
+    }
+  }
+
+  /** Bump-or-insert w2 in w1's successor array, keeping the array sorted
+   *  count-descending with byte-lex ascending `next` on equal counts at
+   *  ALL times (so topSuccessors() stays a pure O(1) read for the chain
+   *  machine, P2.M2.T2.S1). A bump can only move its entry toward the
+   *  head — counts never shrink; a fresh successor inserts at its sorted
+   *  position. Arrays hold ≤ 3 entries before insertion, so both shifts
+   *  are bounded constant work. On overflow (length 4) the sorted TAIL
+   *  drops: the lowest count and, on a count tie, the byte-lex LARGER
+   *  word. A newcomer therefore needs a strictly better sort key than the
+   *  incumbent worst to displace it — the PRD §06 h3.9 contract case
+   *  (three incumbents, then a 4th distinct successor at count 1) never
+   *  surfaces the newcomer, deterministically. */
+  #bumpSuccessor(w1: string, w2: string): void {
+    const arr = this.#successorIndex.get(w1);
+    if (arr === undefined) {
+      this.#successorIndex.set(w1, [{ next: w2, count: 1 }]);
+      return;
+    }
+    const existing = arr.find((s) => s.next === w2);
+    if (existing !== undefined) {
+      existing.count++;
+      let i = arr.indexOf(existing);
+      while (i > 0 && successorBefore(existing, arr[i - 1])) {
+        arr[i] = arr[i - 1];
+        arr[i - 1] = existing;
+        i--;
+      }
+      return;
+    }
+    const entry: Successor = { next: w2, count: 1 };
+    let pos = arr.length;
+    while (pos > 0 && successorBefore(entry, arr[pos - 1])) pos--;
+    arr.splice(pos, 0, entry);
+    if (arr.length > 3) arr.length = 3; // drop the sorted tail (see above)
   }
 
   /** Hybrid phrase admission (P2.M1.T2.S1, PRD §06 h3.7), run at the tail
@@ -440,7 +528,28 @@ export class CandidateStore {
     // and snapshot.length === #phrases.size > needed always.
     for (const { p } of scored.slice(0, Math.min(needed, scored.length))) {
       this.#phrases.delete(p.key);
+      this.#dropSuccessorFor(p.key); // successor cleanup (P2.M2.T1.S1)
     }
+  }
+
+  /** Eviction-side successor cleanup (P2.M2.T1.S1, PRD §06 h3.9): when a
+   *  deleted phrase key is a bigram, its Successor is spliced out of w1's
+   *  array — and w1's map entry dies with the last one. NO backfill: no
+   *  4th-best is promoted and nothing is recomputed (a dropped successor
+   *  returns only when its bigram recurs; the survivors' counts stay
+   *  correct because they were counted independently). Trigram evictions
+   *  are no-ops. The findIndex miss-guard is load-bearing: a bigram whose
+   *  successor lost the top-3 cap long ago evicts without an entry to
+   *  splice. Unknown word → no-op. */
+  #dropSuccessorFor(key: string): void {
+    const sp = key.indexOf(" ");
+    if (sp === -1 || sp !== key.lastIndexOf(" ")) return; // bigrams only
+    const arr = this.#successorIndex.get(key.slice(0, sp));
+    if (arr === undefined) return;
+    const w2 = key.slice(sp + 1);
+    const i = arr.findIndex((s) => s.next === w2);
+    if (i !== -1) arr.splice(i, 1);
+    if (arr.length === 0) this.#successorIndex.delete(key.slice(0, sp));
   }
 
   /** Mark one phrase sticky (PRD §06 M2): sticky resists eviction exactly
@@ -530,6 +639,18 @@ export class CandidateStore {
    *  LIVE entry — treat as read-only (same contract as get()). */
   getPhrase(key: string): PhraseEntry | undefined {
     return this.#phrases.get(key);
+  }
+
+  /** Top bigram successors of `word` (PRD §06 h3.9), best first: ordered
+   *  count-descending with byte-lex ascending ties, at most 3 entries,
+   *  built incrementally at INGEST inside #upsertPhrase — so this is a
+   *  pure O(1) read for the keystroke path (the chained completion
+   *  machine, P2.M2.T2.S1, calls it per keystroke). Returns the LIVE
+   *  array — treat as read-only (same contract as get()/getPhrase()); an
+   *  unseen word gets the shared NO_SUCCESSORS constant, so a miss
+   *  allocates nothing. */
+  topSuccessors(word: string): readonly Successor[] {
+    return this.#successorIndex.get(word) ?? NO_SUCCESSORS;
   }
 
   /** Number of stored phrases (one per joined key). */
