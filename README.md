@@ -8,9 +8,13 @@ window, extracts uncommon words, identifiers, and proper names, and offers
 them as Tab completions in the prompt input via pi's built-in autocomplete
 menu.
 
-**Status: M1 (v1) — complete, verified 2026-09-07** against the full M1
-definition-of-done gauntlet — every gate, command, and measured number is
-recorded in [`docs/M1-DoD.md`](docs/M1-DoD.md).
+**Status: M2 (v2) — complete, verified 2026-09-07.** The M1
+definition-of-done gauntlet — every gate, command, and measured number — is
+recorded in [`docs/M1-DoD.md`](docs/M1-DoD.md); the M2 evidence sweep
+(zero-typing chained completion, `enablePhrases` gating, `/acwords` phrase
+dump, M1 regression) is the item-7 section of
+[`test/fixtures/sessions/RESULTS.md`](test/fixtures/sessions/RESULTS.md)
+("Item 7 — chained completion, zero typed characters — VERDICT: PASS").
 
 ## Features
 
@@ -30,6 +34,20 @@ recorded in [`docs/M1-DoD.md`](docs/M1-DoD.md).
   are ever stored (`src/core/shapeGate.ts`).
 - **Zero persistence, zero telemetry, zero network** — everything lives in
   RAM and dies at `session_shutdown` (`src/pi/index.ts`).
+- **Phrase completions** (`src/core/store.ts`, `src/core/query.ts`) —
+  2- and 3-word phrases join the menu when the phrase occurs **≥ 2 times
+  in-session** (repetition — confirmed and sticky), or on **first sight
+  when every constituent word is rare** (fast path — unconfirmed, and
+  demoted again unless repeated within **40 messages**). While a phrase is
+  a candidate, its constituent words are suppressed from word-only
+  completion so the phrase wins.
+- **Chained Tab completion — zero additional typing**
+  (`src/pi/provider.ts`) — accepting a word via Tab arms its most-likely
+  successor (top-3 successor index built at ingest, `src/core/store.ts`);
+  the very next Tab completes that successor with no additional typing —
+  `National` → `renewable` → `energy` → `laboratory` (scripted proof:
+  item 7 of `test/fixtures/sessions/RESULTS.md`). Chaining resets on
+  `before_agent_start` and on disqualifying input.
 
 ## Quick start
 
@@ -57,6 +75,18 @@ type  ze        → menu offers Zendesk → Tab inserts "Zendesk" (cased)
 type  #l        → menu offers lwlock  → Tab inserts it
 ```
 
+Chained completion needs no typing at all once a phrase chain exists in the
+session — discuss the National Renewable Energy Laboratory, then:
+
+```text
+type  natio            → menu offers National → Tab inserts "National"
+     (menu stays up)   → top offer renewable → Tab (no typing!)
+                        → energy → Tab → laboratory — four words, four Tabs
+```
+
+Once admitted (by repetition or an all-rare first sight), phrases appear in
+the same menu as words.
+
 Ordinary prose: typing is identical to stock pi — no key is captured, no
 menu appears for common words, and Tab with no selection inserts a literal
 Tab. The menu is strictly take-it-or-leave.
@@ -68,8 +98,9 @@ Two layers:
 - `src/core/` — pure, agent-agnostic computation: `dictionary` (packed
   binary loader), `segment` (word segmentation + camelCase/snake_case
   splitting), `shapeGate` (noise/secret rejection), `score` (admission +
-  salience), `store` (per-session candidates, 20k cap), `query` (prefix
-  search + ranking). No pi imports.
+  salience), `store` (per-session candidates, 20k cap, plus the M2 phrase
+  store and top-3 successor index), `query` (prefix search + ranking). No
+  pi imports.
 - `src/pi/` — the pi adapter: `index` (extension factory + lifecycle),
   `ingest` (message handling), `provider` (autocomplete integration),
   `config`, `debug` (`/acwords`), `paths` (jiti-safe dictionary path).
@@ -112,7 +143,9 @@ observes: the handler never returns a value, so hapax cannot modify
 messages or anything sent to providers. `session_shutdown` disposes
 timers and drops every reference — nothing to flush, because there is no
 persistence. Compaction fires no handler; the store survives compaction
-untouched. If the packed dictionary fails to load, ingestion is disabled
+untouched. `before_agent_start` (each new user turn) resets the Tab-chain
+machine to idle, so a chained successor offer never leaks across turns. If
+the packed dictionary fails to load, ingestion is disabled
 permanently for that runtime (one error notify) while the empty provider
 stays registered, delegating all completion to pi — see
 [Missing dictionary → graceful disable](#missing-dictionary--graceful-disable).
@@ -231,7 +264,7 @@ silently (forward compatibility):
 | `triggerChar`    | string  | `"#"`   | one non-word, non-space character (`/^[^\w\s]$/`), or `""` to disable trigger mode entirely | prefix that opens the completion popup |
 | `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | chars before threshold matching                 |
 | `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once               |
-| `enablePhrases`  | boolean | `true`  | `true` / `false`                                         | phrase completions + Tab chaining (M2); `false` disables the whole phrase layer |
+| `enablePhrases`  | boolean | `true`  | `true` / `false`                                         | `true` enables phrase completions and Tab-chained successor completion; `false` removes the entire phrase layer — no phrase items, no constituent suppression, no successor capture or chaining — while word completion is unchanged |
 | `debug`          | boolean | `false` | `true` / `false`                                         | enables the `/acwords` command + store dump     |
 
 #### File paths and precedence
