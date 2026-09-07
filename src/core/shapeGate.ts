@@ -15,7 +15,11 @@
  *     (PRD §08). Evaluated on draft.display (raw casing) by
  *     isSecretShaped: known key prefixes (case-insensitive), '@' plus
  *     '.', digit+symbol ratio > 0.4 at length ≥ 16, base64-shaped runs
- *     ≥ 24 (mixed case + digit + '+'/'/'), pure-hex length ≥ 20.
+ *     ≥ 24 (mixed case + digit + '+'/'/'), pure-hex length ≥ 20, plus the
+ *     BUG-003 residue rules: base64url runs ≥ 16 (mixed case + ≥ 2 digits,
+ *     no '+'/'/' required) and charset-relative entropy floors (base64-
+ *     charset runs ≥ 16 at ≥ 4.5 bits/char; whole-display hex ≥ 16 at
+ *     ≥ 3.0).
  *  3. Entropy (`lowEntropy`): Shannon entropy of draft.key's character
  *     distribution < 1.5 bits/char. Computed over the lowercase key, never
  *     the display (PRD gotcha: casing would change the distribution).
@@ -96,6 +100,30 @@ const MIN_PURE_HEX_LENGTH = 20;
  *  (so a–f covers A–F too). No /g flag — no lastIndex state. */
 const PURE_HEX_RE = /^[0-9a-f]+$/;
 
+/** BUG-003 residue rule 6: minimum contiguous base64url-alphabet run
+ *  ([A-Za-z0-9_-]; NO '+'/'/' requirement — base64url payloads never
+ *  contain them, which is exactly why rule 4 missed the leak). Provenance:
+ *  bug report h2.5 ("≥16-char mixed-case+digit runs"). */
+const BASE64URL_RUN_MIN = 16;
+/** BUG-003 residue rule 7a: minimum base64-charset run length before
+ *  entropy is consulted (the hexish 13–15 band stays admitted by design —
+ *  13 distinct chars cap at log2(13) ≈ 3.7 anyway). */
+const MIN_HIGH_ENTROPY_RUN = 16;
+/** BUG-003 residue rule 7a: a base64-charset run at/above this many
+ *  bits/char reads as random, not word-like. Charset-relative calibration
+ *  (external_deps.md §3): English prose ≈ 4.0–4.2, hex caps at 4.0, random
+ *  base64 approaches log2(64) ≈ 6 — a flat 3.5 threshold would
+ *  false-positive prose, hence the floor sits at 4.5. */
+const BASE64_ENTROPY_MIN = 4.5;
+/** BUG-003 residue rule 7b: whole-display pure hex below this length is
+ *  never entropy-judged (floor 16 keeps the hexish 13–15 band admitted). */
+const HEX_ENTROPY_MIN_LENGTH = 16;
+/** BUG-003 residue rule 7b: whole-display pure-hex runs at/above this many
+ *  bits/char are private-key-shaped residue (random hex averages ≈ 4.0;
+ *  structured repeats like abcabc… fall below and stay — rule 5 owns the
+ *  ≥ 20 band outright, this closes only the random-looking 16–19 gap). */
+const HEX_ENTROPY_MIN = 3.0;
+
 /** Vowel letters within a–z; every other a–z char is a consonant. */
 const VOWELS = "aeiou";
 
@@ -128,7 +156,7 @@ export function passesShape(draft: CandidateDraft): GateResult {
 
 /**
  * True when the raw candidate text is secret-shaped (PRD §04 h2.23 rule 3;
- * security acceptance §09 integration item 5). Five always-on sub-rules,
+ * security acceptance §09 integration item 5). Seven always-on sub-rules,
  * any one of which rejects — evaluated in this order:
  *
  *  1. Known key prefixes, case-insensitive on the lowercased display.
@@ -139,8 +167,34 @@ export function passesShape(draft: CandidateDraft): GateResult {
  *  4. Base64-shaped run ≥ 24 mixing case, digits, and at least one of
  *     '+'/'/' (hasBase64SecretRun — needs ORIGINAL casing, hence display).
  *  5. Whole-candidate pure hex length ≥ 20 (private-key-shaped). Hexish
- *     6–12 — and the 13–19 band — stay admitted: per PRD only the
- *     dictionary/admission stage may demote those, never the gate.
+ *     6–12 stays admitted: per PRD only the dictionary/admission stage
+ *     may demote those, never the gate.
+ *  6. BUG-003 residue: base64url run ≥ 16 (BASE64URL_RUN_MIN) from
+ *     [A-Za-z0-9_-] — NO '+'/'/' requirement, because base64url payloads
+ *     never contain them and rule 4 therefore missed the leak — carrying
+ *     ≥ 1 lowercase, ≥ 1 uppercase, AND ≥ 2 digits (hasBase64UrlSecretRun).
+ *     The ≥2-digit and ≥1-lowercase guards are load-bearing: camelCase
+ *     identifiers ("fixRoundingError": zero digits) and SCREAMING_CASE
+ *     constants (zero lowercase) must survive.
+ *  7. BUG-003 residue: charset-relative entropy (hasHighEntropySecretRun)
+ *     — (a) a base64-charset run [A-Za-z0-9+/_-] of ≥ 16 chars at
+ *     ≥ 4.5 bits/char with ≥ 1 digit and mixed case or a run symbol;
+ *     (b) whole-display pure hex ≥ 16 chars at ≥ 3.0 bits/char. The
+ *     thresholds are RELATIVE TO EACH CHARSET'S CEILING (prose ≈ 4.0–4.2
+ *     bits/char, hex 4.0, random base64 ≈ 6) — a flat threshold would
+ *     false-positive ordinary words.
+ *
+ * Layering (BUG-003 defense in depth): maskSecrets() blanks structured
+ * keys on the RAW segment BEFORE tokenize; these token rules are the
+ * format-blind residue layer for fragments that reach the gate anyway.
+ * Documented NON-goal: mixed-case no-digit fragments like "wJalrXUtnFEMI"
+ * / "bPxRfiCYEXAMPLEKEY" (AWS-secret-shaped 13/18-char pieces) stay
+ * gate-admitted on purpose — rules 6/7 require digits, and weakening that
+ * to catch them would false-positive camelCase identifiers wholesale;
+ * maskSecrets' AWS catch-all owns them when the full key is present. The
+ * same layering admits Slack-style lowercase tails ("abcdefghijklmnopqrstu
+ * vwx": entropy ≈ 4.6 but no digit, no uppercase) — the Slack masking
+ * regex owns the full xoxb-… key.
  *
  * Called with draft.display (original casing, same length as key); the
  * single lowercase here is what makes rule 1 case-insensitive. Baked
@@ -172,6 +226,12 @@ function isSecretShaped(display: string): boolean {
 
   // 5. Pure hex ≥ 20.
   if (raw.length >= MIN_PURE_HEX_LENGTH && PURE_HEX_RE.test(raw)) return true;
+
+  // 6. Base64url residue run (BUG-003 — no '+'/'/' requirement).
+  if (hasBase64UrlSecretRun(display)) return true;
+
+  // 7. Charset-relative entropy residue (BUG-003).
+  if (hasHighEntropySecretRun(display)) return true;
 
   return false;
 }
@@ -216,6 +276,107 @@ function hasBase64SecretRun(display: string): boolean {
       upper = 0;
       digit = 0;
       punct = 0;
+    }
+  }
+  return false;
+}
+
+/** BUG-003 residue rule 6: true when some contiguous run of ≥
+ *  BASE64URL_RUN_MIN chars from the base64url alphabet [A-Za-z0-9_-]
+ *  carries ≥ 1 lowercase, ≥ 1 uppercase, and ≥ 2 digits. Unlike rule 4
+ *  there is NO '+'/'/' requirement — base64url payloads (the BUG-003 leak
+ *  shape) never contain them. Scans the ORIGINAL display (case matters).
+ *  One left-to-right pass with a sentinel flush at i === length, mirroring
+ *  hasBase64SecretRun: class tallies reset whenever a non-alphabet char
+ *  breaks the run ('_' and '-' are IN the alphabet and do NOT break it). */
+function hasBase64UrlSecretRun(display: string): boolean {
+  let run = 0;
+  let lower = 0;
+  let upper = 0;
+  let digit = 0;
+  for (let i = 0; i <= display.length; i++) {
+    const ch = i < display.length ? display.charAt(i) : ""; // sentinel: flush
+    const isLower = ch >= "a" && ch <= "z";
+    const isUpper = ch >= "A" && ch <= "Z";
+    const isDigit = ch >= "0" && ch <= "9";
+    if (isLower || isUpper || isDigit || ch === "_" || ch === "-") {
+      run++;
+      if (isLower) lower++;
+      else if (isUpper) upper++;
+      else if (isDigit) digit++;
+    } else {
+      if (run >= BASE64URL_RUN_MIN && lower > 0 && upper > 0 && digit >= 2) {
+        return true;
+      }
+      run = 0;
+      lower = 0;
+      upper = 0;
+      digit = 0;
+    }
+  }
+  return false;
+}
+
+/** Rule 7a predicate for one base64-charset run (length already ≥ floor):
+ *  key-shaped texture (≥ 1 digit AND mixed case or a '+'/'/'/'_'/'-'
+ *  symbol) AND random-looking entropy (≥ BASE64_ENTROPY_MIN, computed over
+ *  the run's own char distribution — never the whole candidate). The
+ *  digit guard is what keeps all-lowercase no-digit tails like
+ *  "abcdefghijklmnopqrstuvwx" (entropy ≈ 4.6, zero digits) admitted —
+ *  weakening it would false-positive prose; masking owns those tails. */
+function isHighEntropyB64Run(run: string): boolean {
+  let digit = 0;
+  let lower = 0;
+  let upper = 0;
+  let symbol = 0;
+  for (let i = 0; i < run.length; i++) {
+    const ch = run.charAt(i);
+    if (ch >= "0" && ch <= "9") digit++;
+    else if (ch >= "a" && ch <= "z") lower++;
+    else if (ch >= "A" && ch <= "Z") upper++;
+    else symbol++; // '+' '/' '_' '-' — the only run-alphabet chars left
+  }
+  if (digit === 0) return false;
+  if ((lower === 0 || upper === 0) && symbol === 0) return false;
+  return charEntropy(run) >= BASE64_ENTROPY_MIN;
+}
+
+/** BUG-003 residue rule 7: charset-relative entropy, in two branches.
+ *  (a) Any contiguous run ≥ MIN_HIGH_ENTROPY_RUN chars from the base64
+ *      alphabet [A-Za-z0-9+/_-] that isHighEntropyB64Run flags. Run
+ *      boundaries are tracked by index; the substring is sliced (and its
+ *      entropy computed) only for runs reaching the floor — rare, keeping
+ *      the hot path allocation-light.
+ *  (b) Whole-display pure hex ≥ HEX_ENTROPY_MIN_LENGTH at ≥ HEX_ENTROPY_MIN
+ *      bits/char, evaluated on the lowercased display (rule 5's
+ *      normalization).
+ *  Single left-to-right pass with a sentinel flush, mirroring
+ *  hasBase64SecretRun. */
+function hasHighEntropySecretRun(display: string): boolean {
+  let start = 0;
+  for (let i = 0; i <= display.length; i++) {
+    const ch = i < display.length ? display.charAt(i) : ""; // sentinel: flush
+    const inAlphabet =
+      (ch >= "a" && ch <= "z") ||
+      (ch >= "A" && ch <= "Z") ||
+      (ch >= "0" && ch <= "9") ||
+      ch === "+" ||
+      ch === "/" ||
+      ch === "_" ||
+      ch === "-";
+    if (inAlphabet) continue;
+    if (
+      i - start >= MIN_HIGH_ENTROPY_RUN &&
+      isHighEntropyB64Run(display.slice(start, i))
+    ) {
+      return true;
+    }
+    start = i + 1;
+  }
+  if (display.length >= HEX_ENTROPY_MIN_LENGTH) {
+    const raw = display.toLowerCase();
+    if (PURE_HEX_RE.test(raw) && charEntropy(raw) >= HEX_ENTROPY_MIN) {
+      return true;
     }
   }
   return false;

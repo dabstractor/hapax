@@ -107,7 +107,7 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Secret-leak hardening (BUG-003)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Close the multi-segment secret leakage: structural key shapes are masked out of raw text before tokenization, and token-level entropy rules catch residue fragments, so realistic API keys never become candidates.",
           "tasks": [
             {
@@ -138,14 +138,14 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "Token-level high-entropy secret rules",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Extend isSecretShaped with base64url-run and charset-relative entropy rules so residue fragments that survive masking (standalone high-entropy tokens with no structural prefix) are still rejected.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "base64url run + charset-relative entropy rules in isSecretShaped",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1"

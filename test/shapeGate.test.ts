@@ -269,11 +269,13 @@ describe("secret rules (PRD §04 h2.23 rule 3 / §09 item 5)", () => {
     });
   });
 
-  it("30-char alphanumeric-only run passes (base64 rule needs '+' or '/')", () => {
-    // ≥ 24 alnum chars with mixed case + digits but no '+'/'/' — long
-    // camelCase-style identifiers must survive.
+  it("rejects a 30-char alphanumeric-only mixed-case+digit run (BUG-003 rule 6)", () => {
+    // Supersedes the old "alphanumeric-only run passes" pin: base64url
+    // payloads never contain '+'/'/', so rule 6 (≥ 16-char run, mixed case,
+    // ≥ 2 digits) deliberately catches exactly this leak shape.
     expect(passesShape(draft("abcdefghij012345ABCDEFGHIJklmn"))).toEqual({
-      ok: true,
+      ok: false,
+      reason: "secret",
     });
   });
 
@@ -291,11 +293,16 @@ describe("secret rules (PRD §04 h2.23 rule 3 / §09 item 5)", () => {
     });
   });
 
-  it("admits the 13–19 hex band (reject is ≥ 20 only)", () => {
-    // 15 hexish chars — below the ratio gate (16) and the hex rule (20).
+  it("admits the 13–15 hex band and structured (low-entropy) 16–19 hex", () => {
+    // 15 hexish chars — below the ratio gate (16), the BUG-003 rule 6/7
+    // floors (16), and the pure-hex rule (20).
     expect(passesShape(draft("a1b2c3d4e5f6a7b"))).toEqual({ ok: true });
-    // 19 hex chars, 4 digits → ratio 4/19 ≈ 0.21 — one short of rejection.
-    expect(passesShape(draft("abcdefabcdefabc1234"))).toEqual({ ok: true });
+    // BUG-003 rule 7b narrowed the 16–19 band: only genuinely random-
+    // looking hex (entropy ≥ 3.0) rejects; structured repeats like this
+    // 16-char H = 2.0 string stay admitted. (The old 19-char pin
+    // "abcdefabcdefabc1234" has H ≈ 3.18 and now rejects — see the
+    // BUG-003 block below.)
+    expect(passesShape(draft("abcabcabcdefabcd"))).toEqual({ ok: true });
   });
 
   it("rejects '@' plus '.' (email belt-and-braces on directly-built drafts)", () => {
@@ -340,3 +347,116 @@ describe("secret rules (PRD §04 h2.23 rule 3 / §09 item 5)", () => {
     ).toEqual({ ok: true });
   });
 });
+
+describe(
+  "secret residue rules (BUG-003: base64url run + charset-relative entropy)",
+  () => {
+    it("rejects the BUG-003 OpenAI residue payload (rule 6: no '+'/'/' needed)", () => {
+      // 35 chars: 13 lower / 12 upper / 10 digits. Earlier rules are all
+      // silent — digit+symbol ratio 10/35 ≈ 0.29, alphanumeric-only (rule 4
+      // wants '+'/'/'), not hex — rule 6 is the only catcher. H ≈ 5.13.
+      expect(
+        passesShape(draft("4t7RX2bQ9wLm3vN8xKpZ6dJh1cA5eFgH0iU"))
+      ).toEqual({ ok: false, reason: "secret" });
+    });
+
+    it("rule 6 minimal hit: exactly 16 chars, ≥1 lower + ≥1 upper + 2 digits", () => {
+      expect(passesShape(draft("Ab3xK9pQ2wLm5nRt"))).toEqual({
+        ok: false,
+        reason: "secret",
+      });
+    });
+
+    it("rule 6 spans '_' and '-' (base64url alphabet — rule 4 excludes them)", () => {
+      // '_' is a run char, not a break: one 16-char run (7/5/3).
+      expect(passesShape(draft("Ab_xK9pQ2wLm5nRt"))).toEqual({
+        ok: false,
+        reason: "secret",
+      });
+      // '-' joins both sides into a single 21-char run (8/7/5).
+      expect(passesShape(draft("Ab3xK9pQ2wLm5nRt-vV9Z"))).toEqual({
+        ok: false,
+        reason: "secret",
+      });
+      // A run fully embedded mid-string ('.' is a true run break).
+      expect(passesShape(draft("zz.Ab3xK9pQ2wLm5nRt.zz"))).toEqual({
+        ok: false,
+        reason: "secret",
+      });
+    });
+
+    it("rule 6 boundary: 15 chars passes (floor is exactly 16)", () => {
+      // H ≈ 3.91, no consonant/unigram violations — only the run floor
+      // keeps this admitted.
+      expect(passesShape(draft("Ab3xK9pQ2wLm5nR"))).toEqual({ ok: true });
+    });
+
+    it("rule 6 digit/case guards are load-bearing (identifiers must survive)", () => {
+      // 16 chars, mixed case, ZERO digits — the ≥ 2-digit requirement is
+      // the only thing standing between camelCase and the gate.
+      expect(passesShape(draft("fixRoundingError"))).toEqual({ ok: true });
+      // 1 digit still sits under the ≥ 2 requirement.
+      expect(passesShape(draft("tokenizerProQ5"))).toEqual({ ok: true });
+      // SCREAMING_CASE constants: zero lowercase → rule 6 can't fire.
+      expect(passesShape(draft("MAX_RETRIES_EXCEEDED"))).toEqual({ ok: true });
+      expect(passesShape(draft("SOME_CONST_NAME_VALUE"))).toEqual({ ok: true });
+      // Under the 16 floor entirely.
+      expect(passesShape(draft("HTTPServer"))).toEqual({ ok: true });
+      // Long all-lowercase English word: H ≈ 3.2 < 4.5, no digits.
+      expect(passesShape(draft("characterization"))).toEqual({ ok: true });
+    });
+
+    it("rule 7a: high-entropy base64url run with a single digit (rule 6 misses)", () => {
+      // 28 chars, all distinct → H = log2(28) ≈ 4.81 ≥ 4.5. ONE digit
+      // (rule 6 needs ≥ 2) but the '_' satisfies 7a's symbol guard.
+      expect(passesShape(draft("abcdefghijklmnopqrstuvwxyz_1"))).toEqual({
+        ok: false,
+        reason: "secret",
+      });
+    });
+
+    it("rule 7a boundary: all-lowercase no-digit tails stay admitted (masking owns them)", () => {
+      // Slack-tail-shaped: H ≈ 4.59 ≥ 4.5 but ZERO digits and no symbol →
+      // neither rule 6 nor 7a fires, BY DESIGN. The maskSecrets Slack regex
+      // owns the full xoxb-… key; weakening 7a's digit/mixed-case guard to
+      // catch the bare tail would false-positive prose (PRP FINAL CALL —
+      // pinned as admitted).
+      expect(passesShape(draft("abcdefghijklmnopqrstuvwx"))).toEqual({
+        ok: true,
+      });
+    });
+
+    it("rule 7b: random-looking 16-char hex rejects (closes the 16–19 gap)", () => {
+      // 12 distinct hex chars → H = 3.5 ≥ 3.0, and every earlier rule is
+      // silent so 7b is the isolated catcher: 6/16 digits = 0.375 stays
+      // under the ratio gate, single case + no symbol keeps 7a off, and
+      // 16 < 20 keeps pure-hex rule 5 off.
+      expect(passesShape(draft("abcdef012345abcd"))).toEqual({
+        ok: false,
+        reason: "secret",
+      });
+      // Uppercase variant — 7b tests the lowercased display, like rule 5.
+      expect(passesShape(draft("ABCDEF012345ABCD"))).toEqual({
+        ok: false,
+        reason: "secret",
+      });
+      // Below the floor: the hexish 13–15 band is untouched (14 chars).
+      expect(passesShape(draft("deadbeefcafe12"))).toEqual({ ok: true });
+    });
+
+    it("layering boundary: AWS-fragment shapes stay gate-admitted (maskSecrets owns them)", () => {
+      // Mixed case, NO digits → rules 6/7 can't fire by design; catching
+      // these at the gate would mean dropping the digit guard and
+      // false-positiving camelCase identifiers. maskSecrets' AWS catch-all
+      // is the catcher when the full 40-char key is present.
+      expect(passesShape(draft("wJalrXUtnFEMI"))).toEqual({ ok: true });
+      expect(passesShape(draft("bPxRfiCYEXAMPLEKEY"))).toEqual({ ok: true });
+    });
+
+    it("hexish 6–12 admissions and the PRD exemplars are unchanged", () => {
+      for (const key of ["zendesk", "lwlock", "nrel", "f3a9c2e", "abcdef"]) {
+        expect(passesShape(draft(key))).toEqual({ ok: true });
+      }
+    });
+  }
+);
