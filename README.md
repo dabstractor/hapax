@@ -204,52 +204,48 @@ stays registered, delegating all completion to pi — see
 #### What ships
 
 `dict/common-en.bin` — a packed HAPX v1 binary (magic `HAPX`, version 1,
-50,927 entries, ~1.2 MB). It is loaded at runtime by
-`src/core/dictionary.ts` (`loadDictionary()`).
+48,802 entries, ~0.9 MB). It is loaded at runtime by
+`src/core/dictionary.ts` (`loadDictionary()`). Quants are ordered by real
+word frequency.
 
-**Status: PROVISIONAL.** This artifact was generated from a local system word
-list (`/usr/share/dict/cracklib-small`) with synthetic rank ordering (shorter
-words rank higher; counts are positional, not corpus-derived). It does **not**
-reflect real word frequencies and will be replaced by a corpus-derived build.
+#### Corpus provenance
 
-#### Where real frequency TSVs come from
+The shipped artifact is built from `tools/corpus/en-50k.tsv` — the top 50,000
+English word frequencies (hermitdave/FrequencyWords 2018 `en_50k`, RAW
+non-lemmatized variant; data origin OpenSubtitles 2018, CC-BY-SA-4.0),
+vendored verbatim. Source URL, license, retrieval/integrity details, and the
+build-time filtering behavior (988 lines not matching `KEY_RE` are dropped at
+build; case variants merge with summed counts) are documented in
+[`tools/corpus/README.md`](tools/corpus/README.md).
 
-Corpus preparation is out of scope for this repo — the build script is
-corpus-agnostic and accepts any unigram list. For a real build, source
-`word<TAB>count` TSVs (UTF-8, one word per line, counts as plain integers)
-from e.g.:
+The corpus is dialogue register, so `you`/`i` outrank `the` — expected, and
+harmless: admission gating uses the score bands, not exact rank order.
 
-- [Google Books Ngrams](https://en.wikipedia.org/wiki/Google_Books_Ngram_Grammar)
-  (English unigrams), or
-- [`wordfreq`](https://github.com/rspeer/wordfreq)-derived per-language
-  frequency lists.
-
-Cross-check the list against an LLM tokenizer vocabulary (o200k / cl100k) so
+The build script itself is corpus-agnostic: any `word<TAB>count` unigram list
+(UTF-8, plain integer counts) works as input. When sourcing a different list,
+cross-check it against an LLM tokenizer vocabulary (o200k / cl100k) so
 tokenization frequency informs ranking: words the tokenizer splits should not
 outrank common whole words.
 
 #### Rebuilding
 
+Regenerate the shipped artifact from the vendored corpus (pass exactly ONE
+input file — counts sum across multiple inputs):
+
 ```bash
-node tools/build-dict.mjs --out dict/common-en.bin input1.tsv [input2.tsv ...]
+node tools/build-dict.mjs --out dict/common-en.bin tools/corpus/en-50k.tsv
 ```
 
 Merge → filter (`^[a-z][a-z0-9_-]{1,31}$`) → sort by count desc → cap at
 70,000 entries → quantize to u8 → emit. The script prints a per-section size
 summary and self-verifies the written file; exit 0 with
 `verified: N/N entries OK, no duplicate keys` means the artifact is safe to
-commit.
+commit. Builds are deterministic: same input TSVs → byte-identical binary.
 
-Provisional fallback (regenerate the shipped artifact from a system word
-list):
-
-```bash
-node tools/gen-provisional-tsv.mjs /usr/share/dict/words > /tmp/prov.tsv
-node tools/build-dict.mjs --out dict/common-en.bin /tmp/prov.tsv
-```
-
-`gen-provisional-tsv.mjs` is stdlib-only and deterministic: same word list →
-byte-identical TSV → byte-identical binary.
+Note: the score-band constants (e.g. the REJECT/MID thresholds in
+`src/core/score.ts`) are calibrated against the artifact's rank
+distribution; band recalibration is a separate concern from artifact
+regeneration.
 
 #### Versioning contract
 

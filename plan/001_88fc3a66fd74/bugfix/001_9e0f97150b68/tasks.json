@@ -18,7 +18,7 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Real frequency corpus + artifact regeneration",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Vendor a real English frequency list into the repo and regenerate dict/common-en.bin from it (data-only change; binary format v1, quantization curve, and DICT_VERSION untouched).",
               "subtasks": [
                 {
@@ -40,7 +40,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "Regenerate dict/common-en.bin from the vendored corpus",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -67,7 +67,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "Recalibrate REJECT/MID band constants against real-corpus ranks",
-                  "status": "Researching",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S2"
