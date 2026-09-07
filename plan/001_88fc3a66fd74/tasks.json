@@ -263,7 +263,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T3.S1",
                   "title": "Admission decision: bands 220/120, subword clamp",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1",
