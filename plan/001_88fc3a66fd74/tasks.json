@@ -18,7 +18,7 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Project scaffold & tooling",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Create the repo skeleton per PRD module layout with zero runtime dependencies and a strict typecheck + test loop that stands in for the nonexistent 'pi --check'.",
               "subtasks": [
                 {
@@ -40,7 +40,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "src/core/types.ts — shared core contracts",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -67,7 +67,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "Loader + FNV-1a lookup, zero per-entry allocation",
-                  "status": "Researching",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S2"
