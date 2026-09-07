@@ -58,8 +58,8 @@
  * constituent word is rankGroup 0 or properName and the n-gram is ≤ 5
  * words (fast path); both paths firing makes it sticky. Candidacy lives
  * in #phraseCandidates, orthogonal to counts; demotion
- * (removePhraseCandidacy, called by T2.S2's sweep) drops candidacy while
- * counts, ordinals, and sticky stay.
+ * (removePhraseCandidacy, called by T2.S2's sweepPhraseDemotions) drops
+ * candidacy while counts, ordinals, and sticky stay.
  */
 
 import { evictionScore } from "./score.js";
@@ -487,6 +487,43 @@ export class CandidateStore {
   removePhraseCandidacy(key: string): void {
     this.#phraseCandidates.delete(key);
     this.#fastPathAdmitted.delete(key);
+  }
+
+  /** 40-ordinal demotion sweep (P2.M1.T2.S2, PRD §06 h3.7): demote every
+   *  fast-path phrase candidate that never reached count ≥ 2 within 40
+   *  SUBSEQUENT message ordinals. A key is demoted when ALL of: it is a
+   *  candidate with fast-path provenance (repetition-confirmed candidates
+   *  are never demoted), its entry count < 2 and not sticky (belt-and-
+   *  braces: sticky implies count ≥ 2), and
+   *  currentOrdinal() − firstSeenOrdinal ≥ 40 (firstSeen 1, now 41 →
+   *  demoted; now 40 → still on probation — "40 subsequent ordinals",
+   *  not "more than 40"). Demotion itself is removePhraseCandidacy:
+   *  candidacy + provenance drop, counts/ordinals/sticky stay, so a later
+   *  recurrence re-admits through the repetition path (provenance is gone,
+   *  the fast path is first-sight only — never sticky again).
+   *
+   *  O(candidates): iterates phraseCandidateKeys() — a snapshot COPY, so
+   *  removing entries mid-loop is safe — never the #phrases counts map
+   *  (tens of thousands of counted n-grams vs a small candidate set).
+   *  Per key: two O(1) set lookups + one getPhrase lookup. Wired by the
+   *  ingest pipeline at the tail of each flush drain (once per flush, not
+   *  per message); a second consecutive call finds nothing left to demote.
+   *  @returns number of phrases demoted (for stats/tests). */
+  sweepPhraseDemotions(): number {
+    const now = this.currentOrdinal(); // one "now" for the whole pass
+    let demoted = 0;
+    for (const key of this.phraseCandidateKeys()) {
+      // Snapshot copy — safe to remove while iterating.
+      if (!this.isFastPathPhrase(key)) continue; // repetition-only: keep
+      const entry = this.getPhrase(key); // O(1) map lookup
+      if (entry === undefined) continue; // defensive; shouldn't happen
+      if (entry.sticky || entry.count >= 2) continue; // confirmed: keep
+      if (now - entry.firstSeenOrdinal >= 40) {
+        this.removePhraseCandidacy(key); // keeps counts/ordinals/sticky
+        demoted++;
+      }
+    }
+    return demoted;
   }
 
   /** Exact phrase-key lookup ("word word" joined lowercase). Returns the

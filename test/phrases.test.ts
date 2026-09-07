@@ -525,3 +525,136 @@ describe("phrase admission (PRD §06 h3.7)", () => {
     expect(s.sortedKeysSnapshot()).toEqual(sortedBefore);
   });
 });
+
+describe("40-ordinal demotion sweep (PRD §06 h3.7)", () => {
+  /** Upsert a rank-0 constituent word so the fast path can admit. */
+  const seed = (s: CandidateStore, key: string, over: Partial<Sighting> = {}): void => {
+    s.upsert(sighting({ key, display: key, rankGroup: 0, ...over }));
+  };
+  /** Advance the ordinal counter to `n` (nextOrdinal is the only writer). */
+  const advanceTo = (s: CandidateStore, n: number): void => {
+    while (s.currentOrdinal() < n) s.nextOrdinal();
+  };
+
+  it("demotes at diff 40, keeps at diff 39 (40 SUBSEQUENT ordinals — >= 40, not > 40)", () => {
+    const s = new CandidateStore();
+    seed(s, "nova");
+    seed(s, "quark");
+    s.recordPhraseLines([["nova", "quark"]], 1); // count 1, firstSeen 1
+    expect(s.isPhraseCandidate("nova quark")).toBe(true);
+    expect(s.isFastPathPhrase("nova quark")).toBe(true);
+
+    advanceTo(s, 40); // currentOrdinal 40 − firstSeen 1 = 39: on probation
+    expect(s.sweepPhraseDemotions()).toBe(0);
+    expect(s.isPhraseCandidate("nova quark")).toBe(true);
+
+    advanceTo(s, 41); // diff = 40: probation over
+    expect(s.sweepPhraseDemotions()).toBe(1);
+    expect(s.isPhraseCandidate("nova quark")).toBe(false);
+    // Provenance cleared by demotion (removePhraseCandidacy drops both).
+    expect(s.isFastPathPhrase("nova quark")).toBe(false);
+  });
+
+  it("demotion retains counts, ordinals, and sticky in #phrases (re-promotion data survives)", () => {
+    const s = new CandidateStore();
+    seed(s, "nova");
+    seed(s, "quark");
+    s.recordPhraseLines([["nova", "quark"]], 1);
+    advanceTo(s, 41);
+    expect(s.sweepPhraseDemotions()).toBe(1);
+    const p = s.getPhrase("nova quark");
+    expect(p).toBeDefined();
+    expect(p!.count).toBe(1);
+    expect(p!.firstSeenOrdinal).toBe(1);
+    expect(p!.lastSeenOrdinal).toBe(1);
+    expect(p!.sticky).toBe(false);
+    expect(s.phraseSize).toBe(1); // counts map untouched by the sweep
+  });
+
+  it("a demoted phrase that recurs re-admits via the repetition path — never sticky, never fast-path again", () => {
+    const s = new CandidateStore();
+    seed(s, "nova");
+    seed(s, "quark");
+    s.recordPhraseLines([["nova", "quark"]], 1);
+    advanceTo(s, 41);
+    expect(s.sweepPhraseDemotions()).toBe(1);
+
+    s.recordPhraseLines([["nova", "quark"]], 42); // recurrence → count 2
+    expect(s.isPhraseCandidate("nova quark")).toBe(true); // re-admitted
+    expect(s.getPhrase("nova quark")!.count).toBe(2);
+    // Provenance died with the demotion, so only the repetition path
+    // fired — sticky stays false, and the sweep never re-examines it.
+    expect(s.getPhrase("nova quark")!.sticky).toBe(false);
+    expect(s.isFastPathPhrase("nova quark")).toBe(false);
+    advanceTo(s, 200);
+    expect(s.sweepPhraseDemotions()).toBe(0); // count >= 2 survives forever
+    expect(s.isPhraseCandidate("nova quark")).toBe(true);
+  });
+
+  it("sticky fast-path phrases are never demoted regardless of age", () => {
+    const s = new CandidateStore();
+    seed(s, "nova");
+    seed(s, "quark");
+    s.recordPhraseLines([["nova", "quark"]], 1); // fast path
+    s.recordPhraseLines([["nova", "quark"]], 2); // repetition → sticky
+    expect(s.getPhrase("nova quark")!.sticky).toBe(true);
+    advanceTo(s, 100);
+    // The sticky guard fires before the age check — same keep branch the
+    // (publicly unreachable) fast-path + count>=2 + non-sticky row hits
+    // via the count >= 2 guard that follows it.
+    expect(s.sweepPhraseDemotions()).toBe(0);
+    expect(s.isPhraseCandidate("nova quark")).toBe(true);
+  });
+
+  it("repetition-only candidates (no fast-path provenance) are never demoted", () => {
+    const s = new CandidateStore();
+    // Rank-1 constituents block the fast path; repetition admits.
+    seed(s, "alpha", { rankGroup: 1 });
+    seed(s, "beta", { rankGroup: 1 });
+    s.recordPhraseLines([["alpha", "beta"]], 1);
+    s.recordPhraseLines([["alpha", "beta"]], 2);
+    expect(s.isPhraseCandidate("alpha beta")).toBe(true);
+    expect(s.isFastPathPhrase("alpha beta")).toBe(false);
+    advanceTo(s, 100);
+    expect(s.sweepPhraseDemotions()).toBe(0);
+    expect(s.isPhraseCandidate("alpha beta")).toBe(true);
+  });
+
+  it("sweep is idempotent — a second consecutive call demotes nothing", () => {
+    const s = new CandidateStore();
+    seed(s, "nova");
+    seed(s, "quark");
+    s.recordPhraseLines([["nova", "quark"]], 1);
+    advanceTo(s, 41);
+    expect(s.sweepPhraseDemotions()).toBe(1);
+    expect(s.sweepPhraseDemotions()).toBe(0);
+    expect(s.sweepPhraseDemotions()).toBe(0);
+  });
+
+  it("demotes every stale fast-path candidate in one pass, and only those", () => {
+    const s = new CandidateStore();
+    for (const w of ["nova", "quark", "sol", "wind", "geo"]) seed(s, w);
+    seed(s, "alpha", { rankGroup: 1 });
+    seed(s, "beta", { rankGroup: 1 });
+    s.recordPhraseLines([["nova", "quark", "sol"]], 1); // 3 fast-path candidates
+    s.recordPhraseLines([["alpha", "beta"]], 1); // count 1: not even a candidate
+    s.recordPhraseLines([["wind", "geo"]], 1); // fast path…
+    s.recordPhraseLines([["wind", "geo"]], 2); // …then sticky
+    advanceTo(s, 41);
+    expect(s.sweepPhraseDemotions()).toBe(3); // exactly the stale fast-path trio
+    expect(s.isPhraseCandidate("nova quark")).toBe(false);
+    expect(s.isPhraseCandidate("quark sol")).toBe(false);
+    expect(s.isPhraseCandidate("nova quark sol")).toBe(false);
+    expect(s.isPhraseCandidate("wind geo")).toBe(true); // sticky survives
+    expect(s.phraseSize).toBe(5); // all counts retained
+  });
+
+  it("no phrase candidates → no-op returning 0", () => {
+    const s = new CandidateStore();
+    expect(s.sweepPhraseDemotions()).toBe(0);
+    seed(s, "nova");
+    seed(s, "quark");
+    s.recordPhraseLines([["nova", "quark"]], 1); // candidate, but young
+    expect(s.sweepPhraseDemotions()).toBe(0);
+  });
+});

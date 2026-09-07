@@ -148,6 +148,11 @@ export default function hapax(pi: ExtensionAPI): void {
         ? {
             onAdmittedTokens: (lines) =>
               sessionStore.recordPhraseLines(lines, sessionStore.currentOrdinal()),
+            // M2 demotion sweep (P2.M1.T2.S2, PRD §06 h3.7): once per flush
+            // drain, stale fast-path candidates are demoted (counts kept
+            // for re-promotion). Same gate as capture — phrases-disabled
+            // builds never sweep.
+            onSweepPhrases: () => sessionStore.sweepPhraseDemotions(),
           }
         : {}),
     });

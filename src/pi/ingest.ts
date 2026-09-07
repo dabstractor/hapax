@@ -117,6 +117,12 @@ export interface IngestPipelineOptions {
    *  across). Empty lines produce empty arrays; a message whose lines
    *  admit nothing still calls with its (possibly empty-array) lines. */
   onAdmittedTokens?: (lines: string[][]) => void;
+  /** M2 demotion-sweep hook (P2.M1.T2.S2, PRD §06 h3.7): called ONCE at
+   *  the tail of every flush drain — after the queue empties, regardless
+   *  of how many messages it drained (demotion is not latency-sensitive).
+   *  Wired to CandidateStore.sweepPhraseDemotions and gated exactly like
+   *  onAdmittedTokens, so phrases-disabled builds never sweep. */
+  onSweepPhrases?: () => void;
 }
 
 /**
@@ -134,7 +140,9 @@ export interface IngestPipelineOptions {
  * session_shutdown handler calls dispose() to drop the debounce timer and
  * any queued-but-unprocessed text; restore replay (P1.M3.T2.S3) calls
  * flush/processText directly; /acwords (P1.M3.T4.S1) reads getStats;
- * n-grams (P2.M1.T1.S1) supply onAdmittedTokens (per-line keys).
+ * n-grams (P2.M1.T1.S1) supply onAdmittedTokens (per-line keys); the
+ * 40-ordinal demotion sweep (P2.M1.T2.S2) supplies onSweepPhrases (once
+ * per drain).
  */
 export class IngestPipeline {
   #store: CandidateStore;
@@ -143,6 +151,7 @@ export class IngestPipeline {
   #chunkBytes: number;
   #yieldFn: YieldFn;
   #onAdmittedTokens?: (lines: string[][]) => void;
+  #onSweepPhrases?: () => void;
   /** FIFO queue; entries hold nothing but { text, fromUser } and are
    *  removed before processing so text is never retained (h2.34). */
   #pending: { text: string; fromUser: boolean }[] = [];
@@ -164,6 +173,7 @@ export class IngestPipeline {
     this.#chunkBytes = options.chunkBytes ?? 65_536;
     this.#yieldFn = options.yieldFn ?? defaultYield;
     this.#onAdmittedTokens = options.onAdmittedTokens;
+    this.#onSweepPhrases = options.onSweepPhrases;
   }
 
   /** pi message_end handler (PRD §05 h2.29/h2.34). Extracts text; null →
@@ -228,6 +238,18 @@ export class IngestPipeline {
       }
     } finally {
       this.#drain = null;
+      // One demotion sweep per flush (P2.M1.T2.S2, PRD §06 h3.7) — in the
+      // finally so every flush path (timer fire, flush(), restore drain)
+      // sweeps exactly once, even for N messages. O(candidates) and pure
+      // over store state, but swallowed defensively to match this loop's
+      // error posture: a throwing callback must never wedge the queue.
+      // dispose()-cancelled queues never start a drain, so this never
+      // fires for them.
+      try {
+        this.#onSweepPhrases?.();
+      } catch {
+        // defensive: sweep failure never blocks the next flush
+      }
     }
   }
 

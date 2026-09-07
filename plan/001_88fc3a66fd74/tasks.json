@@ -772,7 +772,7 @@
           "type": "Milestone",
           "id": "P2.M1",
           "title": "Phrase candidates & n-gram store",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Extend the store and query path with bigram/trigram capture, hybrid phrase admission (repetition + all-rare fast path), 40-ordinal demotion, and constituent suppression in ranking.",
           "tasks": [
             {
@@ -806,7 +806,7 @@
               "type": "Task",
               "id": "P2.M1.T2",
               "title": "Phrase admission & decay",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Hybrid admission (repetition path + all-rare fast path), sticky flag, and the 40-message demotion sweep.",
               "subtasks": [
                 {
@@ -829,7 +829,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S2",
                   "title": "40-ordinal demotion sweep for unconfirmed fast-path phrases",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T2.S1"
@@ -846,14 +846,14 @@
               "type": "Task",
               "id": "P2.M1.T3",
               "title": "Phrase query integration (src/core/query.ts extension)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Surface phrase candidates in completion results with phrase salience and constituent suppression.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M1.T3.S1",
                   "title": "Phrase salience + constituent suppression in rankMatches",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M1.T2.S2",
@@ -882,14 +882,14 @@
               "type": "Task",
               "id": "P2.M2.T1",
               "title": "Successor index",
-              "status": "Planned",
+              "status": "Ready",
               "description": "word → top-3 most frequent successors, built from bigram counts at ingest time.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M2.T1.S1",
                   "title": "Successor index build (top-3 per word) at ingest",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T1.S1"
