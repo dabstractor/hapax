@@ -256,7 +256,7 @@
               "type": "Task",
               "id": "P1.M2.T3",
               "title": "Scoring (src/core/score.ts)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Admission decision (static commonness bands) and session salience (dynamic ranking) plus the eviction score and final ordering comparators.",
               "subtasks": [
                 {
@@ -280,7 +280,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T3.S2",
                   "title": "Salience formula, eviction score, ranking comparators",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T3.S1",
@@ -306,7 +306,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T4.S1",
                   "title": "Candidate map, upsert semantics, ordinal counter",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T3.S1"
@@ -322,7 +322,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T4.S2",
                   "title": "Prefix index: dirty-flag lazy rebuild + binary search",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T4.S1"
