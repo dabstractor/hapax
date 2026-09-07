@@ -23,8 +23,9 @@
  *     timers) and the pipeline (debounce timer + pending queue), then
  *     drop every reference. Nothing to persist (no persistence by design).
  *
- *   before_agent_start — explicit no-op stub in M1; the chain-reset
- *     machine lands in P2.M2.T2.S1.
+ *   before_agent_start — resets the Tab-chain machine to idle
+ *     (P2.M2.T2.S1, PRD §07 h2.43): a new user turn never inherits an
+ *     armed chain.
  *
  * Compaction events are intentionally NOT registered: the store survives
  * compaction (PRD §05 h2.32).
@@ -45,7 +46,12 @@ import { loadConfig } from "./config.js";
 import { registerAcwordsCommand } from "./debug.js";
 import { IngestPipeline, restoreFromHistory } from "./ingest.js";
 import { resolveDictPath } from "./paths.js";
-import { createDisplayProvider, createHapaxProvider } from "./provider.js";
+import {
+  createChainMachine,
+  createDisplayProvider,
+  createHapaxProvider,
+} from "./provider.js";
+import type { ChainMachine } from "./provider.js";
 
 /**
  * Dictionary path resolution lives in ./paths.js (P1.M3.T5.S2): the seam
@@ -115,6 +121,7 @@ export default function hapax(pi: ExtensionAPI): void {
   let lazyDict: Dictionary | null = null;
   let pipeline: IngestPipeline | null = null;
   let displayProvider: { dispose(): void } | null = null;
+  let chain: ChainMachine | null = null;
   let disabled = false;
 
   pi.on("session_start", (event, ctx) => {
@@ -132,6 +139,11 @@ export default function hapax(pi: ExtensionAPI): void {
     // the same object the pipeline's own #store field holds.
     const sessionStore = new CandidateStore();
     store = sessionStore;
+    // Tab-chain machine (P2.M2.T2.S1): fresh per session, hoisted to the
+    // factory slot so before_agent_start can reset it (nullable like
+    // store/pipeline — cleared on session_shutdown alongside them).
+    const sessionChain = createChainMachine();
+    chain = sessionChain;
     lazyDict = createLazyDictionary(resolveDictPath(), () => {
       ctx.ui.notify("hapax: dictionary failed to load", "error");
       disabled = true; // permanent for this extension runtime
@@ -163,7 +175,7 @@ export default function hapax(pi: ExtensionAPI): void {
     // registered with an empty store — zero candidates → delegation.
     ctx.ui.addAutocompleteProvider((current) => {
       const p = createDisplayProvider(
-        createHapaxProvider(store!, config, current),
+        createHapaxProvider(store!, config, current, sessionChain),
       );
       displayProvider = p;
       return p;
@@ -207,10 +219,13 @@ export default function hapax(pi: ExtensionAPI): void {
     displayProvider = null;
     pipeline = null;
     lazyDict = null;
+    chain = null;
     store = null;
   });
 
   pi.on("before_agent_start", () => {
-    /* no-op in M1 — the chain-reset machine is P2.M2.T2.S1 */
+    // New user turn → the chain machine goes idle (P2.M2.T2.S1, PRD §07
+    // h2.43). Still no return value: pi would treat a result as a reply.
+    chain?.reset();
   });
 }

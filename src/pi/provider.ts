@@ -156,11 +156,21 @@ export type HapaxProvider = AutocompleteProvider & {
  * hysteresis lives here — that is S3's job. This factory holds the only
  * per-provider state (the live cache), published for S3 / P2.M2.T2.S1
  * via __hapaxLive / __hapaxKey.
+ *
+ * `chain` (P2.M2.T2.S1) is the Tab-armed successor-chaining machine:
+ * getSuggestions consults it AFTER the aborted check — while armed it
+ * swaps the suggestion set for the armed word's successors at threshold
+ * 1 — and applyCompletion arms through it as a side-effect BEFORE
+ * delegating verbatim (never-hijack case (b) pins that pass-through).
+ * Optional with a fresh idle default so direct 3-argument callers (the
+ * P1 test suites) get a machine that can never arm; index.ts is the
+ * production caller and passes its per-session machine.
  */
 export function createHapaxProvider(
   store: CandidateStore,
   config: HapaxConfig,
   current: AutocompleteProvider,
+  chain: ChainMachine = createChainMachine(),
 ): HapaxProvider {
   // Live-result cache — written on every query, read by S3 / P2.M2.T2.S1
   // through the accessors below. Never read by getSuggestions itself:
@@ -175,6 +185,60 @@ export function createHapaxProvider(
       // 1. Aborted → pass pi's request through, arguments untouched.
       if (options.signal.aborted) {
         return current.getSuggestions(lines, cursorLine, cursorCol, options);
+      }
+      // 1.5 Tab-armed chaining (PRD §07 h2.43, P2.M2.T2.S1): while armed,
+      // REPLACE the suggestion set with the armed word's top successors
+      // filtered live by the trailing fragment, at chain threshold 1 —
+      // NOT config.threshold — so extractMatchState is deliberately NOT
+      // consulted on this path (it would enforce config.threshold and
+      // kill 1-char chain fragments). Disqualification rules: word-less
+      // state (space/punctuation/nothing the fragment regex matches) and
+      // zero matching successors both reset to idle and FALL THROUGH to
+      // the normal path on this same keystroke, so the user sees normal
+      // candidates immediately instead of a closed menu. Like every other
+      // path: suggestion-set only — nothing is blocked or captured.
+      const armed = chain.state();
+      if (armed) {
+        const before = lines[cursorLine]?.slice(0, cursorCol) ?? "";
+        const frag = before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0];
+        const succ =
+          frag === undefined
+            ? []
+            : store
+                .topSuccessors(armed.word)
+                .filter((s) => s.next.startsWith(frag.toLowerCase()))
+                .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
+        if (frag === undefined || succ.length === 0) {
+          chain.reset(); // disarm → normal threshold matching resumes NOW
+        } else {
+          // Successor-only live set, published through the SAME lastLive
+          // seam as the normal path so S3's classification (rule 2) and
+          // debounce pick it up with zero display-layer changes. Entries
+          // are registered under chain markers so applyCompletion can
+          // distinguish "successor accepted → armed(next)" from "word
+          // candidate accepted → armed(word)" (plain key) and "phrase
+          // accepted → never arm" (key contains a space).
+          const items = succ.map((s) => ({
+            value: s.next,
+            label: s.next,
+            description: "chain", // provenance marker, role of query.ts's
+          }));
+          lastLive = {
+            matches: succ.map((s) => ({
+              key: CHAIN_KEY_PREFIX + s.next,
+              display: s.next,
+              description: "chain",
+              salience: -s.count, // higher count → stronger, count-desc order
+            })),
+            prefix: frag, // the raw typed fragment, as the normal path would
+            ts: Date.now(),
+          };
+          liveKeyByValue.clear(); // rebuilt every query — same as normal path
+          for (const s of succ) {
+            liveKeyByValue.set(s.next, CHAIN_KEY_PREFIX + s.next);
+          }
+          return { items, prefix: frag };
+        }
       }
       // 2. No hapax match state (S1 null) → pi's completion stays in charge.
       const state = extractMatchState(lines, cursorLine, cursorCol, config);
@@ -210,6 +274,23 @@ export function createHapaxProvider(
     },
 
     applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+      // Arming side-effect ONLY (PRD §07 h2.43): classify what was
+      // accepted through the live-key map, then delegate VERBATIM —
+      // arguments and return value reach pi's provider untouched.
+      const key = liveKeyByValue.get(item.value);
+      if (key !== undefined) {
+        if (key.startsWith(CHAIN_KEY_PREFIX)) {
+          // A chain successor was accepted → armed(next).
+          chain.arm(key.slice(CHAIN_KEY_PREFIX.length));
+        } else if (!key.includes(" ")) {
+          // Whole-word candidate: word keys are single tokens, phrase
+          // keys are space-joined. The successor index is lowercase
+          // (h2.27) — arm the lowercase form so topSuccessors() finds it.
+          chain.arm(item.value.toLowerCase());
+        }
+        // else: phrase key (space) → never arms.
+      }
+      // Not in the map (path completion / stale value) → never arms.
       return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
     },
 
@@ -219,6 +300,78 @@ export function createHapaxProvider(
 
     __hapaxLive: () => lastLive,
     __hapaxKey: (value) => liveKeyByValue.get(value),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chain machine — Tab-armed successor chaining (P2.M2.T2.S1, PRD §07 h2.43)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Marker prefixed to every chain entry in liveKeyByValue (and used as
+ * the shim RankedMatch.key) so applyCompletion can tell "a successor was
+ * accepted → armed(next)" apart from plain word keys and phrase keys.
+ * The \u0000 lead byte can never occur in a store key.
+ */
+const CHAIN_KEY_PREFIX = "\u0000chain:";
+
+/**
+ * The chain machine's state: `{ word }` while a Tab-accepted whole-word
+ * hapax candidate W is armed, or null when idle.
+ */
+export type ChainState = { word: string } | null;
+
+/**
+ * The Tab-armed successor-chaining state holder (PRD §07 h2.43). Two
+ * states and five armed rules:
+ *
+ *   idle ──Tab accepts a hapax whole-word candidate W──► armed(W)
+ *   armed(W):
+ *     - next word start (fragment ≥ 1 char) → offer W's top successors
+ *       (store.topSuccessors) filtered live by the fragment, at chain
+ *       threshold 1 — NOT config.threshold
+ *     - Tab with a highlighted successor → insert (delegated
+ *       applyCompletion), transition armed(next)
+ *     - word-less input (space, punctuation, escape-equivalent —
+ *       anything the fragment regex treats as no-word) → idle
+ *     - W has no successors, or none match the fragment → idle; normal
+ *       threshold matching resumes on the SAME keystroke
+ *     - a new user turn (before_agent_start → reset) → idle
+ *
+ * INVARIANTS (PRD §01 invariant 1): the machine feeds the suggestion
+ * set ONLY — it never blocks or captures typing, never swallows a
+ * keystroke, never throws. Arming happens exclusively through hapax's
+ * own applyCompletion side-effect (a hapax whole-word item was
+ * accepted); path-completion and phrase items never arm. All timing and
+ * display composition stay in S3 — armed sets publish through the same
+ * lastLive seam as normal results, so the 100ms debounce composes
+ * unchanged.
+ */
+export interface ChainMachine {
+  /** Current armed word, or null when idle. */
+  state(): ChainState;
+  /** Arm on acceptance of a whole-word hapax item (or a chain successor). */
+  arm(word: string): void;
+  /** Force idle (before_agent_start; also the disqualification path). */
+  reset(): void;
+}
+
+/**
+ * Fresh idle machine. Deliberately dumb: no store reference, no timers,
+ * no event listeners — the query side lives in createHapaxProvider's
+ * armed branch, the arming side in its applyCompletion intercept, and
+ * the reset triggers (disqualification, before_agent_start) call in.
+ */
+export function createChainMachine(): ChainMachine {
+  let armed: string | null = null;
+  return {
+    state: () => (armed === null ? null : { word: armed }),
+    arm: (word) => {
+      armed = word;
+    },
+    reset: () => {
+      armed = null;
+    },
   };
 }
 
