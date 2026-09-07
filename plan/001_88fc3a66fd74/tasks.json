@@ -60,7 +60,7 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Packed dictionary loader (src/core/dictionary.ts)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Zero-copy loader and O(1) lookup for the HAPX packed binary format, with test fixtures built by an independent in-memory writer helper.",
               "subtasks": [
                 {
@@ -85,7 +85,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "test/dictionary.test.ts + independent binary-writer test helper",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1"
