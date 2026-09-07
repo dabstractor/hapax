@@ -483,7 +483,7 @@
               "type": "Task",
               "id": "P1.M3.T3",
               "title": "Autocomplete provider (src/pi/provider.ts)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "The provider wrapping pi's built-in completion: trigger/threshold extraction, synchronous live query, 100ms display debounce, flicker hysteresis, and strict never-hijack delegation.",
               "subtasks": [
                 {
@@ -507,7 +507,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T3.S2",
                   "title": "Live synchronous query + AutocompleteSuggestions mapping",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T3.S1"
@@ -525,7 +525,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T3.S3",
                   "title": "Display debounce (100ms) + flicker hysteresis state machine",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T3.S2"
@@ -542,7 +542,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T3.S4",
                   "title": "Never-hijack acceptance tests (delegation, zero-candidate, pass-through)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T3.S3"
