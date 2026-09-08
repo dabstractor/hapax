@@ -535,14 +535,13 @@ describe("message_end — lazy dictionary through the pipeline", () => {
       const result = await provider.getSuggestions(["#zep"], 0, 4, {
         signal: new AbortController().signal,
       });
-      // M2 semantics (PRD §06 h3.8, adjudicated in P2.M2.T2.S1): once the
-      // drain admits the bigram "zephyr world" (fast path — both
-      // constituents are rare in the provisional dictionary), constituent
-      // suppression legitimately replaces the bare word with the phrase in
-      // the "#zep" menu. Either form proves the assertion's intent —
-      // "ingested candidates reach the provider and appear in the menu" —
-      // and which one a poll observes depends on where the drain's phrase
-      // upsert lands relative to the poll, so accept BOTH.
+      // M2 semantics (PRD §06 h3.8): once the drain admits "zephyr" and
+      // the bigram wiring (the enablePhrases gate) records its successor
+      // windows, the admitted word must surface in the "#zep" menu. The
+      // assertion's intent — "ingested candidates reach the provider and
+      // appear in the menu" — is provable from any poll that lands after
+      // the drain, and which poll that is depends on drain/poll timing,
+      // so the check tolerates the interleaving.
       const values = result?.items.map((i) => i.value) ?? [];
       const ok =
         values.includes("zephyr") || values.includes("zephyr world");

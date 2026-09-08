@@ -19,8 +19,9 @@
  * menu item whenever topSuccessors() is non-empty (arming is whole-word
  * Tab acceptance), so the arming menu stays visible even after the
  * bigrams are recorded. The successor index
- * itself builds on EVERY phrase upsert regardless of admission
- * (store.ts #upsertPhrase's bigram successor tail). The before-query
+ * itself builds on EVERY bigram window recorded at ingest
+ * (store.ts recordBigramRuns' successor bump) — admission rank groups do
+ * not matter to it. The before-query
  * seeding order below is therefore only a determinism convenience now:
  * kept because it costs nothing and keeps each arming menu a pure word
  * list. Machine-level cases run against the inner
@@ -307,7 +308,7 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     // Punctuation: "!" ends the line — no trailing identifier → same
     // disarm + delegate. Fresh stack armed on "beta" (alpha's admitted
     // bigrams would shadow its own arming menu — seeding-order gotcha;
-    // no phrase's first word prefixes "be", so beta's menu is clean).
+    // no stored word's key prefixes "be", so beta's menu is clean).
     const fresh = makeStack(store, current);
     await armViaTab(fresh.inner, fresh.chain, store, "beta", "be", () => {});
     expect(await suggest(fresh.inner, ["beta!"], 0, 5)).toBeNull();
@@ -414,9 +415,9 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
   });
 });
 
-// ── NREL phrase-arming harness (BUG-005 part 2) ─────────────────────────
+// ── NREL chain-arming harness (BUG-005 part 2) ─────────────────────────
 // Mirrors acceptance.test.ts's item-7 helpers (makeNrelPipeline /
-// replayNrel / editingCurrent): the REAL ingest pipeline with the phrase
+// replayNrel / editingCurrent): the REAL ingest pipeline with the bigram
 // hook wired exactly like src/pi/index.ts, the SHIPPED dictionary, and a
 // pi-shaped editing current provider so ONE buffer flows through accepts
 // like the editor would. Local copies on purpose — this fix touches only
@@ -506,8 +507,8 @@ describe("bare-word arming on a replayed store (BUG-005 part 2 successor route)"
 
     await replayNrel(pipeline, entries);
 
-    // The exempt bare word sits BELOW its phrases in the same menu —
-    // the S1 fix this task composes with.
+    // The exempt bare word is present in the word-only menu — the S1 fix
+    // this task composes with — sorting last among the word candidates.
     const menu = await suggest(provider, ["natio"], 0, 5);
     const nationalItem = menu!.items[menu!.items.length - 1]!;
     expect(nationalItem.value).toBe("National");

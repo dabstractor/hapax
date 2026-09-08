@@ -33,7 +33,7 @@
  *     PRD §09 M2 item 7 sequence: renewable → energy → laboratory, each
  *     hop asserted individually so a failure names the broken link.
  *
- * The phrase-arming route (accept the PHRASE item) and the ingest-path
+ * The chain-arming route (accept a successor item) and the ingest-path
  * probes (secrets, bad-dict restore, demotion cadence) are deliberately
  * NOT here: they live in test/chain.test.ts and the sibling
  * P1.M5.T1.S2 suite respectively.
@@ -428,12 +428,11 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
 
   beforeAll(async () => {
     // FULL nrel replay — the /resume scenario — through a REAL pipeline
-    // with the SHIPPED dict and the phrase hook wired exactly like
-    // src/pi/index.ts's session_start: phrases admitted, successor index
-    // complete (store.topSuccessors: national→renewable/wind — the old
+    // with the SHIPPED dict and the bigram hook wired exactly like
+    // src/pi/index.ts's session_start: successor index complete
+    // (store.topSuccessors: national→renewable/wind — the old
     // "license" entry was a gate-rejected-"lab" bridge, removed by
     // P1.M1.T3.S2's strict adjacency — renewable→energy, energy→laboratory).
-    // renewable→energy, energy→laboratory).
     const entries = parseSessionFixture(NREL);
     const s = new CandidateStore();
     const pipeline = new IngestPipeline({
@@ -445,7 +444,7 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     await replay(pipeline, entries);
   }, 60_000);
 
-  it("replay is live and the bare word 'National' is co-present with its phrases (P1.M4.T2.S1 exemption)", async () => {
+  it("replay is live and the bare word 'National' is co-present with its chain successors (P1.M4.T2.S1 exemption)", async () => {
     expect(store.size, "nrel replay admitted nothing — the probes below would be vacuous").toBeGreaterThan(0);
 
     const current = mockCurrent();
@@ -461,7 +460,7 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     ).toBeDefined();
     expect(
       national!.description,
-      "bare word must carry word-provenance ('session xN'), not chain/phrase markers",
+      "bare word must carry word-provenance ('session xN'), not chain markers",
     ).toMatch(/^session x\d+$/);
     expect(chain.state(), "suggestions alone must never arm the chain").toBeNull();
   });

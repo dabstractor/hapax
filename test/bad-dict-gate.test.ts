@@ -144,7 +144,7 @@ describe("disable gate (BUG-004)", () => {
     expect(store.size).toBe(1);
     expect(pipeline.getStats().admitted).toBe(1);
     expect(pipeline.getStats().wordsSeen).toBe(1);
-    // Outer-loop early exit: remaining slices skipped AND the phrase
+    // Outer-loop early exit: remaining slices skipped AND the bigram
     // hook never fires for a half-dead message.
     expect(onAdmittedTokens).not.toHaveBeenCalled();
     expect(dict.failed).toBe(true);
