@@ -479,16 +479,17 @@ describe("restoreFromHistory — dictionary-failure abort (BUG-004)", () => {
     // The abort gate owns every entry AFTER the failure: exactly ONE
     // processText (message 1) — message 2 never replays.
     expect(processTextSpy).toHaveBeenCalledTimes(1);
-    // The in-flight message itself is owned by the pipeline's per-segment
-    // S1 gate (pinned identically by test/bad-dict-gate.test.ts's
-    // mid-message contract): only the trigger token ("with", whose lookup
-    // observed the failed load) got through; its siblings and every word
-    // of message 2 are blocked.
-    expect(store.size).toBe(1);
-    expect(store.get("with")).toBeDefined();
+    // NEW-001 fix: the in-flight message is owned by the pipeline's
+    // per-segment gate PLUS the post-lookup re-check in #admitSegment —
+    // the trigger token ("with", whose own lookup observed the failed
+    // load) must NOT survive either. A resumed session starts from an
+    // EMPTY store, never a one-word half-ingested one (README contract).
+    expect(store.size).toBe(0);
+    expect(store.get("with")).toBeUndefined();
     expect(store.get("this")).toBeUndefined();
     expect(store.get("another")).toBeUndefined();
     expect(store.get("here")).toBeUndefined();
+    expect(rankMatches(store, "with")).toEqual([]); // validation probe
   });
 });
 // ── Demotion tail sweep (BUG-006, P1.M3.T2.S1) ──────────────────────────────

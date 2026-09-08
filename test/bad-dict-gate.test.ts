@@ -9,7 +9,10 @@
  * without it, every word of the message whose first lookup triggers
  * the failure would admit as rank group 0 (the BUG-004 repro: whole
  * history ingested as ultra-rare candidates on a resumed session with
- * a missing dict).
+ * a missing dict); (4) NEW-001: a re-check AFTER admit()'s lookup —
+ * the lookup is the only call that can flip the failure flag, so the
+ * trigger token itself must be blocked between that lookup and the
+ * upsert, leaving the store EMPTY (README restore contract).
  *
  * Per the work item, the failing dictionary is a REAL
  * createLazyDictionary on a nonexistent path — nothing is mocked:
@@ -74,6 +77,36 @@ describe("disable gate (BUG-004)", () => {
     expect(pipeline.getStats().wordsSeen).toBe(0);
     expect(rankMatches(store, "with")).toEqual([]); // exact BUG-004 probe
     expect(onLoadError).toHaveBeenCalledOnce(); // never retried
+  });
+
+  it("NEW-001 regression: the trigger token's OWN failed lookup stores nothing (live path, factory wiring)", async () => {
+    const onLoadError = vi.fn();
+    const dict = createLazyDictionary(MISSING_DICT, onLoadError);
+    const store = new CandidateStore();
+    const pipeline = new IngestPipeline({
+      store,
+      dictionary: dict,
+      isDisabled: () => dict.failed === true, // EXACT factory wiring
+      yieldFn: async () => {},
+    });
+
+    // No warmup — the factory's real timing on the first live message of
+    // a session with empty history: the very first token's lookup is what
+    // triggers the failed load. Before the NEW-001 fix that token's null
+    // result was misread as "rarest word → group 0" and upserted (the
+    // one-word residue the validation report found).
+    await pipeline.processText("that extraordinary vocabulary accumulates", true);
+
+    expect(store.size).toBe(0); // was 1 before the fix
+    expect(store.get("that")).toBeUndefined();
+    expect(rankMatches(store, "th")).toEqual([]); // report's exact probe
+    expect(pipeline.getStats().admitted).toBe(0); // never counted either
+    expect(onLoadError).toHaveBeenCalledOnce(); // notify-once preserved
+
+    // Sticky: later messages remain a top-gate total no-op.
+    await pipeline.processText("more ordinary prose arrives here", true);
+    expect(store.size).toBe(0);
+    expect(onLoadError).toHaveBeenCalledOnce();
   });
 
   it("mid-message failure: the trigger word admits, the rest of the message (and every later message) is blocked", async () => {

@@ -103,12 +103,15 @@ export interface IngestPipelineOptions {
   store: CandidateStore;
   /** injectable so tests can stub lookup() without the packed dict */
   dictionary: Dictionary;
-  /** Optional disable gate (BUG-004): checked at the top of processText
-   *  AND per segment inside #admitSegment's admission loop. When it
-   *  returns true, no further candidates are admitted. The factory wires
-   *  it to the sticky dictionary-failure flag; tests wire it to a
-   *  mutable boolean. NOT config — internal wiring (PRD §08 surface
-   *  unchanged). */
+  /** Optional disable gate (BUG-004): checked at the top of processText,
+   *  at the top of #admitSegment's token loop, AND again immediately
+   *  after admit()'s dictionary lookup (NEW-001: the lookup is the only
+   *  call that can trigger — and fail — the lazy dictionary load, and a
+   *  lookup-observed failure returns null, which admit() would otherwise
+   *  misread as "rarest word → group 0" and store). When it returns true,
+   *  no further candidates are admitted. The factory wires it to the
+   *  sticky dictionary-failure flag; tests wire it to a mutable boolean.
+   *  NOT config — internal wiring (PRD §08 surface unchanged). */
   isDisabled?: () => boolean;
   /** trailing-debounce window; default 300 (PRD §05 h2.29, baked) */
   debounceMs?: number;
@@ -367,6 +370,16 @@ export class IngestPipeline {
           this.#dictionary,
           draft.isSubword ? wholeGroup : undefined,
         );
+        // NEW-001: admit()'s lookup is the only call in this loop that
+        // can trigger (and fail) the lazy dictionary load — the factory's
+        // gate flips INSIDE this call. The token-loop top gate above only
+        // protects the NEXT token, so without a re-check here the failed
+        // lookup's null is misread as "rarest word → group 0" and the
+        // trigger token itself would be counted, keyed, and upserted (the
+        // one-word residue that survived BUG-004). Re-check between the
+        // failed lookup and the upsert: once the gate is true, nothing
+        // from this draft — count, phrase key, or store sighting — lands.
+        if (this.#isDisabled?.()) break;
         if (result === "reject") continue; // admission reject: simply
         // not stored (PRD §04 h2.24); no IngestStats field by design.
         this.#stats.admitted++;
