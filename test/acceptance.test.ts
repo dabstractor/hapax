@@ -568,15 +568,15 @@ const NREL_PHASE1 = 4;
 
 /** Pipeline wired like src/pi/index.ts's session_start: the bigram hook
  *  is recordBigramRuns — the ONLY bigram path (phrase upserts are gone
- *  since P1.M1.T2). The flag gates the whole chain layer; P1.M3.T1.S1
- *  renames it to enableChaining. */
-function makeNrelPipeline(enablePhrases: boolean): { store: CandidateStore; pipeline: IngestPipeline } {
+ *  since P1.M1.T2). The enableChaining flag gates the whole chain layer
+ *  (P1.M3.T1.S2). */
+function makeNrelPipeline(enableChaining: boolean): { store: CandidateStore; pipeline: IngestPipeline } {
   const store = new CandidateStore();
   const dictionary: Dictionary = loadDictionary(resolveDictPath());
   const pipeline = new IngestPipeline({
     store,
     dictionary,
-    ...(enablePhrases
+    ...(enableChaining
       ? {
           onAdmittedTokens: (lines: string[][]) => store.recordBigramRuns(lines),
         }

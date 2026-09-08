@@ -398,14 +398,14 @@ describe("session_start — restore gating", () => {
   });
 });
 
-// --- session_start: bigram wiring (enablePhrases gate) ------------------------
+// --- session_start: bigram wiring (enableChaining gate) ------------------------
 
-describe("session_start — bigram wiring (enablePhrases)", () => {
+describe("session_start — bigram wiring (enableChaining)", () => {
   afterEach(() => {
     vi.restoreAllMocks(); // scope the CandidateStore.prototype spy
   });
 
-  it("enablePhrases true (default) wires the hook — bigrams land in the store", async () => {
+  it("enableChaining true (default) wires the hook — bigrams land in the store", async () => {
     useDict(); // alpha/beta/gamma are dict-absent → group 0 → admitted
     const { handlers, ctx } = wired();
     const spy = vi.spyOn(CandidateStore.prototype, "recordBigramRuns");
@@ -426,9 +426,9 @@ describe("session_start — bigram wiring (enablePhrases)", () => {
     expect(call[0]).toEqual([["alpha", "beta", "gamma"]]);
   });
 
-  it("enablePhrases false leaves the hook unwired — recordBigramRuns never fires", async () => {
+  it("enableChaining false leaves the hook unwired — recordBigramRuns never fires", async () => {
     useDict();
-    writeConfig({ enablePhrases: false });
+    writeConfig({ enableChaining: false });
     const { handlers, ctx } = wired();
     const spy = vi.spyOn(CandidateStore.prototype, "recordBigramRuns");
     startSession(handlers.get("session_start")!, ctx, "new");
@@ -439,7 +439,7 @@ describe("session_start — bigram wiring (enablePhrases)", () => {
       userMsg("alpha beta gamma"),
     );
     await settle(); // let the debounce fire and the drain finish
-    // enablePhrases false → the hook is never wired: this session's
+    // enableChaining false → the hook is never wired: this session's
     // message never reaches recordBigramRuns (any spied call would be
     // bleed from another test's store — filter on this message's keys).
     expect(spy.mock.calls.some(([lines]) => lines.flat().includes("alpha"))).toBe(false);
@@ -536,7 +536,7 @@ describe("message_end — lazy dictionary through the pipeline", () => {
         signal: new AbortController().signal,
       });
       // M2 semantics (PRD §06 h3.8): once the drain admits "zephyr" and
-      // the bigram wiring (the enablePhrases gate) records its successor
+      // the bigram wiring (the enableChaining gate) records its successor
       // windows, the admitted word must surface in the "#zep" menu. The
       // assertion's intent — "ingested candidates reach the provider and
       // appear in the menu" — is provable from any poll that lands after

@@ -153,10 +153,11 @@ export type HapaxProvider = AutocompleteProvider & {
  *     "", and any typed fragment filters that set live — at chain
  *     threshold 0 for the whole chain duration (never config.threshold;
  *     extractMatchState stays bypassed on this path).
- *   - an `enablePhrases` gate on the whole chain layer: with the flag
- *     false the armed branch never runs and the arming intercept never
- *     arms — the provider behaves exactly as M1 word-only (the flag
- *     disables phrases, NOT word completion).
+ *   - an `enableChaining` gate on the whole chain layer (P1.M3.T1.S2):
+ *     with the flag false the armed branch never runs and the arming
+ *     intercept never arms — the provider behaves exactly as M1
+ *     word-only (the flag disables the successor chain layer, NOT word
+ *     completion).
  *
  * Delegation forwards the ORIGINAL arguments object unchanged — no
  * cloning, no dropping `force`. All other members pass straight
@@ -254,11 +255,11 @@ export function createHapaxProvider(
       // (PRD §06 h2.38 one-word invariant) — no leading-space, no
       // multi-word values anywhere.
       //
-      // enablePhrases gate (P2.M2.T3.S1): the entire layer — armed
+      // enableChaining gate (P1.M3.T1.S2): the entire layer — armed
       // branch and arming intercept below — is inert under
-      // `enablePhrases: false`; word completion is untouched.
+      // enableChaining:false; word completion is untouched.
       const armed = chain.state();
-      if (armed && config.enablePhrases) {
+      if (armed && config.enableChaining) {
         const before = lines[cursorLine]?.slice(0, cursorCol) ?? "";
 
         // Publish an armed successor set through the SAME lastLive seam
@@ -379,7 +380,7 @@ export function createHapaxProvider(
       // Arming side-effect ONLY (PRD §07 h2.43): classify what was
       // accepted through the live-key map, then delegate VERBATIM —
       // arguments and return value reach pi's provider untouched.
-      // enablePhrases gate (P2.M2.T3.S1): with the flag false nothing
+      // enableChaining gate (P1.M3.T1.S2): with the flag false nothing
       // ever arms — the chain layer is inert and the provider behaves
       // exactly as M1 word-only. Delegation itself is unconditional.
       //
@@ -395,7 +396,7 @@ export function createHapaxProvider(
       //   P1.M1.T2.S2 (PRD §06 h2.38 one-word invariant), so plan 002's
       //   P1.M2.T1.S1 deleted the old space-joined phrase arm branch
       //   (BUG-005 part 2) as dead code.
-      if (config.enablePhrases) {
+      if (config.enableChaining) {
         const key = liveKeyByValue.get(item.value);
         if (key !== undefined) {
           if (key.startsWith(CHAIN_KEY_PREFIX)) {

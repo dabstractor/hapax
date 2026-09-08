@@ -6,10 +6,11 @@
  * remaining layers still apply), per-field repair semantics (invalid
  * values fall back to the PREVIOUS layer's value with a warning;
  * out-of-range numbers clamp silently), exact defaults, the pure
- * validation helpers, and the enableChaining/enablePhrases pair
- * (PRD §08 h2.46): enableChaining is the primary key, enablePhrases a
- * deprecated alias resolved per layer (alias first, primary overrides)
- * and mirrored into both interface fields. The loader is node-pure —
+ * validation helpers, and the enableChaining primary key with its
+ * enablePhrases deprecated alias KEY (PRD §08 h2.46): enableChaining is
+ * the only interface field; the alias resolves per layer (alias first,
+ * primary overrides) into it — the transitional mirror FIELD was
+ * removed by P1.M3.T1.S2. The loader is node-pure —
  * notify, cwd and
  * homeDir are injected — so fixtures are plain JSON files inside
  * mkdtemp scratch dirs; no pi runtime involved.
@@ -93,7 +94,6 @@ describe("defaults — no config files (PRD §08)", () => {
       threshold: 2,
       maxSuggestions: 8,
       enableChaining: true,
-      enablePhrases: true,
       debug: false,
     });
     expect(h.warnings).toEqual([]);
@@ -107,7 +107,6 @@ describe("defaults — no config files (PRD §08)", () => {
     expect(DEFAULT_CONFIG.triggerChar).toBe("#");
     expect(DEFAULT_CONFIG.threshold).toBe(2);
     expect(DEFAULT_CONFIG.enableChaining).toBe(true);
-    expect(DEFAULT_CONFIG.enablePhrases).toBe(true);
   });
 
   it("empty JSON objects in both files change nothing and stay silent", () => {
@@ -130,14 +129,24 @@ describe("layer precedence — defaults → user → project, later wins", () =>
     triggerChar: "%",
     threshold: 3,
     maxSuggestions: 20,
-    enableChaining: false,
+    // Written under the deprecated alias KEY — still accepted, mapped
+    // onto enableChaining with one deprecation notify (h2.46). The
+    // resolved object carries only enableChaining (no mirror field,
+    // P1.M3.T1.S2).
     enablePhrases: false,
+    debug: true,
+  };
+  const allOverridesResolved = {
+    triggerChar: "%",
+    threshold: 3,
+    maxSuggestions: 20,
+    enableChaining: false,
     debug: true,
   };
 
   it("a valid user-global layer overrides every default", () => {
     writeUserConfig(allOverrides);
-    expect(loadConfig(loadOpts())).toEqual(allOverrides);
+    expect(loadConfig(loadOpts())).toEqual(allOverridesResolved);
     // The override set uses the deprecated alias key → one mapped warning.
     expect(h.warnings).toEqual([
       {
@@ -157,7 +166,6 @@ describe("layer precedence — defaults → user → project, later wins", () =>
     // Untouched keys keep the user-global values.
     expect(cfg.maxSuggestions).toBe(20);
     expect(cfg.enableChaining).toBe(false);
-    expect(cfg.enablePhrases).toBe(false); // mirror
     // Exactly the user layer's alias deprecation; the project layer's
     // primary keys are silent.
     expect(h.warnings).toEqual([
@@ -348,19 +356,17 @@ describe("boolean fields — real booleans only, no truthy coercion", () => {
 });
 
 describe("enableChaining / enablePhrases — primary key + deprecated alias (PRD §08 h2.46)", () => {
-  it("primary key parses: { enableChaining: false } → both fields false, no warnings", () => {
+  it("primary key parses: { enableChaining: false } → enableChaining false, no warnings", () => {
     writeUserConfig({ enableChaining: false });
     const cfg = loadConfig(loadOpts());
     expect(cfg.enableChaining).toBe(false);
-    expect(cfg.enablePhrases).toBe(false); // mirror
     expect(h.warnings).toEqual([]);
   });
 
-  it("alias maps: { enablePhrases: false } → both fields false + exactly one deprecation warning", () => {
+  it("alias maps: { enablePhrases: false } → enableChaining false + exactly one deprecation warning", () => {
     writeUserConfig({ enablePhrases: false });
     const cfg = loadConfig(loadOpts());
     expect(cfg.enableChaining).toBe(false);
-    expect(cfg.enablePhrases).toBe(false);
     expect(h.warnings).toEqual([
       {
         msg: "hapax: enablePhrases is deprecated; use enableChaining (mapped)",
@@ -373,7 +379,6 @@ describe("enableChaining / enablePhrases — primary key + deprecated alias (PRD
     writeUserConfig({ enablePhrases: true, enableChaining: false });
     const cfg = loadConfig(loadOpts());
     expect(cfg.enableChaining).toBe(false);
-    expect(cfg.enablePhrases).toBe(false);
     expect(h.warnings).toEqual([
       {
         msg: "hapax: enablePhrases is deprecated; use enableChaining (mapped)",
@@ -386,7 +391,6 @@ describe("enableChaining / enablePhrases — primary key + deprecated alias (PRD
     writeUserConfig({ enablePhrases: false, enableChaining: true });
     const cfg = loadConfig(loadOpts());
     expect(cfg.enableChaining).toBe(true);
-    expect(cfg.enablePhrases).toBe(true);
     expect(h.warnings).toHaveLength(1); // alias was present+valid → deprecation fires
   });
 
@@ -395,7 +399,6 @@ describe("enableChaining / enablePhrases — primary key + deprecated alias (PRD
     writeProjectConfig({ enableChaining: false });
     const cfg = loadConfig(loadOpts());
     expect(cfg.enableChaining).toBe(false);
-    expect(cfg.enablePhrases).toBe(false);
     expect(h.warnings).toHaveLength(1); // the user layer's deprecation only
   });
 
@@ -404,7 +407,6 @@ describe("enableChaining / enablePhrases — primary key + deprecated alias (PRD
     writeProjectConfig({ enablePhrases: false });
     const cfg = loadConfig(loadOpts());
     expect(cfg.enableChaining).toBe(false);
-    expect(cfg.enablePhrases).toBe(false);
     expect(h.warnings).toEqual([
       {
         msg: "hapax: enablePhrases is deprecated; use enableChaining (mapped)",
@@ -417,7 +419,6 @@ describe("enableChaining / enablePhrases — primary key + deprecated alias (PRD
     writeUserConfig({ enablePhrases: "yes" });
     const cfg = loadConfig(loadOpts());
     expect(cfg.enableChaining).toBe(true);
-    expect(cfg.enablePhrases).toBe(true);
     expect(h.warnings).toHaveLength(1);
     expect(h.warnings[0]!.msg).toContain("enablePhrases");
     expect(h.warnings[0]!.msg).toContain(userPath());
@@ -427,7 +428,6 @@ describe("enableChaining / enablePhrases — primary key + deprecated alias (PRD
     writeUserConfig({ enablePhrases: false, enableChaining: "nope" });
     const cfg = loadConfig(loadOpts());
     expect(cfg.enableChaining).toBe(false); // alias-resolved value kept
-    expect(cfg.enablePhrases).toBe(false);
     expect(h.warnings).toHaveLength(2);
     expect(h.warnings[0]!.msg).toBe(
       "hapax: enablePhrases is deprecated; use enableChaining (mapped)",
@@ -442,7 +442,6 @@ describe("enableChaining / enablePhrases — primary key + deprecated alias (PRD
     writeProjectConfig({ enablePhrases: "yes" });
     const cfg = loadConfig(loadOpts());
     expect(cfg.enableChaining).toBe(false); // repaired to user's false
-    expect(cfg.enablePhrases).toBe(false);
     expect(h.warnings).toHaveLength(1);
     expect(h.warnings[0]!.msg).toContain("enablePhrases");
     expect(h.warnings[0]!.msg).toContain(projectPath());
@@ -454,6 +453,13 @@ describe("enableChaining / enablePhrases — primary key + deprecated alias (PRD
     loadConfig(loadOpts());
     expect(h.warnings).toHaveLength(1);
     expect(h.warnings[0]!.msg).toContain("deprecated");
+  });
+
+  it("the transitional mirror FIELD is gone: the resolved config carries only enableChaining (P1.M3.T1.S2)", () => {
+    writeUserConfig({ enableChaining: false });
+    const cfg = loadConfig(loadOpts());
+    expect("enablePhrases" in cfg).toBe(false);
+    expect("enablePhrases" in DEFAULT_CONFIG).toBe(false);
   });
 });
 

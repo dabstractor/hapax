@@ -283,14 +283,14 @@
           "type": "Milestone",
           "id": "P1.M3",
           "title": "Config surface & debug command (R5)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Rename the gating key to enableChaining (enablePhrases accepted as a deprecated alias, enableChaining wins), re-point every gate read, and make /acwords successor-only with a standalone successor-index sample.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M3.T1",
               "title": "Config enableChaining + deprecated enablePhrases alias (R5)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Primary key enableChaining (default true) gates the successor-index chain layer only; the alias maps onto it with per-layer precedence; validation/repair/notify shape unchanged.",
               "subtasks": [
                 {
@@ -313,7 +313,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T1.S2",
                   "title": "Re-point gate reads; enableChaining-inertness suite (ex phrase-gating)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T1.S1",
@@ -334,14 +334,14 @@
               "type": "Task",
               "id": "P1.M3.T2",
               "title": "/acwords successor-only dump (R5)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Drop the phrase section entirely (landed in M1) and add a standalone successor-index sample; keep store size, top-50 by salience, rank-group histogram, gate rejection counts.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T2.S1",
                   "title": "debug.ts successor-index sample section + debug.test.ts update",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S3",
@@ -376,7 +376,7 @@
                   "type": "Subtask",
                   "id": "P1.M4.T1.S1",
                   "title": "Full check + M1 regression re-run (never-hijack, perf gates, no-persistence)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",

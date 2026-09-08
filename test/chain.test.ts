@@ -30,9 +30,9 @@
  * debounce interference); display composition is case 14, under fake
  * timers. Verbatim delegation of applyCompletion is pinned by
  * test/provider.test.ts, which stays untouched; case 11 re-asserts the
- * pass-through from this suite's side. The config gate is enablePhrases
- * until P1.M3.T1.S1 renames it to enableChaining — the gate case is
- * written so that swap is a one-line change.
+ * pass-through from this suite's side. The config gate is
+ * enableChaining — every gate read was re-pointed and the transitional
+ * mirror field removed by P1.M3.T1.S2.
  *
  * SEEDING (PRD §06 h3.9): bigrams enter ONLY through
  * store.recordBigramRuns — the sole bigram seam (real ingest in the
@@ -593,14 +593,14 @@ const FIXTURES = "test/fixtures/sessions";
 
 /** Pipeline wired like src/pi/index.ts's session_start: the bigram hook
  *  is recordBigramRuns — the ONLY bigram path (phrase upserts are gone
- *  since P1.M1.T2). The flag gates the whole chain layer; P1.M3.T1.S1
- *  renames it to enableChaining. */
-function makeNrelPipeline(enablePhrases: boolean): { store: CandidateStore; pipeline: IngestPipeline } {
+ *  since P1.M1.T2). The enableChaining flag gates the whole chain layer
+ *  (P1.M3.T1.S2). */
+function makeNrelPipeline(enableChaining: boolean): { store: CandidateStore; pipeline: IngestPipeline } {
   const store = new CandidateStore();
   const pipeline = new IngestPipeline({
     store,
     dictionary: loadDictionary(resolveDictPath()),
-    ...(enablePhrases
+    ...(enableChaining
       ? {
           onAdmittedTokens: (lines: string[][]) =>
             store.recordBigramRuns(lines),
@@ -734,14 +734,14 @@ describe("replayed-store arming end-to-end (real ingest pipeline, NREL fixture �
     expectSingleWordItems(offer2?.items ?? []);
   });
 
-  it("config gate inertness: enablePhrases:false never arms and never offers (the enableChaining rename is P1.M3.T1.S1 — swap the key here)", async () => {
+  it("config gate inertness: enableChaining:false never arms and never offers", async () => {
     const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
     // Successors ARE present (hook on) so the case proves the CONFIG
     // gate alone blocks the chain layer — not a missing index.
     const { store, pipeline } = makeNrelPipeline(true);
     const current = editingCurrent();
     const chain = createChainMachine();
-    const provider = createHapaxProvider(store, cfg({ enablePhrases: false }), current, chain);
+    const provider = createHapaxProvider(store, cfg({ enableChaining: false }), current, chain);
 
     await replayNrel(pipeline, entries);
 

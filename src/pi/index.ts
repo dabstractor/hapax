@@ -170,14 +170,16 @@ export default function hapax(pi: ExtensionAPI): void {
       // store reads currentOrdinal() itself — the message's ordinal was already
       // issued by processText (nextOrdinal before the first slice).
       //
-      // Successor capture rides the SAME gate (PRD §06 h3.9): the store
-      // builds its word → top-3 successor index inside recordBigramRuns
-      // and nowhere else, so `enablePhrases: false` — which leaves this
-      // hook unwired — yields zero bigrams AND zero successors. No
-      // separate gate is needed; before_agent_start's chain?.reset() is
-      // already no-op-safe when the layer is disabled (idle machine).
-      // (P1.M3.T1.S2 re-points this gate to `enableChaining`.)
-      ...(config.enablePhrases
+      // Chaining gate (PRD §08 h2.46, re-pointed by P1.M3.T1.S2):
+      // recordBigramRuns is the ONLY successor-index path — the store
+      // builds its word → top-3 successor index inside it and nowhere
+      // else — so with enableChaining:false this hook stays unwired: no
+      // bigrams, no successors, and the chain machine can never arm
+      // from real data. Word completion is unaffected (the pipeline
+      // still ingests candidates; this hook only feeds the bigram
+      // layer), and before_agent_start's chain?.reset() is already
+      // no-op-safe when the layer is disabled (idle machine).
+      ...(config.enableChaining
         ? {
             onAdmittedTokens: (runs) => sessionStore.recordBigramRuns(runs),
           }

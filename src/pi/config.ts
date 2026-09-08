@@ -18,11 +18,11 @@
  * Chaining flag (PRD §08 h2.46): the primary key is `enableChaining`,
  * gating ONLY the successor-index chain layer (word completion is
  * unaffected either way). `enablePhrases` is accepted as a DEPRECATED
- * alias, resolved per layer (alias first, primary overrides) with a
- * one-per-layer deprecation notify. Until P1.M3.T1.S2 re-points the
- * pre-S2 gate reads, HapaxConfig carries BOTH fields and applyLayer
- * mirrors the resolved value into `enablePhrases`, so the two can
- * never diverge.
+ * alias KEY, resolved per layer (alias first, primary overrides) with a
+ * one-per-layer deprecation notify; it writes `enableChaining` directly
+ * — the config object itself carries only `enableChaining` (the
+ * transitional mirror field was removed by P1.M3.T1.S2, which re-pointed
+ * the last gate reads).
  *
  * This module imports ONLY node builtins — zero pi imports — so the
  * loader is trivially unit-testable: notify, cwd, projectTrusted and
@@ -48,14 +48,10 @@ export interface HapaxConfig {
   /** 1–20 */
   maxSuggestions: number;
   /** PRIMARY chaining flag (PRD §08 h2.46): gates the successor-index
-   *  chain layer ONLY — word completion is unaffected either way. */
+   *  chain layer ONLY — word completion is unaffected either way. The
+   *  deprecated `enablePhrases` alias KEY remains accepted and writes
+   *  this field (P1.M3.T1.S2 removed the former mirror field). */
   enableChaining: boolean;
-  /** TRANSITIONAL MIRROR of enableChaining — same resolved value every
-   *  time (applyLayer writes both) so pre-S2 gate reads (index.ts,
-   *  provider.ts) keep compiling. DEPRECATED as a config key — accepted
-   *  as an alias of enableChaining; removed from this interface by
-   *  P1.M3.T1.S2. */
-  enablePhrases: boolean;
   /** enables /acwords command + store dump */
   debug: boolean;
 }
@@ -65,7 +61,6 @@ export const DEFAULT_CONFIG: HapaxConfig = {
   threshold: 2,
   maxSuggestions: 8,
   enableChaining: true,
-  enablePhrases: true,
   debug: false,
 };
 
@@ -211,11 +206,13 @@ function applyLayer(
     }
   }
 
-  // Chaining flag pair (PRD §08 h2.46): the deprecated `enablePhrases`
+  // Chaining flag (PRD §08 h2.46): the deprecated `enablePhrases`
   // alias resolves FIRST, then the primary `enableChaining` overrides
   // when present and valid — so the primary wins when both appear
   // (in-layer or across layers, via ordinary later-wins). Only real
-  // booleans; no truthy coercion.
+  // booleans; no truthy coercion. The alias KEY is accepted forever
+  // (h2.46) and writes `next.enableChaining` directly — the former
+  // mirror FIELD is gone (P1.M3.T1.S2).
   if ("enablePhrases" in raw) {
     const v = raw.enablePhrases;
     if (typeof v === "boolean") {
@@ -246,7 +243,6 @@ function applyLayer(
       );
     }
   }
-  next.enablePhrases = next.enableChaining; // transitional mirror (S2 removes)
 
   if ("debug" in raw) {
     const v = raw.debug;
