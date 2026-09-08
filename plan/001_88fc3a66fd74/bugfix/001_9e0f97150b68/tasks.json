@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "Stabilization: fix 6 adversarial-probe findings (BUG-001..BUG-006)",
-      "status": "Planned",
+      "status": "Ready",
       "description": "Fix one critical dictionary-calibration defect (common English words pop menus), three major contract/behavior bugs (stale-prefix Tab corruption, multi-segment secret leakage, disable-on-bad-dictionary violated during restore), one major feature-reachability flaw (chained completion unreachable after session restore), and one minor cadence bug (phrase demotion sweep skipped during restore replay). All fixes ride on the existing 523-test suite; each subtask implies failing-test-first TDD; a consolidated adversarial regression suite and changeset-level docs sweep close the phase.",
       "milestones": [
         {
@@ -321,21 +321,21 @@
           "type": "Milestone",
           "id": "P1.M5",
           "title": "Adversarial regression suite & changeset documentation",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Consolidate the bug-hunt's probe methodology into a permanent e2e regression suite against real artifacts (shipped dict, pi-tui semantics), then sync changeset-level documentation.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M5.T1",
               "title": "Adversarial probe regression suite (e2e)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Reproduce the bug-hunt probe suites as permanent end-to-end tests against the real modules and artifacts — the reality-check layer the scripted acceptance lacked.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M5.T1.S1",
                   "title": "Typing-path probes: prose no-menu, Tab-corruption, chain post-restore",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S2",
@@ -357,7 +357,7 @@
                   "type": "Subtask",
                   "id": "P1.M5.T1.S2",
                   "title": "Ingest-path probes: realistic secrets, bad-dict restore, demotion cadence",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1",
@@ -381,14 +381,14 @@
               "type": "Task",
               "id": "P1.M5.T2",
               "title": "Sync changeset-level documentation",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Final changeset-level documentation sweep across README.md so the shipped docs reflect the recalibrated dictionary, hardened security posture, restore/disable behavior, and chain reachability.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M5.T2.S1",
                   "title": "README.md changeset sync: dictionary provenance, security, restore, chaining",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S2",
