@@ -173,7 +173,7 @@
               "type": "Task",
               "id": "P1.M3.T1",
               "title": "Honor disable-on-bad-dictionary during restore replay",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Expose sticky dictionary-load failure, gate ingestion on it per segment, and abort the restoreFromHistory replay loop so a bad table never ingests history as rank-group-0 candidates.",
               "subtasks": [
                 {
@@ -195,7 +195,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T1.S2",
                   "title": "Abort restoreFromHistory replay on dictionary failure",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T1.S1"

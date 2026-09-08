@@ -8,16 +8,24 @@
  * Also verified: type==="message" filtering, null-extraction skips,
  * fromUser mapping, synchronous void return, and fire-and-forget error
  * containment (a rejecting processText must never surface as an unhandled
- * rejection nor abort the remaining replay).
+ * rejection nor abort the remaining replay). P1.M3.T1.S2 (BUG-004) adds
+ * the abort contract: an optional shouldAbort predicate polled at the top
+ * of the replay loop, wired by the factory to the sticky dictionary-
+ * failure flag, proven here with fakes AND a real pipeline + real lazy
+ * dictionary on a nonexistent path.
  */
 
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
+import { rankMatches } from "../src/core/query.js";
+import { CandidateStore } from "../src/core/store.js";
 import {
+  IngestPipeline,
   restoreFromHistory,
   type AgentMessage,
   type RestoreSessionManager,
 } from "../src/pi/ingest.js";
+import { createLazyDictionary } from "../src/pi/index.js";
 
 // --- fixture helpers: minimal valid pi messages (copied from ingest.test.ts;
 // --- test files are self-contained) -----------------------------------------
@@ -345,5 +353,133 @@ describe("restoreFromHistory — PRD §05 h2.31/h2.33", () => {
         process.off("unhandledRejection", onUnhandled);
       }
     });
+  });
+});
+
+describe("restoreFromHistory — dictionary-failure abort (BUG-004)", () => {
+  it("aborts replay when the predicate flips mid-replay → only the first entry replays", async () => {
+    const sm = fakeSm({ branch: [e3, e2, e1] });
+    const calls: { text: string; fromUser: boolean }[] = [];
+    // The factory shape: `disabled` is false at session_start and flips
+    // DURING the replay (first lookup triggers the failed load) — so the
+    // loop must RE-POLL the predicate per entry, not consult it once.
+    let disabled = false;
+    const processText = vi.fn(async (text: string, fromUser: boolean) => {
+      calls.push({ text, fromUser });
+      disabled = true; // "dictionary died" after the first message
+    });
+    restoreFromHistory({ processText }, sm, () => disabled);
+    await settle(() => expect(calls).toHaveLength(1));
+    // Drain the macrotask queue: the replay must have RETURNED at the top
+    // of entry 2 — a `continue` here would keep scanning and replaying.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(calls.map((c) => c.text)).toEqual(["alpha"]);
+  });
+
+  it("predicate true before the first entry → zero processText calls", async () => {
+    const sm = fakeSm({ branch: [e3, e2, e1] });
+    const pipe = fakePipeline();
+    restoreFromHistory(pipe, sm, () => true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(pipe.processText).not.toHaveBeenCalled();
+    expect(pipe.calls).toEqual([]);
+  });
+
+  it("no predicate → unchanged two-arg behavior (regression guard)", async () => {
+    const sm = fakeSm({ branch: [e3, e2, e1] });
+    const pipe = fakePipeline();
+    restoreFromHistory(pipe, sm);
+    await settle(() => expect(pipe.calls).toHaveLength(3));
+    expect(pipe.calls.map((c) => c.text)).toEqual([
+      "alpha",
+      "beta one\nbeta two",
+      "gamma",
+    ]);
+  });
+
+  it("real pipeline + bad dict, failure observed before the replay: ZERO candidates, notify once", async () => {
+    const onError = vi.fn();
+    const dict = createLazyDictionary(
+      "/nonexistent/hapax-test-dict.bin",
+      onError,
+    );
+    const store = new CandidateStore();
+    const pipeline = new IngestPipeline({
+      store,
+      dictionary: dict,
+      // Mirrors the factory wiring (P1.M3.T1.S1): sticky failure flag →
+      // admission gate.
+      isDisabled: () => dict.failed === true,
+      yieldFn: async () => {},
+    });
+    const m1 = msgEntry("m1", null, userMsg("with this that them"));
+    const m2 = msgEntry("m2", "m1", userMsg("with another go here"));
+    const sm = fakeSm({ branch: [m2, m1] }); // leaf → root
+
+    // Observe the failure BEFORE the replay (the very first lookup
+    // triggers the load) — the established "zero after the failure is
+    // observed" pattern from the S1 suite (test/bad-dict-gate.test.ts).
+    // The warmup fires onLoadError once; the replay must not re-fire it.
+    expect(dict.lookup("warmup")).toBeNull();
+    expect(dict.failed).toBe(true);
+    expect(onError).toHaveBeenCalledTimes(1);
+
+    // Same closure shape as the factory: live flag, not a stale value.
+    restoreFromHistory(pipeline, sm, () => dict.failed === true);
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    // The predicate was true at the TOP of the loop → the replay never
+    // reached the first entry: strictly nothing admitted, no ordinals
+    // beyond the warmup, no stats movement.
+    expect(pipeline.getStats().wordsSeen).toBe(0);
+    expect(pipeline.getStats().admitted).toBe(0);
+    expect(store.size).toBe(0);
+    expect(store.get("with")).toBeUndefined();
+    expect(rankMatches(store, "with")).toEqual([]);
+    expect(onError).toHaveBeenCalledTimes(1); // notify-once preserved
+  });
+
+  it("real pipeline + bad dict, failure observed mid-replay (factory timing): replay stops after the first message", async () => {
+    const onError = vi.fn();
+    const dict = createLazyDictionary(
+      "/nonexistent/hapax-test-dict.bin",
+      onError,
+    );
+    const store = new CandidateStore();
+    const pipeline = new IngestPipeline({
+      store,
+      dictionary: dict,
+      isDisabled: () => dict.failed === true,
+      yieldFn: async () => {},
+    });
+    const processTextSpy = vi.spyOn(pipeline, "processText");
+    const m1 = msgEntry("m1", null, userMsg("with this that them"));
+    const m2 = msgEntry("m2", "m1", userMsg("with another go here"));
+    const sm = fakeSm({ branch: [m2, m1] }); // leaf → root
+
+    // No warmup — the factory's real timing: at session_start the lazy
+    // dict has NOT loaded, so message 1's first lookup triggers the
+    // failed load mid-replay.
+    restoreFromHistory(pipeline, sm, () => dict.failed === true);
+
+    await settle(() => expect(onError).toHaveBeenCalledTimes(1));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(onError).toHaveBeenCalledTimes(1); // notify-once preserved
+    // The abort gate owns every entry AFTER the failure: exactly ONE
+    // processText (message 1) — message 2 never replays.
+    expect(processTextSpy).toHaveBeenCalledTimes(1);
+    // The in-flight message itself is owned by the pipeline's per-segment
+    // S1 gate (pinned identically by test/bad-dict-gate.test.ts's
+    // mid-message contract): only the trigger token ("with", whose lookup
+    // observed the failed load) got through; its siblings and every word
+    // of message 2 are blocked.
+    expect(store.size).toBe(1);
+    expect(store.get("with")).toBeDefined();
+    expect(store.get("this")).toBeUndefined();
+    expect(store.get("another")).toBeUndefined();
+    expect(store.get("here")).toBeUndefined();
   });
 });

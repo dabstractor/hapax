@@ -430,10 +430,25 @@ function safeEntries(sessionManager: RestoreSessionManager): SessionEntry[] {
  * entry cannot abort the rest or escape as an unhandled rejection.
  * Reason-independent: every session_start reason can carry history, so
  * replay happens whenever history exists; empty history is a no-op.
+ *
+ * Abort contract (BUG-004, P1.M3.T1.S2): the optional `shouldAbort`
+ * predicate is polled at the TOP of every replay iteration — before the
+ * message-type filter, so an aborted replay stops scanning immediately.
+ * Once it returns true the replay RETURNS: no further entries are
+ * processed and nothing throws (fire-and-forget discipline holds — abort
+ * is a return, never a rejection). Combined with the pipeline's
+ * `isDisabled` per-segment gate (P1.M3.T1.S1), which owns the in-flight
+ * message, a dictionary failure observed mid-replay stops the remaining
+ * messages here. Notify-once semantics live in
+ * createLazyDictionary/onLoadError and are untouched by this contract.
+ * The factory wires `() => disabled` — a CLOSURE over the live flag,
+ * which flips DURING the replay (the first lookup triggers the failed
+ * load); never pass the flag by value.
  */
 export function restoreFromHistory(
   pipeline: Pick<IngestPipeline, "processText">,
   sessionManager: RestoreSessionManager,
+  shouldAbort?: () => boolean,
 ): void {
   // Collect the ordered entry list synchronously — metadata only. Text
   // is never extracted or held here (h2.34: touch bodies one message at
@@ -451,6 +466,7 @@ export function restoreFromHistory(
 
   void (async () => {
     for (const entry of ordered) {
+      if (shouldAbort?.()) return; // BUG-004: dict failed → stop replay cold
       if (entry.type !== "message") continue;
       try {
         const text = extractText(entry.message);

@@ -222,7 +222,11 @@ export default function hapax(pi: ExtensionAPI): void {
       /* treat as empty */
     }
     if (event.reason !== "new" || hasHistory) {
-      restoreFromHistory(pipeline, ctx.sessionManager);
+      // BUG-004: abort the replay the moment the dictionary fails.
+      // `disabled` flips DURING the replay (the first lookup triggers the
+      // failed load), so this must close over the live flag — its value
+      // here is still false.
+      restoreFromHistory(pipeline, ctx.sessionManager, () => disabled);
     }
   });
 
