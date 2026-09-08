@@ -166,21 +166,21 @@
           "type": "Milestone",
           "id": "P1.M3",
           "title": "Restore-path contracts (BUG-004, BUG-006)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Honor the disable-on-bad-dictionary contract during session restore replay and run the 40-ordinal phrase demotion sweep at restore completion.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M3.T1",
               "title": "Honor disable-on-bad-dictionary during restore replay",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Expose sticky dictionary-load failure, gate ingestion on it per segment, and abort the restoreFromHistory replay loop so a bad table never ingests history as rank-group-0 candidates.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T1.S1",
                   "title": "Expose lazy-dictionary failure state + per-segment disable gate in IngestPipeline",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See system_context.md BUG-004. createLazyDictionary (src/pi/index.ts ~L79-130) has sticky failure (onLoadError fired exactly once, later lookups null) but exposes NO failure state — no getter, no throw. The `disabled` flag is set in onLoadError but checked only in session_start/message_end; at session_start the lazy dict hasn't loaded yet, so restore always starts. Lookup never throws (Dictionary contract), so gating must come from an explicit failure probe.\n2. INPUT: None from other subtasks — this is the enabling seam.\n3. LOGIC: (a) Add a failure probe to the lazy dictionary object (e.g. `get failed(): boolean`, or an optional field on the Dictionary shape in src/core/types.ts kept backward-compatible) — true once the load threw, never resets. (b) Add an optional constructor option `isDisabled?: () => boolean` to IngestPipeline (src/pi/ingest.ts), checked at the TOP of processText AND per segment inside #admitSegment's admission loop, so failure observed mid-message stops admissions within that message (otherwise every lookup in message 1 returns null → all its words admitted as group 0 — exactly the bug). Wire it in src/pi/index.ts factory: `isDisabled: () => disabled` (closure already holds `disabled`). Mock nothing — unit-test with a real createLazyDictionary on a nonexistent path.\n4. OUTPUT: Observable failure state + per-segment gate, consumed by P1.M3.T1.S2's restore abort and testable directly (processText with a failed dict stores nothing).\n5. DOCS: [Mode A] JSDoc on the new probe/option. No user-facing/config surface change (option is internal wiring, not config).",
@@ -195,7 +195,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T1.S2",
                   "title": "Abort restoreFromHistory replay on dictionary failure",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T1.S1"
@@ -215,14 +215,14 @@
               "type": "Task",
               "id": "P1.M3.T2",
               "title": "Phrase demotion sweep after restore replay",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Run sweepPhraseDemotions once when the restore replay completes so stale fast-path phrases from ancient history do not survive resume as completion candidates.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T2.S1",
                   "title": "Public sweepPhrases() on IngestPipeline called at restore tail",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T1.S2"

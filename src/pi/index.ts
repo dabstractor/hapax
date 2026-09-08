@@ -105,6 +105,14 @@ export function createLazyDictionary(
     get entryCount(): number {
       return dict?.entryCount ?? 0;
     },
+
+    /** Failure probe (BUG-004): true once the load threw; never resets
+     *  (no lazy retry). Consumed by the factory's isDisabled wiring for
+     *  IngestPipeline and (P1.M3.T1.S2) by restoreFromHistory's replay
+     *  abort. */
+    get failed(): boolean {
+      return failed;
+    },
   };
 }
 
@@ -151,6 +159,11 @@ export default function hapax(pi: ExtensionAPI): void {
     pipeline = new IngestPipeline({
       store: sessionStore,
       dictionary: lazyDict,
+      // Sticky dict-failure flag → ingestion gate (BUG-004): stops
+      // admissions the instant a lookup observes the failed load —
+      // covering the message drain AND restoreFromHistory replay (both
+      // funnel through processText).
+      isDisabled: () => disabled,
       // M2 phrase capture (P2.M1.T1.S1), live only when enabled (PRD §08):
       // per-line admitted whole-token keys → phrase n-gram upserts. The
       // message's ordinal was already issued by processText (nextOrdinal

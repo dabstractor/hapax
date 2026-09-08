@@ -116,6 +116,10 @@ export interface Dictionary {
   lookup(word: string): number | null;
   readonly version: number;
   readonly entryCount: number;
+  /** OPTIONAL failure probe (BUG-004): true once the backing load threw;
+   *  never resets. Absent on the eager loadDictionary() result and on
+   *  plain test stubs — check with `dict.failed === true`. */
+  readonly failed?: boolean;
 }
 
 /** Ingest counters owned by src/pi/ingest.ts; surfaced by /acwords. */

@@ -103,6 +103,13 @@ export interface IngestPipelineOptions {
   store: CandidateStore;
   /** injectable so tests can stub lookup() without the packed dict */
   dictionary: Dictionary;
+  /** Optional disable gate (BUG-004): checked at the top of processText
+   *  AND per segment inside #admitSegment's admission loop. When it
+   *  returns true, no further candidates are admitted. The factory wires
+   *  it to the sticky dictionary-failure flag; tests wire it to a
+   *  mutable boolean. NOT config — internal wiring (PRD §08 surface
+   *  unchanged). */
+  isDisabled?: () => boolean;
   /** trailing-debounce window; default 300 (PRD §05 h2.29, baked) */
   debounceMs?: number;
   /** slice size in chars; default 65_536 (PRD §05 h2.30, baked) */
@@ -152,6 +159,8 @@ export class IngestPipeline {
   #yieldFn: YieldFn;
   #onAdmittedTokens?: (lines: string[][]) => void;
   #onSweepPhrases?: () => void;
+  /** Optional disable gate (BUG-004) — see IngestPipelineOptions. */
+  #isDisabled?: () => boolean;
   /** FIFO queue; entries hold nothing but { text, fromUser } and are
    *  removed before processing so text is never retained (h2.34). */
   #pending: { text: string; fromUser: boolean }[] = [];
@@ -174,6 +183,7 @@ export class IngestPipeline {
     this.#yieldFn = options.yieldFn ?? defaultYield;
     this.#onAdmittedTokens = options.onAdmittedTokens;
     this.#onSweepPhrases = options.onSweepPhrases;
+    this.#isDisabled = options.isDisabled;
   }
 
   /** pi message_end handler (PRD §05 h2.29/h2.34). Extracts text; null →
@@ -265,6 +275,7 @@ export class IngestPipeline {
    *  line, and an unterminated tail segment carries the open line into
    *  the next slice, so only a newline breaks a window (PRD §06 M2). */
   async processText(text: string, fromUser: boolean): Promise<void> {
+    if (this.#isDisabled?.()) return; // BUG-004: disabled pipeline = total no-op
     if (text.length === 0) return; // no content → no ordinal, no stats
     const ordinal = this.#store.nextOrdinal(); // ONCE per message
     const lines: string[][] = []; // finalized per-line key arrays, in order
@@ -285,6 +296,11 @@ export class IngestPipeline {
       openLine.push(
         ...this.#admitSegment(segments[segments.length - 1]!, ordinal, fromUser),
       );
+      // BUG-004: a failure observed mid-message ends the message HERE —
+      // remaining slices are skipped and the phrase hook below is NOT
+      // called: a half-admitted message's phrase windows are meaningless
+      // once the extension is dead.
+      if (this.#isDisabled?.()) return;
       await this.#yieldFn(); // keystroke path resumes between slices
     }
     if (openLine.length > 0) lines.push(openLine); // unterminated final line
@@ -315,6 +331,7 @@ export class IngestPipeline {
     segment = maskSecrets(segment);
     const keys: string[] = [];
     for (const token of tokenize(segment)) {
+      if (this.#isDisabled?.()) break; // BUG-004: dict failure mid-message
       const drafts = expandCandidates(token); // whole token first
       // Group of the whole token WHEN ADMITTED — the only state shared
       // by a token's drafts (subword clamp input, PRD §04).
