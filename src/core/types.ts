@@ -10,9 +10,10 @@
  */
 
 /** Admission rank group. PRD §04: 0 = dictionary-absent (rare-by-default),
- * 1 = rare-but-attested (q < 50), 2 = mid-frequency (50 ≤ q < 100).
- * q ≥ 100 is rejected, never stored. Band values live in score.ts
- * (MID_FREQ_THRESHOLD / REJECT_COMMON_THRESHOLD, calibrated per BUG-001). */
+ * 1 = rare-but-attested (q < 20), 2 = mid-frequency (20 ≤ q < 50).
+ * q ≥ 50 is rejected, never stored. Band values live in score.ts
+ * (MID_FREQ_THRESHOLD / REJECT_COMMON_THRESHOLD, calibrated per BUG-001
+ * and the 2026-09 Issue 1 retune that rejects "context"-class words). */
 export type RankGroup = 0 | 1 | 2;
 
 /** A word admitted to the session store. One entry per lowercase key.

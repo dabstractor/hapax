@@ -52,8 +52,9 @@ scripted zero-typing chain proof is the item-7 section of
   `src/core/store.ts`). Accepting a word via Tab arms its most-likely
   successor: at the next word start the successor is already the top
   result with ZERO typed characters — Tab inserts ONE word and re-arms, so
-  `National` → `Renewable` → `Energy` → `Laboratory` walks with nothing
-  typed between accepts. Typed characters filter the live successor list
+  `Acme` → `Zephyr` → `Noria` → `Inverter` walks with nothing
+  typed between accepts. Inserted chain words use the candidate's display
+  casing (most-recent-casing-wins), exactly like word completions. Typed characters filter the live successor list
   normally. Chaining resets on `before_agent_start` (each new user turn)
   and on disqualifying input, and arms normally in resumed sessions —
   chain-after-restore probe in `test/adversarial-typing.test.ts` (machine:
@@ -87,12 +88,12 @@ type  #l        → menu offers lwlock  → Tab inserts it
 ```
 
 Chaining is the only multi-word mechanism — and every insertion is exactly
-one word. Discuss the National Renewable Energy Laboratory, then:
+one word. Discuss the Acme Zephyr Noria Inverter product line, then:
 
 ```text
-type  natio   → menu offers National → Tab inserts "National"
+type  acme    → menu offers Acme → Tab inserts "Acme"
               → successor already the top result, ZERO typing
-              → Tab inserts "Renewable" → Tab → "energy" → Tab → "laboratory"
+              → Tab inserts "Zephyr" → Tab → "Noria" → Tab → "Inverter"
 ```
 
 Accepting a word arms its most-likely successor (`src/pi/provider.ts`):
@@ -177,8 +178,10 @@ session never admits history through a broken dictionary.
    after the trigger char, or the zero-char chain offer. There is no
    manual open gesture. This is guaranteed, not
    best-effort: ordinary prose never opens a menu — the calibrated bands
-   reject the top ~945 English words (`test/shipped-dict.test.ts`), and
-   prose-no-menu probes pin it (`test/adversarial-typing.test.ts`).
+   reject the top ~8,500 English words, including the PRD's named
+   `context` example and every everyday word in its rank band
+   (`test/shipped-dict.test.ts`), and prose-no-menu probes pin it
+   (`test/adversarial-typing.test.ts`).
 2. **Tab is never delayed by UI.** The top suggestion is computed
    synchronously on every keystroke; the popup may be debounced, but Tab
    always resolves the current top item immediately. Tab also never
@@ -261,12 +264,17 @@ commit. Builds are deterministic: same input TSVs → byte-identical binary.
 
 #### Calibration guarantee
 
-The admission bands in `src/core/score.ts` (`REJECT_COMMON_THRESHOLD = 100`,
-`MID_FREQ_THRESHOLD = 50`) are calibrated against this artifact's quantized
-rank distribution, and the calibration is load-bearing: `q ≥ 100` covers
-the top ~945 of the 48,802 entries — the top-1000 band of English words
-(`the`, `with`, `this`, `them` …), all of which admission rejects outright,
-so ordinary prose never opens a menu. Band recalibration is a separate
+The admission bands in `src/core/score.ts` (`REJECT_COMMON_THRESHOLD = 50`,
+`MID_FREQ_THRESHOLD = 20`) are calibrated against this artifact's quantized
+rank distribution, and the calibration is load-bearing: `q ≥ 50` covers
+the top ~8,501 of the 48,802 entries under this dialogue-register corpus —
+everyday prose words rank far more frequent here than in the PRD's
+web/books register, so the band must reach deep to keep the guarantee:
+`the`, `with`, `this`, `them` … and the PRD's named reject example
+`context` (q = 51), plus `data`, `code`, `lazy`, `ordinary`-class words,
+are all rejected outright, so ordinary prose never opens a menu. (The
+first BUG-001 recalibration, q ≥ 100, covered only the top ~945 ranks and
+still admitted `context` — the 2026-09 Issue-1 retune closed that gap.) Band recalibration is a separate
 concern from artifact regeneration: `node tools/calibrate-bands.mjs` prints
 the rank↔word↔q table and re-verifies the constants against the artifact,
 while `test/calibration.test.ts` (band edges, measured behavior) and

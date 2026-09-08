@@ -139,7 +139,7 @@ function storedKeys(store: CandidateStore): string[] {
 describe("maskSecrets — ingest pipeline (BUG-003 end-to-end)", () => {
   it("leaks zero candidates from the bug-report message; prose still admits", async () => {
     const { pipeline, store } = makePipeline();
-    await pipeline.processText(`aws secret: ${AWS_SECRET}\nslack: ${SLACK}`, true);
+    await pipeline.processText(`aws secret: ${AWS_SECRET}\nslack: ${SLACK}\nturbine notes`, true);
 
     const keys = storedKeys(store);
     // No candidate key draws bytes from either masked key.
@@ -152,12 +152,14 @@ describe("maskSecrets — ingest pipeline (BUG-003 end-to-end)", () => {
     expect(rankMatches(store, "wjal")).toEqual([]);
     expect(rankMatches(store, "abc")).toEqual([]);
     expect(rankMatches(store, "xoxb")).toEqual([]);
-    // Ordinary words flow through UNMASKED: "slack" (q=51) admits; the
-    // store holds exactly it — "aws" is gate-tooShort and "secret" (q=108)
-    // is rejected at ADMISSION for commonness, i.e. it reached the gate
-    // unmasked and died on a normal gate decision, not on masking.
-    expect(keys).toEqual(["slack"]);
-    expect(rankMatches(store, "sl").map((m) => m.key)).toContain("slack");
+    // Ordinary words flow through UNMASKED: "turbine" (q=26) admits; the
+    // store holds exactly it — "aws" is gate-tooShort, while "secret"
+    // (q=108) and "slack" (q=51; joined the reject band in the 2026-09
+    // Issue-1 retune) are rejected at ADMISSION for commonness, i.e. they
+    // reached the gate unmasked and died on normal gate decisions, not on
+    // masking.
+    expect(keys).toEqual(["turbine"]);
+    expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbine");
   });
 
   it("leaks zero candidates from JWT and sk-proj keys", async () => {

@@ -16,9 +16,9 @@
  *      filter legally drops ~10 top entries like 'a'/'i'/"'s");
  *   3. the BUG-001 word set with its band under the CURRENT constants;
  *   4. a threshold sweep (dictionary-rank boundary per candidate constant);
- *   5. acceptance assertions — the/with/this/them must reject, context-class
- *      must reject or land group 2, a tail word must stay group 1, and the
- *      band populations must stay near their calibration targets.
+ *   5. acceptance assertions — the/with/this/them AND the PRD's named
+ *      example 'context' must reject, a tail word must stay group 1, and
+ *      the band populations must stay near their calibration targets.
  *
  * Exit 0 = the constants in src/core/score.ts still satisfy the contract
  * (run it after any future retune or artifact regen). Exit 1 = drift.
@@ -124,7 +124,7 @@ for (const w of [
 
 // ── 4. Threshold sweep — dictionary-rank boundary per candidate constant ───
 console.log(`\nthreshold sweep (max dictionary rank covered by q ≥ T):`);
-for (let T = 40; T <= 255; T += 5) {
+for (let T = 15; T <= 255; T += 5) {
   const boundary = popReject(T); // q = quant(rank) is non-increasing, so the
   // population of q ≥ T IS the boundary rank (0-based count of covered ranks).
   console.log(
@@ -143,28 +143,32 @@ console.log(`\nacceptance (constants vs shipped artifact):`);
 for (const w of ["the", "with", "this", "them"]) {
   check(admit(draft(w), dict) === "reject", `admit('${w}') rejects`);
 }
-for (const w of ["context", "because", "would"]) {
+// The 2026-09 retune (validation Issue 1) tightened REJECT to 50 exactly
+// so the PRD's named reject example 'context' (q=51) can no longer open
+// menus — along with its everyday-prose band (jumps/lazy/ordinary/data/
+// code, q 51–91). Assert rejection, not group-2 tolerance.
+for (const w of ["context", "because", "would", "data", "code"]) {
   const r = admit(draft(w), dict);
-  check(r === "reject" || r === 2, `admit('${w}') rejects or lands group 2 (${band(r)})`);
+  check(r === "reject", `admit('${w}') rejects (${band(r)})`);
 }
 check(
   admit(draft("hapax"), dict) === 0,
   "dictionary-absent word stays group 0",
 );
-const tailWord = rankWord[30000];
+const tailWord = rankWord[40000];
 check(
   admit(draft(tailWord), dict) === 1,
-  `tail word '${tailWord}' (rank 30000) stays group 1`,
+  `tail word '${tailWord}' (rank 40000) stays group 1`,
 );
 const rejectPop = popReject(REJECT_COMMON_THRESHOLD);
 check(
-  rejectPop >= 800 && rejectPop <= 1300,
-  `reject band covers ~top 1,000 ranks (measured ${rejectPop})`,
+  rejectPop >= 7000 && rejectPop <= 10000,
+  `reject band covers ~top 8,500 ranks (measured ${rejectPop})`,
 );
 const group2Pop = popBand2(MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD);
 check(
-  group2Pop >= 3000 && group2Pop <= 15000,
-  `group-2 band covers the next few thousand ranks (measured ${group2Pop})`,
+  group2Pop >= 18000 && group2Pop <= 28000,
+  `group-2 band covers the mid tail (measured ${group2Pop})`,
 );
 let monotone = true;
 for (let i = 1; i < 500; i++) {

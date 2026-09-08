@@ -100,7 +100,7 @@ describe("Probe A — realistic secrets never become candidates (BUG-003)", () =
   beforeAll(async () => {
     const pipeline = makePipeline((store = new CandidateStore()));
     // The PRD's exact repro text, verbatim.
-    await pipeline.processText(`aws secret: ${AWS_SECRET}\nslack: ${SLACK}`, true);
+    await pipeline.processText(`aws secret: ${AWS_SECRET}\nslack: ${SLACK}\nturbine notes`, true);
     await pipeline.processText(`token: ${JWT} ok`, true);
     await pipeline.processText(`token: ${JWT_DOZJG} ok`, true);
     await pipeline.processText(`key: ${OPENAI} ok`, true);
@@ -141,10 +141,12 @@ describe("Probe A — realistic secrets never become candidates (BUG-003)", () =
   });
 
   it("masking is surgical: ordinary prose words of the repro message still admit", () => {
-    // "slack" (q=51) admits; "secret" (q=108) is rejected at ADMISSION for
-    // commonness and "aws" is gate-tooShort — both unmasked gate deaths,
-    // never masking damage (shipped-dict facts per test/mask-secrets.test.ts).
-    expect(rankMatches(store, "sl").map((m) => m.key)).toContain("slack");
+    // "turbine" (q=26) admits; "secret" (q=108) and "slack" (q=51; joined
+    // the reject band in the 2026-09 Issue-1 retune) are rejected at
+    // ADMISSION for commonness and "aws" is gate-tooShort — all unmasked
+    // gate deaths, never masking damage (shipped-dict facts per
+    // test/mask-secrets.test.ts).
+    expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbine");
   });
 });
 

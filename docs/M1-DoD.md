@@ -329,6 +329,19 @@ $ npx vitest --run test/provider-live.test.ts -t "forced single-item returns"
 
 ### Item 7 — integration: `National` → `Renewable` → `Energy` → `Laboratory` with zero typed chars: PASS
 
+> **CORRECTION (2026-09-08, post-validation):** the audit record below is
+> historical and cites the since-rethemeed fixture. The 2026-09 Issue-1
+> band retune (reject q ≥ 50) moved the National/renewable/energy/
+> laboratory walk words into the reject band on this dialogue-register
+> corpus, so the journey now runs on the band-immune
+> `test/fixtures/sessions/zephyr-chain.jsonl` walk `Acme → Zephyr →
+> Noria → Inverter` (same ×4 adjacency construction, same machine,
+> same assertions — plus chain items now insert candidate DISPLAY casing
+> per Issue 2). The PRD §09 contract quoted above is unchanged; the
+> current evidence lives in `test/acceptance.test.ts` item 7,
+> `test/chain.test.ts`, `test/chaining-gating.test.ts`, and
+> `test/fixtures/sessions/RESULTS.md` (item 7, corrected).
+
 ```
 $ npx vitest --run test/chain.test.ts -t "replayed-store arming end-to-end"
 ```

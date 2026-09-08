@@ -161,40 +161,54 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     },
   );
 
-  it("thin/firs: measured mid-band and rejected-prefix behavior, pinned", async () => {
-    // MEASURED against the shipped artifact (bugfix recalibration):
-    //   lookup('thin')  = 76  → mid band (MID ≤ q < REJECT) → ADMITS
+  it("posts/thin/firs: measured mid-band and rejected-prefix behavior, pinned", async () => {
+    // MEASURED against the shipped artifact (2026-09 Issue-1 retune):
+    //   lookup('posts') = 47  → mid band (MID ≤ q < REJECT) → ADMITS
+    //   lookup('thin')  = 76  → ≥ REJECT_COMMON_THRESHOLD    → rejected
     //   lookup('first') = 144 → ≥ REJECT_COMMON_THRESHOLD    → rejected
-    // 'thin' occurs in prose.jsonl ("This one gets thin light") and is a
-    // legitimate mid-frequency completion: mid-band words are SUPPOSED to
-    // open menus — only the common band carries the no-menu contract.
+    // 'posts' occurs in prose.jsonl and is a legitimate mid-frequency
+    // completion: mid-band words are SUPPOSED to open menus — only the
+    // common band carries the no-menu contract. ('thin' opened menus
+    // under the pre-retune bands at q=76; the retune moved the reject
+    // boundary to q ≥ 50 precisely so that everyday words like it — and
+    // the PRD's named example 'context' at q=51 — never do.)
     // Band membership is asserted relative to the IMPORTED constants, so
-    // this pin survives band retunes: it says "thin sits in the mid
-    // band", not "thin equals any particular value".
-    const thinQ = dict.lookup("thin");
-    expect(thinQ, "shipped dict lost 'thin'").not.toBeNull();
-    expect(thinQ!).toBeGreaterThanOrEqual(MID_FREQ_THRESHOLD);
-    expect(thinQ!).toBeLessThan(REJECT_COMMON_THRESHOLD);
-    expect(rankMatches(store, "thin").map((m) => m.display)).toEqual(["thin"]);
+    // this pin survives band retunes: it says "posts sits in the mid
+    // band", not "posts equals any particular value".
+    const postsQ = dict.lookup("posts");
+    expect(postsQ, "shipped dict lost 'posts'").not.toBeNull();
+    expect(postsQ!).toBeGreaterThanOrEqual(MID_FREQ_THRESHOLD);
+    expect(postsQ!).toBeLessThan(REJECT_COMMON_THRESHOLD);
+    expect(rankMatches(store, "posts").map((m) => m.display)).toEqual(["posts"]);
 
     // Provider path pins the same measured behavior: a single-item menu.
-    const thinCurrent = mockCurrent(SENTINEL);
-    const thinProvider = createHapaxProvider(store, cfg(), thinCurrent);
-    const menu = await thinProvider.getSuggestions(["thin"], 0, 4, opts());
+    const postsCurrent = mockCurrent(SENTINEL);
+    const postsProvider = createHapaxProvider(store, cfg(), postsCurrent);
+    const menu = await postsProvider.getSuggestions(["posts"], 0, 5, opts());
     expect(menu).not.toBe(SENTINEL); // menu, not delegation
-    expect(menu!.items.map((i) => i.value)).toEqual(["thin"]);
-    expect(menu!.prefix).toBe("thin");
-    expect(thinProvider.__hapaxLive()).not.toBeNull();
+    expect(menu!.items.map((i) => i.value)).toEqual(["posts"]);
+    expect(menu!.prefix).toBe("posts");
+    expect(postsProvider.__hapaxLive()).not.toBeNull();
 
-    // 'firs': 'first' is a top-corpus word (measured q=144, in the REJECT
-    // band), so it was rejected at admission and can NEVER appear as an
-    // item — the PRD permits 'first'-adjacent suggestions only if 'first'
-    // itself is not rejected, and it is. No other stored prose word starts
-    // with 'firs', so the fragment has zero candidates → delegation.
+    // 'thin' and 'firs' are top-corpus words (measured q=76 and q=144,
+    // both in the REJECT band), so they were rejected at admission and
+    // can NEVER appear as items — the PRD permits 'thin'-/'first'-
+    // adjacent suggestions only if the words themselves are not
+    // rejected, and they are. No other stored prose word starts with
+    // 'thin'/'firs', so the fragments have zero candidates → delegation.
+    const thinQ = dict.lookup("thin");
+    expect(thinQ, "shipped dict lost 'thin' (measured in the REJECT band)").not.toBeNull();
+    expect(thinQ!).toBeGreaterThanOrEqual(REJECT_COMMON_THRESHOLD);
     const firstQ = dict.lookup("first");
     expect(firstQ, "shipped dict lost 'first' (measured in the REJECT band)").not.toBeNull();
     expect(firstQ!).toBeGreaterThanOrEqual(REJECT_COMMON_THRESHOLD);
+    expect(rankMatches(store, "thin")).toEqual([]);
     expect(rankMatches(store, "firs")).toEqual([]);
+    const thinCurrent = mockCurrent(SENTINEL);
+    const thinProvider = createHapaxProvider(store, cfg(), thinCurrent);
+    const thinResult = await thinProvider.getSuggestions(["thin"], 0, 4, opts());
+    expect(thinResult).toBe(SENTINEL); // delegated — no menu at all
+    expect(thinProvider.__hapaxLive()).toBeNull();
     const firsCurrent = mockCurrent(SENTINEL);
     const firsProvider = createHapaxProvider(store, cfg(), firsCurrent);
     const firsResult = await firsProvider.getSuggestions(["firs"], 0, 4, opts());
@@ -202,21 +216,22 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     expect(firsProvider.__hapaxLive()).toBeNull();
   });
 
-  it("positive control: garde → garden opens a real menu (store is alive)", async () => {
+  it("positive control: post → posts opens a real menu (store is alive)", async () => {
     // Guards this file against vacuous no-menu results: the SAME store
     // DOES answer fragments of admitted mid/rare words through the same
-    // provider path. 'garden' (measured q=86, mid band) occurs in
-    // prose.jsonl. (The former control 'wate'→'Water' is obsolete under
-    // the recalibrated bands: measured water q=121 lands in the REJECT
-    // band, so 'wate' now yields [] — rejection there is CORRECT, not a
-    // dead store. This is exactly the acceptance suite's canary.)
-    expect(rankMatches(store, "garde").map((m) => m.display)).toEqual(["garden"]);
+    // provider path. 'posts' (measured q=47, mid band) occurs in
+    // prose.jsonl. (The former controls 'wate'→'Water' and 'garde'→
+    // 'garden' are obsolete under the 2026-09-recalibrated bands: measured
+    // water q=121 and garden q=86 land in the REJECT band, so 'wate' and
+    // 'garde' now yield [] — rejection there is CORRECT, not a dead
+    // store. This is exactly the acceptance suite's canary.)
+    expect(rankMatches(store, "post").map((m) => m.display)).toEqual(["posts"]);
     const current = mockCurrent(SENTINEL);
     const provider = createHapaxProvider(store, cfg(), current);
-    const result = await provider.getSuggestions(["garde"], 0, 5, opts());
+    const result = await provider.getSuggestions(["post"], 0, 4, opts());
     expect(result).not.toBe(SENTINEL); // menu, not delegation
-    expect(result!.items.map((i) => i.value)).toEqual(["garden"]);
-    expect(result!.prefix).toBe("garde");
+    expect(result!.items.map((i) => i.value)).toEqual(["posts"]);
+    expect(result!.prefix).toBe("post");
     expect(provider.__hapaxLive()).not.toBeNull();
   });
 });

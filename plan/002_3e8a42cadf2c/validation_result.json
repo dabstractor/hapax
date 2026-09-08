@@ -1,0 +1,5 @@
+{
+  "hasIssues": true,
+  "issueCount": 4,
+  "summary": "Core engine verified end-to-end (636/637 tests, perf gates, deterministic dict rebuild, secrets/no-hijack/chain journeys all pass), but 4 issues found: 'context' and ~7.5k mid-band words are admitted by the shipped dictionary so ordinary prose opens menus (violates the PRD/README no-menu guarantee); chained completions insert lowercase instead of display casing; stale phrase-era evidence in RESULTS.md item 7; and 800 KB ingest runs ~3x the PRD <60 ms budget with the CI bound relaxed to 3.5x."
+}

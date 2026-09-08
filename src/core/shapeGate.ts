@@ -442,6 +442,32 @@ const SECRET_WINDOW_RES: readonly RegExp[] = [
   /[0-9a-zA-Z/+]{40,}/g, // AWS secret bare run — greedy catch-all, LAST
 ];
 
+/** Literal necessary-condition anchors for SECRET_WINDOW_RES (index-aligned):
+ *  for every anchored rule, any match MUST contain the anchor literal — so
+ *  when `segment.indexOf(anchor)` misses for all of a rule's anchors the
+ *  regex pass is provably a no-op and is skipped. This is a pure fast path
+ *  (same maskings, same claim order); rules with no usable literal (the
+ *  bare 40-char alnum catch-all, index 9) always run. Anchors are
+ *  case-sensitive exactly like the regexes themselves. Without the
+ *  prefilter, ten full-string regex scans per segment dominated the ingest
+ *  profile (2026-09 Issue 4: ~15 ms of an ~175 ms 800 KB ingest); with it,
+ *  secret-free segments — the overwhelming majority — pay one memchr-speed
+ *  indexOf per anchor.
+ */
+const SECRET_WINDOW_ANCHORS: readonly (readonly string[])[] = [
+  // 1. AWS access key IDs — every alternative prefix, any one suffices
+  ["A3T", "AKIA", "AGPA", "AIDA", "AROA", "AIPA", "ANPA", "ANVA", "ASIA"],
+  ["ghp_"], // 2. GitHub classic PAT
+  ["github_pat_"], // 3. GitHub fine-grained PAT
+  ["AIza"], // 4. Google API key
+  ["xox"], // 5. Slack tokens
+  ["T3BlbkFJ"], // 6. OpenAI legacy (the invariant marker mid-pattern)
+  ["sk-"], // 7. OpenAI modern
+  ["ey"], // 8. JWT strict (weak anchor — still memchr-cheap)
+  ["eyJ"], // 9. JWT loose three-segment
+  [], // 10. AWS secret bare run — no literal anchor: always runs
+];
+
 /**
  * Blank structured secret windows in one raw segment (BUG-003 layer 1).
  *
@@ -451,6 +477,11 @@ const SECRET_WINDOW_RES: readonly RegExp[] = [
  * The result feeds tokenize() unchanged otherwise; ordinary prose, URLs,
  * and short identifiers pass through byte-identical.
  *
+ * Each anchored rule first probes its literal anchors (see
+ * SECRET_WINDOW_ANCHORS) and is skipped when none is present — the regex
+ * could never match, so the output is byte-identical to the unfiltered
+ * scan (pinned by the full mask-secrets suite).
+ *
  * Pure: one replace() per rule over precompiled module-scope regexes
  * (String.replace resets /g lastIndex — no shared mutable state), no
  * per-character scanning. Wired at IngestPipeline.#admitSegment — the
@@ -458,8 +489,14 @@ const SECRET_WINDOW_RES: readonly RegExp[] = [
  * P1.M2.T2.S1 (token-level residue layer) and P1.M5.T1.S2 (e2e probes).
  */
 export function maskSecrets(segment: string): string {
-  for (const re of SECRET_WINDOW_RES) {
-    segment = segment.replace(re, (m) => " ".repeat(m.length));
+  for (let i = 0; i < SECRET_WINDOW_RES.length; i++) {
+    const anchors = SECRET_WINDOW_ANCHORS[i]!;
+    let present = anchors.length === 0; // unanchored rules always run
+    for (let a = 0; a < anchors.length && !present; a++) {
+      if (segment.indexOf(anchors[a]!) !== -1) present = true;
+    }
+    if (!present) continue;
+    segment = segment.replace(SECRET_WINDOW_RES[i]!, (m) => " ".repeat(m.length));
   }
   return segment;
 }

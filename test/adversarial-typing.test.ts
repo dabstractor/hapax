@@ -17,7 +17,7 @@
  *     prose.jsonl replayed through a real IngestPipeline with the shipped
  *     dict; REJECT-band common words must DELEGATE (exact sentinel
  *     identity, empty live cache); the mid/reject boundary is pinned per
- *     band (thin admits exactly ['thin'], firs delegates) using the
+ *     band (posts admits exactly ['posts'], firs delegates) using the
  *     IMPORTED band constants — never hard-coded numbers.
  *   Probe B — Tab corruption     → BUG-002 (PRD §h2.2 / §h3.1): the full
  *     ze→zep editor-sim through createDisplayProvider under fake timers;
@@ -26,12 +26,12 @@
  *     explicit allowlist — 'zzendesk'-class corruption is structurally
  *     impossible only while every response prefix stays anchor-safe.
  *   Probe C — chain post-restore → BUG-005 (PRD §h2.2 / §h3.4): full
- *     nrel.jsonl replay via restoreFromHistory (the /resume scenario),
- *     then the bare word 'National' (present thanks to P1.M4.T2.S1's
- *     suppression exemption) is accepted via the provider's real
- *     applyCompletion — whose arming side effect (P1.M4.T2.S2) drives the
- *     PRD §09 M2 item 7 sequence: renewable → energy → laboratory, each
- *     hop asserted individually so a failure names the broken link.
+ *     zephyr-chain.jsonl replay via restoreFromHistory (the /resume
+ *     scenario), then the bare word 'Acme' (present thanks to
+ *     P1.M4.T2.S1's suppression exemption) is accepted via the provider's
+ *     real applyCompletion — whose arming side effect (P1.M4.T2.S2)
+ *     drives the PRD §09 M2 item 7 sequence: Zephyr → Noria → Inverter,
+ *     each hop asserted individually so a failure names the broken link.
  *
  * The chain-arming route (accept a successor item) and the ingest-path
  * probes (secrets, bad-dict restore, demotion cadence) are deliberately
@@ -88,7 +88,7 @@ import {
 } from "./helpers/session-fixture.js";
 
 const PROSE = "test/fixtures/sessions/prose.jsonl";
-const NREL = "test/fixtures/sessions/nrel.jsonl";
+const NREL = "test/fixtures/sessions/zephyr-chain.jsonl";
 
 // ── harness (lifted whole from test/calibration.test.ts and
 // test/provider-display.test.ts — those files are built to be lifted) ───────
@@ -248,7 +248,7 @@ const PROSE_PROBES: readonly ProseProbe[] = [
       expected: "delegate",
     }),
   ),
-  { fragment: "thin", full: "thin", title: "menu ['thin'] (mid band)", expected: ["thin"] },
+  { fragment: "posts", full: "posts", title: "menu ['posts'] (mid band)", expected: ["posts"] },
   {
     fragment: "firs",
     full: "first",
@@ -323,17 +323,19 @@ describe("adversarial Probe A — prose no-menu (BUG-001)", () => {
     }
   });
 
-  it("positive control: garde → garden opens a real menu on the SAME store", async () => {
+  it("positive control: post → posts opens a real menu on the SAME store", async () => {
     // Guards this file against vacuous no-menu results: the SAME store
     // DOES answer fragments of admitted mid-band words through the same
-    // provider path ('garden' occurs in prose.jsonl — calibration control).
-    expect(rankMatches(store, "garde").map((m) => m.display)).toEqual(["garden"]);
+    // provider path ('posts' occurs in prose.jsonl — calibration control;
+    // 'garden', the former control, joined the reject band in the
+    // 2026-09 Issue-1 retune).
+    expect(rankMatches(store, "post").map((m) => m.display)).toEqual(["posts"]);
     const current = mockCurrent(SENTINEL);
     const provider = createHapaxProvider(store, cfg(), current);
-    const result = await provider.getSuggestions(["garde"], 0, 5, opts());
+    const result = await provider.getSuggestions(["post"], 0, 4, opts());
     expect(result).not.toBe(SENTINEL);
-    expect(result!.items.map((i) => i.value)).toEqual(["garden"]);
-    expect(result!.prefix).toBe("garde");
+    expect(result!.items.map((i) => i.value)).toEqual(["posts"]);
+    expect(result!.prefix).toBe("post");
     expect(provider.__hapaxLive()).not.toBeNull();
   });
 });
@@ -427,12 +429,12 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
   let store: CandidateStore;
 
   beforeAll(async () => {
-    // FULL nrel replay — the /resume scenario — through a REAL pipeline
-    // with the SHIPPED dict and the bigram hook wired exactly like
-    // src/pi/index.ts's session_start: successor index complete
-    // (store.topSuccessors: national→renewable/wind — the old
+    // FULL zephyr-chain replay — the /resume scenario — through a REAL
+    // pipeline with the SHIPPED dict and the bigram hook wired exactly
+    // like src/pi/index.ts's session_start: successor index complete
+    // (store.topSuccessors: acme→zephyr/turbine — the old
     // "license" entry was a gate-rejected-"lab" bridge, removed by
-    // P1.M1.T3.S2's strict adjacency — renewable→energy, energy→laboratory).
+    // P1.M1.T3.S2's strict adjacency — zephyr→noria, noria→inverter).
     const entries = parseSessionFixture(NREL);
     const s = new CandidateStore();
     const pipeline = new IngestPipeline({
@@ -444,28 +446,28 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     await replay(pipeline, entries);
   }, 60_000);
 
-  it("replay is live and the bare word 'National' is co-present with its chain successors (P1.M4.T2.S1 exemption)", async () => {
-    expect(store.size, "nrel replay admitted nothing — the probes below would be vacuous").toBeGreaterThan(0);
+  it("replay is live and the bare word 'Acme' is co-present with its chain successors (P1.M4.T2.S1 exemption)", async () => {
+    expect(store.size, "fixture replay admitted nothing — the probes below would be vacuous").toBeGreaterThan(0);
 
     const current = mockCurrent();
     const chain = createChainMachine();
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
-    const menu = await provider.getSuggestions(["natio"], 0, 5, opts());
-    expect(menu, "'natio' must open a menu in the resumed session").not.toBeNull();
-    const national = menu!.items.find((i) => i.value === "National");
+    const menu = await provider.getSuggestions(["acme"], 0, 4, opts());
+    expect(menu, "'acme' must open a menu in the resumed session").not.toBeNull();
+    const acme = menu!.items.find((i) => i.value === "Acme");
     expect(
-      national,
-      "bare 'National' missing from the 'natio' menu — the BUG-005 constituent-suppression exemption regressed",
+      acme,
+      "bare 'Acme' missing from the 'acme' menu — the BUG-005 constituent-suppression exemption regressed",
     ).toBeDefined();
     expect(
-      national!.description,
+      acme!.description,
       "bare word must carry word-provenance ('session xN'), not chain markers",
     ).toMatch(/^session x\d+$/);
     expect(chain.state(), "suggestions alone must never arm the chain").toBeNull();
   });
 
-  it("§09 M2 item 7 post-restore: bare-word accept arms 'national' → renewable → energy → laboratory", async () => {
+  it("§09 M2 item 7 post-restore: bare-word accept arms 'acme' → Zephyr → Noria → Inverter", async () => {
     const current = editingCurrent(); // pi-shaped persistent buffer
     const chain = createChainMachine();
     const provider = createHapaxProvider(store, cfg(), current, chain);
@@ -473,21 +475,22 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     // Hop 0 — accept the BARE word from a live menu, in the SAME query
     // cycle (liveKeyByValue rebuilds on every query). The provider's real
     // applyCompletion arms the chain as a side effect (P1.M4.T2.S2).
-    const menu = await provider.getSuggestions(["natio"], 0, 5, opts());
-    const national = menu!.items.find((i) => i.value === "National")!;
-    provider.applyCompletion(["natio"], 0, 5, national, "natio");
-    expect(chain.state(), "hop 0: accepting bare 'National' must arm 'national'").toEqual({
-      word: "national",
+    const menu = await provider.getSuggestions(["acme"], 0, 4, opts());
+    const acme = menu!.items.find((i) => i.value === "Acme")!;
+    provider.applyCompletion(["acme"], 0, 4, acme, "acme");
+    expect(chain.state(), "hop 0: accepting bare 'Acme' must arm 'acme'").toEqual({
+      word: "acme",
     });
     expect(current.state.lines, "hop 0: the editor must have inserted the bare word").toEqual([
-      "National",
+      "Acme",
     ]);
 
     // Hop 1 — the user types the separating space; the word-start offer
-    // (plan 002 redesign) serves topSuccessors('national') at prefix ""
-    // (zero typed characters of the NEXT word).
-    current.state.lines = ["National "];
-    current.state.cursorCol = 9;
+    // (plan 002 redesign) serves topSuccessors('acme') at prefix ""
+    // (zero typed characters of the NEXT word) in candidate display
+    // casing (PRD §07; Issue-2 fix).
+    current.state.lines = ["Acme "];
+    current.state.cursorCol = 5;
     const offer1 = await provider.getSuggestions(
       current.state.lines,
       0,
@@ -495,9 +498,9 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       opts(),
     );
     expect(offer1!.prefix, "hop 1: word-start offer must answer with zero typed chars").toBe("");
-    expect(offer1!.items.map((i) => i.label), "hop 1: 'national' successors (count-desc)").toEqual([
-      "renewable",
-      "wind",
+    expect(offer1!.items.map((i) => i.label), "hop 1: 'acme' successors (count-desc)").toEqual([
+      "Zephyr",
+      "turbine",
     ]);
     provider.applyCompletion(
       current.state.lines,
@@ -506,17 +509,17 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       offer1!.items[0]!,
       offer1!.prefix,
     );
-    expect(chain.state(), "hop 1: Tab-accepting 'renewable' must re-arm to it").toEqual({
-      word: "renewable",
+    expect(chain.state(), "hop 1: Tab-accepting 'Zephyr' must re-arm to it").toEqual({
+      word: "zephyr",
     });
-    expect(current.state.lines, "hop 1: buffer after accepting 'renewable'").toEqual([
-      "National renewable",
+    expect(current.state.lines, "hop 1: buffer after accepting 'Zephyr'").toEqual([
+      "Acme Zephyr",
     ]);
 
-    // Hop 2 — space again, then 'energy' offered as renewable's successor
+    // Hop 2 — space again, then 'Noria' offered as zephyr's successor
     // and accepted.
-    current.state.lines = ["National renewable "];
-    current.state.cursorCol = 19;
+    current.state.lines = ["Acme Zephyr "];
+    current.state.cursorCol = 12;
     const offer2 = await provider.getSuggestions(
       current.state.lines,
       0,
@@ -524,7 +527,7 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       opts(),
     );
     expect(offer2!.prefix).toBe("");
-    expect(offer2!.items.map((i) => i.label), "hop 2: 'renewable' successors").toEqual(["energy"]);
+    expect(offer2!.items.map((i) => i.label), "hop 2: 'zephyr' successors").toEqual(["Noria"]);
     provider.applyCompletion(
       current.state.lines,
       0,
@@ -532,16 +535,16 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       offer2!.items[0]!,
       offer2!.prefix,
     );
-    expect(chain.state(), "hop 2: Tab-accepting 'energy' must re-arm to it").toEqual({
-      word: "energy",
+    expect(chain.state(), "hop 2: Tab-accepting 'Noria' must re-arm to it").toEqual({
+      word: "noria",
     });
-    expect(current.state.lines).toEqual(["National renewable energy"]);
+    expect(current.state.lines).toEqual(["Acme Zephyr Noria"]);
 
-    // Hop 3 — space again, then 'laboratory' offered as energy's
+    // Hop 3 — space again, then 'Inverter' offered as noria's
     // successor: the exact link the original bug hunt found dead in
     // resumed sessions (BUG-005).
-    current.state.lines = ["National renewable energy "];
-    current.state.cursorCol = 26;
+    current.state.lines = ["Acme Zephyr Noria "];
+    current.state.cursorCol = 18;
     const offer3 = await provider.getSuggestions(
       current.state.lines,
       0,
@@ -549,8 +552,8 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       opts(),
     );
     expect(offer3!.prefix).toBe("");
-    expect(offer3!.items.map((i) => i.label), "hop 3: 'energy' successors").toEqual([
-      "laboratory",
+    expect(offer3!.items.map((i) => i.label), "hop 3: 'noria' successors").toEqual([
+      "Inverter",
     ]);
     provider.applyCompletion(
       current.state.lines,
@@ -559,9 +562,9 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       offer3!.items[0]!,
       offer3!.prefix,
     );
-    expect(chain.state(), "hop 3: Tab-accepting 'laboratory' must re-arm to it").toEqual({
-      word: "laboratory",
+    expect(chain.state(), "hop 3: Tab-accepting 'Inverter' must re-arm to it").toEqual({
+      word: "inverter",
     });
-    expect(current.state.lines).toEqual(["National renewable energy laboratory"]);
+    expect(current.state.lines).toEqual(["Acme Zephyr Noria Inverter"]);
   });
 });

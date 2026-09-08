@@ -581,8 +581,8 @@ describe("chain machine — armed successor chaining (PRD §07 h2.43, plan 002 S
 });
 
 // ── NREL replay harness (real ingest; the PRD §09 item-7 route) ────────
-// Mirrors acceptance.test.ts's item-7 helpers (makeNrelPipeline /
-// replayNrel / editingCurrent): the REAL ingest pipeline with the bigram
+// Mirrors acceptance.test.ts's item-7 helpers (makeChainPipeline /
+// replayChain / editingCurrent): the REAL ingest pipeline with the bigram
 // hook wired exactly like src/pi/index.ts, the SHIPPED dictionary, and a
 // pi-shaped editing current provider so ONE buffer flows through accepts
 // like the editor would. Local copies on purpose — small test-plumbing
@@ -595,7 +595,7 @@ const FIXTURES = "test/fixtures/sessions";
  *  is recordBigramRuns — the ONLY bigram path (phrase upserts are gone
  *  since P1.M1.T2). The enableChaining flag gates the whole chain layer
  *  (P1.M3.T1.S2). */
-function makeNrelPipeline(enableChaining: boolean): { store: CandidateStore; pipeline: IngestPipeline } {
+function makeChainPipeline(enableChaining: boolean): { store: CandidateStore; pipeline: IngestPipeline } {
   const store = new CandidateStore();
   const pipeline = new IngestPipeline({
     store,
@@ -612,7 +612,7 @@ function makeNrelPipeline(enableChaining: boolean): { store: CandidateStore; pip
 
 /** Replay pre-parsed fixture entries through restoreFromHistory on the
  *  GIVEN pipeline (same completion-tracking wrapper as acceptance). */
-async function replayNrel(
+async function replayChain(
   pipeline: IngestPipeline,
   entries: ReturnType<typeof parseSessionFixture>,
 ): Promise<void> {
@@ -675,43 +675,45 @@ function editingCurrent(initial: string[] = ["natio"], cursorCol = 5) {
   };
 }
 
-describe("replayed-store arming end-to-end (real ingest pipeline, NREL fixture — the PRD §09 item-7 route, h2.54)", () => {
-  it("bare-word arming end-to-end: 'National' in menu → accept → armed → word-start offer yields renewable → energy", async () => {
-    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
-    const { store, pipeline } = makeNrelPipeline(true);
+describe("replayed-store arming end-to-end (real ingest pipeline, zephyr-chain fixture — the PRD §09 item-7 route, h2.54)", () => {
+  it("bare-word arming end-to-end: 'Acme' in menu → accept → armed → word-start offer yields Zephyr → Noria", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
+    const { store, pipeline } = makeChainPipeline(true);
     const current = editingCurrent();
     const chain = createChainMachine();
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
-    await replayNrel(pipeline, entries);
+    await replayChain(pipeline, entries);
 
     // The bare word is present in the word-only menu (whole-word
-    // acceptance arms the chain — h2.43), sorting last among the word
-    // candidates.
-    const menu = await suggest(provider, ["natio"], 0, 5);
-    const nationalItem = menu!.items[menu!.items.length - 1]!;
-    expect(nationalItem.value).toBe("National");
-    expect(nationalItem.description).toMatch(/^session x\d+$/);
+    // acceptance arms the chain — h2.43), topping the candidates:
+    // dictionary-absent "acme" (group 0, rarity bonus) outranks its
+    // q≤26 walk partners (group 2).
+    const menu = await suggest(provider, ["acme"], 0, 4);
+    const acmeItem = menu!.items[0]!;
+    expect(acmeItem.value).toBe("Acme");
+    expect(acmeItem.description).toMatch(/^session x\d+$/);
 
-    provider.applyCompletion(["natio"], 0, 5, nationalItem, "natio");
-    expect(chain.state()).toEqual({ word: "national" });
-    expect(current.state.lines).toEqual(["National"]);
+    provider.applyCompletion(["acme"], 0, 4, acmeItem, "acme");
+    expect(chain.state()).toEqual({ word: "acme" });
+    expect(current.state.lines).toEqual(["Acme"]);
 
     // The user types the separating space — the cursor is now at the
     // empty next word with ZERO typed chars, where the redesigned
-    // word-start offer (plan 002) serves topSuccessors('national') at
-    // prefix "" with BARE values.
+    // word-start offer (plan 002) serves topSuccessors('acme') at
+    // prefix "" with BARE values in the candidate display casing
+    // (PRD §07; the 2026-09 Issue-2 fix).
     current.typeSpace();
-    expect(current.state.lines).toEqual(["National "]);
+    expect(current.state.lines).toEqual(["Acme "]);
     const offer = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => [i.label, i.value])).toEqual([
-      ["renewable", "renewable"],
-      ["wind", "wind"], // license dropped: was a gate-rejected-"lab" bridge (P1.M1.T3.S2)
+      ["Zephyr", "Zephyr"],
+      ["turbine", "turbine"], // license dropped: was a gate-rejected-"lab" bridge (P1.M1.T3.S2)
     ]);
     expectSingleWordItems(offer?.items ?? []);
 
-    // Tab → armed(renewable); pi-tui splices the BARE value verbatim at
+    // Tab → armed(zephyr); pi-tui splices the BARE value verbatim at
     // the cursor (prefix ""), so the user's space stays the single
     // separator — no double space.
     provider.applyCompletion(
@@ -721,36 +723,36 @@ describe("replayed-store arming end-to-end (real ingest pipeline, NREL fixture �
       offer!.items[0]!,
       offer!.prefix,
     );
-    expect(chain.state()).toEqual({ word: "renewable" });
-    expect(current.state.lines).toEqual(["National renewable"]); // ONE space
+    expect(chain.state()).toEqual({ word: "zephyr" });
+    expect(current.state.lines).toEqual(["Acme Zephyr"]); // ONE space
 
     // Space again → the chain continues at the next word start:
-    // renewable's successors, still bare, still one word each.
+    // zephyr's successors, still bare, still one word each.
     current.typeSpace();
-    expect(current.state.lines).toEqual(["National renewable "]);
+    expect(current.state.lines).toEqual(["Acme Zephyr "]);
     const offer2 = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
     expect(offer2?.prefix).toBe("");
-    expect(offer2?.items.map((i) => i.label)).toEqual(["energy"]);
+    expect(offer2?.items.map((i) => i.label)).toEqual(["Noria"]);
     expectSingleWordItems(offer2?.items ?? []);
   });
 
   it("config gate inertness: enableChaining:false never arms and never offers", async () => {
-    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
     // Successors ARE present (hook on) so the case proves the CONFIG
     // gate alone blocks the chain layer — not a missing index.
-    const { store, pipeline } = makeNrelPipeline(true);
+    const { store, pipeline } = makeChainPipeline(true);
     const current = editingCurrent();
     const chain = createChainMachine();
     const provider = createHapaxProvider(store, cfg({ enableChaining: false }), current, chain);
 
-    await replayNrel(pipeline, entries);
+    await replayChain(pipeline, entries);
 
     // (i) Arming is gated: accepting a live word item must NOT arm
     // (word completion itself still works — the flag disables the chain
     // layer, not hapax's word menu).
-    const menu = await suggest(provider, ["natio"], 0, 5);
-    expect(menu?.items.map((i) => i.value)).toContain("National");
-    provider.applyCompletion(["natio"], 0, 5, menu!.items[menu!.items.length - 1]!, "natio");
+    const menu = await suggest(provider, ["acme"], 0, 4);
+    expect(menu?.items.map((i) => i.value)).toContain("Acme");
+    provider.applyCompletion(["acme"], 0, 4, menu!.items[0]!, "acme");
     expect(chain.state()).toBeNull();
 
     // (ii) Even a machine armed by ANY means never offers: the armed
@@ -758,12 +760,12 @@ describe("replayed-store arming end-to-end (real ingest pipeline, NREL fixture �
     // extractMatchState (null there) → pi's stock delegate, no chain
     // item ever published. The machine's own state is untouched — the
     // gate lives in the provider.
-    chain.arm("national");
+    chain.arm("acme");
     const options = opts();
-    const lines = ["National "];
-    expect(await provider.getSuggestions(lines, 0, 9, options)).toBeNull();
+    const lines = ["Acme "];
+    expect(await provider.getSuggestions(lines, 0, 5, options)).toBeNull();
     expect(current.getSuggestions).toHaveBeenCalledOnce();
     expect(current.getSuggestions.mock.calls[0]![3]).toBe(options); // args identity
-    expect(chain.state()).toEqual({ word: "national" }); // inert, never consulted
+    expect(chain.state()).toEqual({ word: "acme" }); // inert, never consulted
   });
 });

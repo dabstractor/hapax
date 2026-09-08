@@ -35,7 +35,7 @@ execute them, per the automation reality that `pi -p` never opens the editor
 | --- | --- | --- |
 | All 22 two-char probes (`of on at be by do go he in it no or so to up we me my us if re men`) → zero candidates | PASS [scripted] | `acceptance item 2 … › ingests with the default config…` |
 | Every probe → provider delegates with byte-identical args, live cache cleared | PASS [scripted] | `…every 2-char prose probe → zero candidates → delegates…` |
-| Positive control: stored word still opens a menu (`wate` → `Water`) | PASS [scripted] | `…positive control: a stored word fragment DOES open a hapax menu` |
+| Positive control: stored word still opens a menu (`post` → `posts`; re-labeled 2026-09 from the pre-retune `wate` → `Water`, which now correctly rejects) | PASS [scripted] | `…positive control: a stored word fragment DOES open a hapax menu` |
 | Live: continuous prose keeps keystrokes verbatim; Tab with no selection = literal tab | PENDING [manual] | procedure below (item 2 live) |
 
 **Caveat (recorded, not silently assumed):** the shipped `common-en.bin` is
@@ -103,62 +103,51 @@ Fake literals (generated for fixtures; never real, never valid):
 - The suite run also exercised load-in-vitest: full `npm test` green with this
   check included (18/18 acceptance tests).
 
-## Item 7 — chained completion, zero typed characters (nrel.jsonl) — VERDICT: PASS (scripted; P2.M2.T3.S1)
+## Item 7 — chained completion, zero typed characters (zephyr-chain.jsonl) — VERDICT: PASS (scripted)
 
-New fixture `test/fixtures/sessions/nrel.jsonl` (10 messages, M2 evidence
-corpus): "National Renewable Energy Laboratory" verbatim ×4 (chain bigrams
-`national→renewable`, `renewable→energy`, `energy→laboratory` each count 4 —
-deterministic top-1), plus standalone `NREL` occurrences (acronym stored as a
-rare word, display `NREL`). Ingest through the real pipeline + shipped dict:
-97 store keys, 216 stored phrases, 131 admissions, ordinal 10.
+**CORRECTED 2026-09-08.** An earlier version of this section documented the
+REMOVED phrase-era design — "216 stored phrases", a one-shot "pending offer"
+mechanism, the `enablePhrases` gate, PRD §06 h3.8 constituent suppression,
+and `test/phrase-gating.test.ts` (a file that no longer exists; its successor
+is `test/chaining-gating.test.ts`). The phrase layer was deleted (PRD 002
+delta R1: "no phrase admission/sticky/demotion lifecycle"); the live
+implementation is the ARMED-BRANCH CHAIN MACHINE in `src/pi/provider.ts`
+(`createChainMachine` + the armed getSuggestions branch + the
+applyCompletion arming intercept classified through `CHAIN_KEY_PREFIX`),
+gated by `enableChaining` (PRD §08 h2.46). This section now records the
+CURRENT machinery; the stale text was evidence-grade misleading (2026-09
+validation Issue 3).
 
-Provider amendments under test (src/pi/provider.ts): the PENDING OFFER —
-`arm()` records a one-shot pending word, and the FIRST armed query whose
-cursor is immediately adjacent to the accepted insertion (buffer text before
-the cursor, lowercased, ends with the armed word — no trailing whitespace)
-offers the unfiltered top successors at prefix `""`; plus the
-`enablePhrases` gate on the armed branch and the arming intercept.
+Fixture `test/fixtures/sessions/zephyr-chain.jsonl` (10 messages; renamed
+from `nrel.jsonl` and rethemed in the same pass): the adjacency run
+"Acme Zephyr Noria Inverter" verbatim ×4 (chain bigrams `acme→zephyr`,
+`zephyr→noria`, `noria→inverter` each count 4 — deterministic top-1), plus
+"Acme turbine" ×1 (secondary successor) and standalone `AZNI` occurrences
+(acronym stored as a rare word, display `AZNI`). The walk words are
+dictionary-absent (`acme`, `noria`, `inverter`) or q ≤ 26 (`zephyr`,
+`turbine`) so the journey is IMMUNE to admission-band retunes — the former
+National/renewable/energy/laboratory walk words all moved into the reject
+band (q ≥ 50) with the 2026-09 Issue-1 recalibration, since on this
+dialogue-register corpus any band rejecting `context` (q=51) necessarily
+rejects `national` (q=90) too.
+
+Chain items insert the successor's CANDIDATE DISPLAY CASING ("Zephyr", not
+"zephyr") per PRD §07/§04 — the 2026-09 Issue-2 fix; arming itself stays
+lowercase (the successor index is lowercase-keyed).
 
 | check | status | evidence |
 | --- | --- | --- |
-| Fixture sanity: real ingest builds the strictly top-ranked successor chain (`renewable ×4` / `energy ×4` / `laboratory ×4`); NREL vocabulary admitted | PASS [scripted] | `acceptance item 7 — chained completion, zero typed characters (nrel.jsonl) › fixture sanity — real ingest builds…` |
-| Zero-typing chain: `"natio"` menu → Tab `National` → immediate offer `[renewable, license, wind]` at prefix `""` (no typed characters) → Tab → `energy` → Tab → `laboratory`; buffer reads `National renewable energy laboratory`; hapax answers every query (no delegation) | PASS [scripted] | `…zero-typing chain — accept National → renewable → energy → laboratory…` |
-| Pending offer is ONE-SHOT and adjacency-gated: word-less first query (`"National "`) keeps T2.S1 disarm + delegate; the consumed offer never re-fires | PASS [scripted] | `…pending offer is one-shot and adjacency-gated…` |
-| Typed fragments after an arm still live-filter through the T2.S1 armed branch (no pending double-fire) | PASS [scripted] | `…typed fragments after an arm still filter through the T2.S1 armed branch…` |
-| Reset (new user turn) clears the pending offer with the arm | PASS [scripted] | `…reset (new user turn) clears the pending offer with the arm` |
-| Pending offer composes with the S3 display layer (prefix `""` on both sides → classified hapax → immediate paint) | PASS [scripted] | `…pending offer flows through the display layer's classification…` |
-| `enablePhrases: false`: zero phrases, zero successors, no phrase items, NO constituent suppression, chain never arms, `ze` → `Zendesk` word-completion parity | PASS [scripted] | `test/phrase-gating.test.ts` — 5/5 (`enablePhrases: false — capture layer fully inert…`, incl. a phrases-ON contrast case) |
-| `/acwords` M2 dump: phrases-vs-cap line, top-10 by phrase salience (deterministic byte-lex ties, `(repeat)` markers), successor sample; `(none)` for empty AND phrases-disabled stores | PASS [scripted] | `test/debug.test.ts › acwords dump — phrases + successor sample (P2.M2.T3.S1)` — 4 new cases, 16/16 total |
-| M1 regression: items 1–6, never-hijack a–g, perf gates — all green, zero modifications | PASS [scripted] | `npm test` (see Reproduction); `provider.test.ts` / `perf-gates.test.ts` untouched |
-| Live: discuss NREL a few turns, then `#n` → accept `National` → observe the chained menu with zero typing | PENDING [manual] | procedure below (item 7 live) |
-
-**Design note (recorded, not silently assumed):** the arming accept happens
-on the phrase-free prefix of the transcript (messages n01–n03) — the chain
-bigrams recur ×4, so they are ADMITTED phrases and PRD §06 h3.8 constituent
-suppression permanently shadows the bare word `National` once they land
-(settled M2 semantics per P2.M2.T2.S1). This mirrors a real session (the
-user accepts the word before the repeated phrase occurs) and reuses the
-documented `armViaTab` seeding-order gotcha from `test/chain.test.ts`. The
-pending-offer adjacency rule is likewise deliberately strict (no trailing
-whitespace) so the word-less first query keeps T2.S1's disarm + delegate
-behavior pinned by chain.test.ts case (8); the PRD's zero-additional-CHARACTERS
-gate is exercised at the cursor position the item-7 script constructs
-(nothing typed, not even a space).
-
-**Baseline repair (one pre-existing failure, fixed in place):** the full
-suite failed on the UNTOUCHED baseline before this task's first run —
-`test/index.test.ts › "a valid dict loads lazily on first drain…"` failed
-**4/4 consecutive full-suite runs** with `expected [ 'zephyr world' ] to
-include 'zephyr'` (verified via `git stash` of this task's entire diff).
-Root cause: the bigram `zephyr world` is fast-path-admitted (both
-constituents rare in the provisional dictionary), so settled h3.8
-suppression legitimately replaces the bare word in the `#zep` menu —
-exactly the race P2.M2.T2.S1's PRP adjudicated ("the stale assertion is
-wrong, not the code; fix (a) make the assertion phrase-aware — chosen"). That sanctioned one-line fix was absent from the tree; this task
-re-applied it (accept either `zephyr` or `zephyr world` — both prove
-"ingested candidates reach the provider"). No implementation change was
-involved; idle-path ranking is untouched. After the repair: `npm test`
-green on 3 consecutive runs (520 passed / 1 pre-existing gc-skip).
+| Fixture sanity: real ingest builds the strictly top-ranked successor chain (`zephyr ×4` / `noria ×4` / `inverter ×4` under `acme`/`zephyr`/`noria`, plus `turbine ×1`); walk vocabulary admitted | PASS [scripted] | `acceptance item 7 — chained completion, zero typed characters (zephyr-chain.jsonl) › fixture sanity — real ingest builds…` |
+| Zero-typing chain: `"acme"` menu → Tab `Acme` → immediate offer `[Zephyr, turbine]` at prefix `""` (display-cased, zero typed characters) → Tab → `Noria` → Tab → `Inverter`; buffer reads `Acme Zephyr Noria Inverter`; hapax answers every query (no delegation) | PASS [scripted] | `…zero-typing chain — Acme → space → top successor → Tab → Noria → Tab → Inverter…` |
+| Word start after an arm offers the chain; word-less non-start (punctuation) still disarms + delegates on the same keystroke | PASS [scripted] | `…word start after an arm offers the chain…` |
+| Typed fragments after an arm live-filter through the armed branch at chain threshold 0 (never config.threshold) | PASS [scripted] | `…typed fragments after an arm still filter through the armed branch…` |
+| Reset (new user turn, `before_agent_start`) clears the arm | PASS [scripted] | `…reset (new user turn) clears the arm` |
+| Word-start offer composes with the S3 display layer (prefix `""` on both sides → classified hapax → immediate paint) | PASS [scripted] | `…word-start offer flows through the display layer's classification…` |
+| `enableChaining: false`: the armed branch never runs, Tab-accept never arms, forced queries cannot resurrect the arm, zero successors captured, word-completion parity | PASS [scripted] | `test/chaining-gating.test.ts` — 6/6 |
+| Replay/resume route: full-fixture restore then the same arm → walk (the PRD §09 item-7 route, h2.54); hop-by-hop assertions each name the broken link | PASS [scripted] | `test/chain.test.ts › replayed-store arming end-to-end…` (2/2) and `test/adversarial-typing.test.ts › adversarial Probe C` (chain post-restore) |
+| One-word invariant on every offer (no multi-word item is ever published) | PASS [scripted] | `expectSingleWordItems` on every chain offer in the suites above |
+| M1 regression: items 1–6, never-hijack a–g, perf gates — all green | PASS [scripted] | `npm test` (see Reproduction) |
+| Live: discuss the Acme Zephyr Noria Inverter stack a few turns, then `acme` → accept `Acme` → observe the chained menu with zero typing | PENDING [manual] | procedure below (item 7 live) |
 
 ## Manual verification procedures (pending live `pi -e` run)
 
@@ -193,26 +182,26 @@ verbatim; each item lists its pass criteria.
   a session started WITHOUT `-e`. PASS = behavior identical with and without
   the extension (byte-identical delegation is the scripted guarantee; this
   checks the live parity).
-- **Item 7 live** (M2): in a fresh session discuss "National Renewable Energy
-  Laboratory" for a few turns (paste sentences from `nrel.jsonl`), then type
-  `natio` → Tab the `National` menu item → press Space and look: the menu
-  should offer `renewable` (then `license`, `wind`) with NO fragment typed;
-  Tab through `renewable` → `energy` → `laboratory`. PASS = each accept is
-  followed by a successor menu with zero additional word characters typed,
-  ending in `National renewable energy laboratory`. (Note: the chained offer
-  appears on the first query after an accept whose cursor sits immediately
-  after the accepted word — the scripted suite drives that position
-  directly; pi's editor surfaces it on your next keystroke.)
+- **Item 7 live** (M2): in a fresh session discuss the "Acme Zephyr Noria
+  Inverter" stack for a few turns (paste sentences from
+  `zephyr-chain.jsonl`), then type `acme` → Tab the `Acme` menu item →
+  press Space and look: the menu should offer `Zephyr` (then `turbine`) in
+  display casing with NO fragment typed; Tab through `Zephyr` → `Noria` →
+  `Inverter`. PASS = each accept is followed by a successor menu with zero
+  additional word characters typed, ending in `Acme Zephyr Noria Inverter`.
+  (The armed branch answers at every word start for the whole chain
+  duration; a new user turn or disqualifying input resets it.)
 
 ## Hygiene (PRD DoD: no persistence, no stray files)
 
 - `git status --porcelain` shows only intended additions/edits. M1
   (P1.M4.T1.S1): `test/acceptance.test.ts`, `test/fixtures/sessions/`
   (4 files), `test/helpers/session-fixture.ts`, `tools/gen-large-session.mjs`.
-  M2 item 7 (P2.M2.T3.S1) adds `test/fixtures/sessions/nrel.jsonl`,
-  `test/phrase-gating.test.ts`, appends to `test/acceptance.test.ts` /
-  `test/debug.test.ts` / this ledger, and touches `src/pi/provider.ts`,
-  `src/pi/index.ts` (comment only), `src/pi/debug.ts`, `README.md`
+  M2 item 7 (P2.M2.T3.S1) added `test/fixtures/sessions/nrel.jsonl`,
+  `test/phrase-gating.test.ts` (both since superseded — see the Item 7
+  correction note above; the fixture is now `zephyr-chain.jsonl`, the
+  gating suite is `test/chaining-gating.test.ts`), and touched
+  `src/pi/provider.ts`, `src/pi/debug.ts`, `README.md`
   (plan/ entries are orchestrator-owned; untouched by this task).
 - No session/state files leaked outside `test/fixtures/sessions/`; nothing
   under `test/fixtures/` is gitignored.
@@ -227,9 +216,9 @@ verbatim; each item lists its pass criteria.
 npm run check
 npm test                                        # full suite incl. items 1–7, gating, debug, perf gates
 npx vitest --run test/acceptance.test.ts        # acceptance suite alone (items 1–6 + item 7)
-npx vitest --run test/phrase-gating.test.ts     # enablePhrases:false gating suite (M2)
-npx vitest --run test/debug.test.ts             # /acwords dump incl. phrases + successor sample (M2)
-npx vitest --run test/chain.test.ts             # chain machine incl. T2.S1 case (8) — untouched, green
+npx vitest --run test/chaining-gating.test.ts   # enableChaining:false gating suite (M2)
+npx vitest --run test/debug.test.ts             # /acwords dump incl. successor sample (M2)
+npx vitest --run test/chain.test.ts             # chain machine incl. replayed-store arming end-to-end (M2)
 pi -p -e /home/dustin/projects/hapax --no-builtin-tools "say Zendesk lwlock"
 node tools/gen-large-session.mjs /tmp/regen.jsonl && cmp /tmp/regen.jsonl test/fixtures/sessions/large-100k.jsonl   # determinism
 ```

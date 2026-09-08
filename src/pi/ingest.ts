@@ -11,13 +11,17 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { expandCandidates, tokenize } from "../core/segment.js";
+import type { CandidateDraft } from "../core/segment.js";
 import { maskSecrets, passesShape } from "../core/shapeGate.js";
 import { admit } from "../core/score.js";
+import type { AdmissionResult } from "../core/score.js";
 import type { CandidateStore } from "../core/store.js";
 import type {
   Dictionary,
+  GateResult,
   IngestStats,
   RankGroup,
+  RawToken,
   Sighting,
 } from "../core/types.js";
 
@@ -123,6 +127,31 @@ interface SegmentResult {
  *  zero-width gap must break; tokens never emit adjacently anyway, but the
  *  regex decides, not that accident). */
 const WHITESPACE_GAP_RE = /^[ \t]+$/;
+
+/** Cap on the per-pipeline admission memo (#admitMemo). Distinct raw
+ *  tokens per session sit well below this in practice (the PRD's own
+ *  vocabulary estimate is ~10–20k uniques per 300k tokens); on overflow
+ *  the whole cache clears — bounded memory, deterministic behavior, and
+ *  a cold rebuild is exactly the pre-memo cost. */
+const ADMIT_MEMO_CAP = 65_536;
+
+/** One raw token's computed admission plan (2026-09 Issue 4): the drafts
+ *  expandCandidates emits for it, each draft's shape-gate result, and each
+ *  gate-passing draft's admission result. Pure functions of (raw, dict,
+ *  rules) — all session-constant — so the plan is computed once per
+ *  DISTINCT raw token and replayed (stats counting + store upserts) for
+ *  every occurrence. `complete` is false only when the isDisabled gate
+ *  fired mid-token (dictionary failure): the partial prefix replays once
+ *  and is never cached. */
+interface AdmitMemoEntry {
+  drafts: CandidateDraft[];
+  /** index-aligned with drafts — always present for processed drafts */
+  gates: GateResult[];
+  /** index-aligned with drafts; undefined for gate-rejected drafts and
+   *  for the draft whose lookup observed the disable flip */
+  admits: (AdmissionResult | undefined)[];
+  complete: boolean;
+}
 
 /** Split a finalized line's span entries into adjacency runs: a new run
  *  starts at the line's first entry (its empty gapBefore breaks by
@@ -240,6 +269,15 @@ export class IngestPipeline {
   #onAdmittedTokens?: (runs: string[][]) => void;
   /** Optional disable gate (BUG-004) — see IngestPipelineOptions. */
   #isDisabled?: () => boolean;
+  /** Admission memo (2026-09 Issue 4): distinct raw token → computed
+   *  admission plan. Sessions repeat vocabulary heavily (Zipf), and the
+   *  expand → shape-gate → admit chain was ~70% of a large-ingest
+   *  profile; recomputing it per OCCURRENCE was the whole cost. The plan
+   *  is pure per raw token (dict + rules are session-constant), so
+   *  caching changes nothing observable — stats and store upserts are
+   *  still applied per occurrence by #replayAdmitMemo. Session-lifetime,
+ *  capped at ADMIT_MEMO_CAP (clear-on-full). Never persisted. */
+  #admitMemo = new Map<string, AdmitMemoEntry>();
   /** FIFO queue; entries hold nothing but { text, fromUser } and are
    *  removed before processing so text is never retained (h2.34). */
   #pending: { text: string; fromUser: boolean }[] = [];
@@ -402,7 +440,19 @@ export class IngestPipeline {
    *  (P1.M3.T2.S2). Masking (BUG-003 layer 1) runs FIRST so structured
    *  secret windows never reach tokenize — this method is the single
    *  funnel for live messages AND restoreFromHistory replay, so one seam
-   *  covers both paths. */
+   *  covers both paths.
+   *
+   *  Per-distinct-token memoization (2026-09 Issue 4): the expand → gate →
+   *  admit plan is computed once per distinct raw token (see #admitMemo)
+   *  and replayed per occurrence — stats counters, whole-token run
+   *  entries, and store upserts stay strictly per occurrence, so counts
+   *  and store state are byte-identical to the per-occurrence pipeline
+   *  this replaced. The BUG-004 disable gate keeps its exact seams: the
+   *  loop-top check, the post-lookup re-check inside the computation (the
+   *  only place a lazy dict load can fail), and the message-level check
+   *  in processText after each slice. An interrupt mid-token replays the
+   *  computed prefix once (pre-abort drafts of this token still landed,
+   *  exactly as the per-occurrence loop did) and is never cached. */
   #admitSegment(
     segment: string,
     ordinal: number,
@@ -416,59 +466,111 @@ export class IngestPipeline {
     const entries: SegmentResult["entries"] = [];
     for (const token of tokenize(masked)) {
       if (this.#isDisabled?.()) break; // BUG-004: dict failure mid-message
-      const drafts = expandCandidates(token); // whole token first
-      // Group of the whole token WHEN ADMITTED — the only state shared
-      // by a token's drafts (subword clamp input, PRD §04).
-      let wholeGroup: RankGroup | undefined;
-      for (const draft of drafts) {
-        const gate = passesShape(draft);
-        if (!gate.ok) {
-          // reason is present iff !ok (GateResult contract)
-          this.#stats.rejectedByGate[gate.reason!]++;
-          continue; // gate-rejected drafts are never wordsSeen
+      let memo = this.#admitMemo.get(token.raw);
+      if (memo === undefined) {
+        memo = this.#computeAdmitMemo(token);
+        if (!memo.complete) {
+          // Disabled mid-token (dict failed inside admit's lookup): land
+          // this token's pre-abort drafts exactly as the per-occurrence
+          // loop did, then stop processing the segment. Never cached.
+          this.#replayAdmitMemo(memo, token, ordinal, fromUser, entries);
+          return { masked, entries };
         }
-        this.#stats.wordsSeen++;
-        // Subwords admit independently; the parent clamp applies only
-        // when the whole token admitted (wholeGroup stays undefined
-        // after a gate or admission reject — no clamp then).
-        const result = admit(
-          draft,
-          this.#dictionary,
-          draft.isSubword ? wholeGroup : undefined,
-        );
-        // NEW-001: admit()'s lookup is the only call in this loop that
-        // can trigger (and fail) the lazy dictionary load — the factory's
-        // gate flips INSIDE this call. The token-loop top gate above only
-        // protects the NEXT token, so without a re-check here the failed
-        // lookup's null is misread as "rarest word → group 0" and the
-        // trigger token itself would be counted, keyed, and upserted (the
-        // one-word residue that survived BUG-004). Re-check between the
-        // failed lookup and the upsert: once the gate is true, nothing
-        // from this draft — count, phrase key, or store sighting — lands.
-        if (this.#isDisabled?.()) break;
-        if (result === "reject") continue; // admission reject: simply
-        // not stored (PRD §04 h2.24); no IngestStats field by design.
-        this.#stats.admitted++;
-        if (!draft.isSubword) {
-          wholeGroup ??= result;
-          entries.push({ key: draft.key, start: token.start, end: token.end });
-        }
-        const sighting: Sighting = {
-          key: draft.key,
-          display: draft.display,
-          ordinal,
-          fromUser,
-          properName: draft.properName,
-          rankGroup: result,
-          isSubword: draft.isSubword,
-          ...(draft.parentKey !== undefined
-            ? { parentKey: draft.parentKey }
-            : {}),
-        };
-        this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)
+        if (this.#admitMemo.size >= ADMIT_MEMO_CAP) this.#admitMemo.clear();
+        this.#admitMemo.set(token.raw, memo);
       }
+      this.#replayAdmitMemo(memo, token, ordinal, fromUser, entries);
     }
     return { masked, entries };
+  }
+
+  /** Compute one token's admission plan (expand → gate → admit) WITHOUT
+   *  stats, upserts, or run entries — those are per-occurrence effects
+   *  applied by #replayAdmitMemo. Mirrors the original draft loop exactly,
+   *  including the subword parent clamp input (wholeGroup = the admitted
+   *  whole token's group, computed before sub-drafts are admitted) and
+   *  the post-lookup isDisabled re-check (NEW-001): when the gate fires,
+   *  the draft's lookup result is discarded, `complete` stays false, and
+   *  the caller replays the computed prefix once without caching. */
+  #computeAdmitMemo(token: RawToken): AdmitMemoEntry {
+    const drafts = expandCandidates(token); // whole token first
+    const entry: AdmitMemoEntry = { drafts, gates: [], admits: [], complete: true };
+    // Group of the whole token WHEN ADMITTED — the only state shared
+    // by a token's drafts (subword clamp input, PRD §04).
+    let wholeGroup: RankGroup | undefined;
+    for (const draft of drafts) {
+      const gate = passesShape(draft);
+      entry.gates.push(gate);
+      if (!gate.ok) {
+        // reason is present iff !ok (GateResult contract); gate-rejected
+        // drafts never reach admit (and can never trigger the dict load).
+        entry.admits.push(undefined);
+        continue;
+      }
+      const result = admit(
+        draft,
+        this.#dictionary,
+        draft.isSubword ? wholeGroup : undefined,
+      );
+      // NEW-001: admit()'s lookup is the only call that can trigger (and
+      // fail) the lazy dictionary load. If the failure is observed here,
+      // this draft lands nothing — its result is discarded (undefined in
+      // the plan) and the token is marked incomplete.
+      if (this.#isDisabled?.()) {
+        entry.admits.push(undefined);
+        entry.complete = false;
+        break;
+      }
+      if (!draft.isSubword && result !== "reject") wholeGroup ??= result;
+      entry.admits.push(result);
+    }
+    return entry;
+  }
+
+  /** Apply one token's admission plan for ONE occurrence: gate-reject
+   *  accounting, wordsSeen, admitted, whole-token run entries (spans from
+   *  THIS occurrence's token), and store upserts — the per-occurrence
+   *  effects the memo deliberately excludes. An interrupted plan (the
+   *  draft whose lookup observed the disable flip) counts its wordsSeen
+   *  and stops, mirroring the original loop's discard-after-failure. */
+  #replayAdmitMemo(
+    memo: AdmitMemoEntry,
+    token: RawToken,
+    ordinal: number,
+    fromUser: boolean,
+    entries: SegmentResult["entries"],
+  ): void {
+    for (let i = 0; i < memo.drafts.length; i++) {
+      const gate = memo.gates[i]!;
+      const draft = memo.drafts[i]!;
+      if (!gate.ok) {
+        // reason is present iff !ok (GateResult contract)
+        this.#stats.rejectedByGate[gate.reason!]++;
+        continue; // gate-rejected drafts are never wordsSeen
+      }
+      this.#stats.wordsSeen++;
+      const result = memo.admits[i];
+      if (result === undefined) break; // interrupted plan — computed no further
+      if (result === "reject") continue; // admission reject: simply
+      // not stored (PRD §04 h2.24); no IngestStats field by design.
+      this.#stats.admitted++;
+      if (!draft.isSubword) {
+        entries.push({ key: draft.key, start: token.start, end: token.end });
+      }
+      const sighting: Sighting = {
+        key: draft.key,
+        display: draft.display,
+        ordinal,
+        fromUser,
+        properName: draft.properName,
+        rankGroup: result,
+        isSubword: draft.isSubword,
+        ...(draft.parentKey !== undefined
+          ? { parentKey: draft.parentKey }
+          : {}),
+      };
+      this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)
+    }
   }
 
   /** Cumulative counters (PRD §08 /acwords). Returns a copy — a live

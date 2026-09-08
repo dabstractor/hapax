@@ -268,18 +268,33 @@ export function createHapaxProvider(
         // prefix MUST equal the returned prefix. Entries are registered
         // under CHAIN_KEY_PREFIX so applyCompletion can tell "successor
         // accepted → armed(next)" from "word candidate accepted →
-        // armed(word)" (plain key). Values are BARE s.next; live-map
-        // keys are CHAIN_KEY_PREFIX + s.next — never leading-space.
+        // armed(word)" (plain key). Values are BARE single words — never
+        // leading-space (see the casing note below).
+        //
+        // VALUES carry the successor's CANDIDATE DISPLAY CASING (PRD §07:
+        // "value = the string to insert — always exactly one word
+        // (candidate display casing)"; PRD §04: "Insertion uses the
+        // candidate's display casing"). The successor index is lowercase-
+        // keyed (h2.27), so the display comes from the word's own store
+        // entry — the same most-recent-casing-wins display a word
+        // completion inserts (store.ts upsert contract). A successor whose
+        // word entry was already evicted (word eviction never touches
+        // successors) falls back to the lowercase key — the pre-fix
+        // behavior, reachable only past a 20k-store eviction of a
+        // recently-seen word. Arming stays lowercase: liveKeyByValue maps
+        // the display value to CHAIN_KEY_PREFIX + s.next (the key).
+        const successorDisplay = (s: Successor): string =>
+          store.get(s.next)?.display ?? s.next;
         const publishChain = (succ: readonly Successor[], prefix: string) => {
           const items = succ.map((s) => ({
-            value: s.next, // BARE — pi-tui splices verbatim at prefix ""
-            label: s.next,
+            value: successorDisplay(s), // BARE — pi-tui splices verbatim at prefix ""
+            label: successorDisplay(s),
             description: "chain", // provenance marker, role of query.ts's
           }));
           lastLive = {
             matches: succ.map((s) => ({
               key: CHAIN_KEY_PREFIX + s.next,
-              display: s.next,
+              display: successorDisplay(s),
               description: "chain",
               salience: -s.count, // higher count → stronger, count-desc order
             })),
@@ -288,7 +303,7 @@ export function createHapaxProvider(
           };
           liveKeyByValue.clear(); // rebuilt every query — same as normal path
           for (const s of succ) {
-            liveKeyByValue.set(s.next, CHAIN_KEY_PREFIX + s.next);
+            liveKeyByValue.set(successorDisplay(s), CHAIN_KEY_PREFIX + s.next);
           }
           return { items, prefix };
         };

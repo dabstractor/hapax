@@ -27,7 +27,7 @@
  * Patterns reuse test/chain.test.ts: cfg() fresh-config helper,
  * editingCurrent() pi-shaped mock, suggest()/opts(), a real
  * IngestPipeline wired like session_start, and the NREL fixture
- * (test/fixtures/sessions/nrel.jsonl) replayed through
+ * (test/fixtures/sessions/zephyr-chain.jsonl) replayed through
  * restoreFromHistory with the REAL shipped dictionary
  * (loadDictionary(resolveDictPath())).
  */
@@ -129,7 +129,7 @@ const expectSingleWordItems = (items: readonly AutocompleteItem[]): void => {
  *  is recordBigramRuns — the ONLY successor-index path. enableChaining
  *  (P1.M3.T1.S2) gates exactly this wiring; false mirrors the shipped
  *  false-branch (hook absent entirely). */
-function makeNrelPipeline(enableChaining: boolean): {
+function makeChainPipeline(enableChaining: boolean): {
   store: CandidateStore;
   pipeline: IngestPipeline;
 } {
@@ -150,7 +150,7 @@ function makeNrelPipeline(enableChaining: boolean): {
 /** Replay pre-parsed fixture entries through restoreFromHistory on the
  *  GIVEN pipeline (completion-tracking wrapper so the fire-and-forget
  *  replay is awaitable). */
-async function replayNrel(
+async function replayChain(
   pipeline: IngestPipeline,
   entries: ReturnType<typeof parseSessionFixture>,
 ): Promise<void> {
@@ -181,13 +181,13 @@ async function replayNrel(
 
 describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer only)", () => {
   it("capture off: full ingest with the hook unwired builds NO successor index", async () => {
-    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
     // Mirror of index.ts's enableChaining:false branch: the spread
     // yields {} — no onAdmittedTokens, so recordBigramRuns (the only
     // successor path) never fires.
-    const { store, pipeline } = makeNrelPipeline(false);
+    const { store, pipeline } = makeChainPipeline(false);
 
-    await replayNrel(pipeline, entries);
+    await replayChain(pipeline, entries);
 
     // Control: the replay DID ingest (word candidates admitted through
     // the real pipeline + shipped dict) — the empty index below is the
@@ -195,16 +195,16 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     expect(store.size).toBeGreaterThan(0);
     // The successor index was never built: no bigrams, no successors.
     expect(store.bigramSize).toBe(0);
-    expect(store.topSuccessors("national")).toEqual([]);
-    expect(store.topSuccessors("renewable")).toEqual([]);
-    expect(store.topSuccessors("energy")).toEqual([]);
+    expect(store.topSuccessors("acme")).toEqual([]);
+    expect(store.topSuccessors("zephyr")).toEqual([]);
+    expect(store.topSuccessors("noria")).toEqual([]);
   });
 
   it("no arming on Tab-accept: a live word item never arms, delegation still happens", async () => {
-    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
     // Successors ARE present (hook on) so the case proves the CONFIG
     // gate alone blocks the chain layer — not a missing index.
-    const { store, pipeline } = makeNrelPipeline(true);
+    const { store, pipeline } = makeChainPipeline(true);
     const current = editingCurrent();
     const chain = createChainMachine();
     const provider = createHapaxProvider(
@@ -214,19 +214,19 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
       chain,
     );
 
-    await replayNrel(pipeline, entries);
+    await replayChain(pipeline, entries);
 
-    const menu = await suggest(provider, ["natio"], 0, 5);
-    expect(menu?.items.map((i) => i.value)).toContain("National");
-    const nationalItem = menu!.items.find((i) => i.value === "National")!;
+    const menu = await suggest(provider, ["acme"], 0, 4);
+    expect(menu?.items.map((i) => i.value)).toContain("Acme");
+    const acmeItem = menu!.items.find((i) => i.value === "Acme")!;
 
-    const lines = ["natio"];
+    const lines = ["acme"];
     const returned = provider.applyCompletion(
       lines,
       0,
-      5,
-      nationalItem,
-      "natio",
+      4,
+      acmeItem,
+      "acme",
     );
 
     // (i) Arming is gated: the machine stays idle after a whole-word
@@ -240,20 +240,20 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     const call = current.applyCompletion.mock.calls[0]!;
     expect(call[0]).toBe(lines); // args identity — original array forwarded
     expect(call[1]).toBe(0);
-    expect(call[2]).toBe(5);
-    expect(call[3]).toBe(nationalItem);
-    expect(call[4]).toBe("natio");
+    expect(call[2]).toBe(4);
+    expect(call[3]).toBe(acmeItem);
+    expect(call[4]).toBe("acme");
     expect(returned).toEqual({
-      lines: ["National"],
+      lines: ["Acme"],
       cursorLine: 0,
-      cursorCol: 8,
+      cursorCol: 4,
     });
-    expect(current.state.lines).toEqual(["National"]); // word inserted
+    expect(current.state.lines).toEqual(["Acme"]); // word inserted
   });
 
   it("externally-armed machine never offers: armed query delegates with unchanged args, state untouched", async () => {
-    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
-    const { store, pipeline } = makeNrelPipeline(true);
+    const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
+    const { store, pipeline } = makeChainPipeline(true);
     const current = editingCurrent();
     const chain = createChainMachine();
     const provider = createHapaxProvider(
@@ -263,25 +263,25 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
       chain,
     );
 
-    await replayNrel(pipeline, entries);
-    chain.arm("national"); // armed by ANY means — the gate lives in the provider
+    await replayChain(pipeline, entries);
+    chain.arm("acme"); // armed by ANY means — the gate lives in the provider
 
     const options = opts();
-    const lines = ["National "];
+    const lines = ["Acme "];
     // Zero-typed-char word start — the exact query the armed branch
     // would answer with successors. Gated → falls through to pi.
-    expect(await provider.getSuggestions(lines, 0, 9, options)).toBeNull();
+    expect(await provider.getSuggestions(lines, 0, 5, options)).toBeNull();
     expect(current.getSuggestions).toHaveBeenCalledTimes(1);
     expect(current.getSuggestions.mock.calls[0]![0]).toBe(lines); // identity
     expect(current.getSuggestions.mock.calls[0]![3]).toBe(options); // identity
     // The machine's own state is untouched — never consulted, never
     // disqualified: the branch simply never ran.
-    expect(chain.state()).toEqual({ word: "national" });
+    expect(chain.state()).toEqual({ word: "acme" });
   });
 
   it("force path gated too: force:true cannot resurrect the armed branch (P1.M2.T2 branch order)", async () => {
-    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
-    const { store, pipeline } = makeNrelPipeline(true);
+    const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
+    const { store, pipeline } = makeChainPipeline(true);
     const current = editingCurrent();
     const chain = createChainMachine();
     const provider = createHapaxProvider(
@@ -291,8 +291,8 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
       chain,
     );
 
-    await replayNrel(pipeline, entries);
-    chain.arm("national");
+    await replayChain(pipeline, entries);
+    chain.arm("acme");
 
     // Branch order is a landed contract: abort → armed → force-aware →
     // normal. The gated-off armed branch precedes force, so a forced
@@ -302,20 +302,20 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     const options = { ...opts(), force: true } as Parameters<
       AutocompleteProvider["getSuggestions"]
     >[3];
-    const lines = ["National "];
-    expect(await provider.getSuggestions(lines, 0, 9, options)).toBeNull();
+    const lines = ["Acme "];
+    expect(await provider.getSuggestions(lines, 0, 5, options)).toBeNull();
     expect(current.getSuggestions).toHaveBeenCalledTimes(1);
     expect(current.getSuggestions.mock.calls[0]![3]).toBe(options); // force forwarded
-    expect(chain.state()).toEqual({ word: "national" }); // inert, untouched
+    expect(chain.state()).toEqual({ word: "acme" }); // inert, untouched
   });
 
   it("word completion identical to ungated: threshold + trigger modes over the SAME store", async () => {
-    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
     // One store, bigram hook ON (successors present): the ONLY delta
     // between the two providers is the enableChaining flag, so any
     // word-menu difference would be the gate leaking into the word path.
-    const { store, pipeline } = makeNrelPipeline(true);
-    await replayNrel(pipeline, entries);
+    const { store, pipeline } = makeChainPipeline(true);
+    await replayChain(pipeline, entries);
 
     const gated = createHapaxProvider(
       store,
@@ -330,15 +330,15 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
       createChainMachine(),
     );
 
-    // Threshold mode ("natio", 5 chars ≥ 2): byte-identical menus.
-    const gatedMenu = await suggest(gated, ["natio"], 0, 5);
-    const ungatedMenu = await suggest(ungated, ["natio"], 0, 5);
+    // Threshold mode ("acme", 4 chars ≥ 2): byte-identical menus.
+    const gatedMenu = await suggest(gated, ["acme"], 0, 4);
+    const ungatedMenu = await suggest(ungated, ["acme"], 0, 4);
     expect(gatedMenu).toEqual(ungatedMenu);
     expect(gatedMenu?.items.length).toBeGreaterThan(0);
 
-    // Trigger mode ("#natio"): byte-identical menus.
-    const gatedTrigger = await suggest(gated, ["#natio"], 0, 6);
-    const ungatedTrigger = await suggest(ungated, ["#natio"], 0, 6);
+    // Trigger mode ("#acme"): byte-identical menus.
+    const gatedTrigger = await suggest(gated, ["#acme"], 0, 5);
+    const ungatedTrigger = await suggest(ungated, ["#acme"], 0, 5);
     expect(gatedTrigger).toEqual(ungatedTrigger);
     expect(gatedTrigger?.items.length).toBeGreaterThan(0);
 
@@ -348,29 +348,30 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
   });
 
   it("control (gated true): the harness arms on word accept and fires the zero-char successor offer", async () => {
-    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
-    const { store, pipeline } = makeNrelPipeline(true);
+    const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
+    const { store, pipeline } = makeChainPipeline(true);
     const current = editingCurrent();
     const chain = createChainMachine();
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
-    await replayNrel(pipeline, entries);
+    await replayChain(pipeline, entries);
 
     // Harness sanity: the successor index is populated by the replay.
-    expect(store.topSuccessors("national").length).toBeGreaterThan(0);
+    expect(store.topSuccessors("acme").length).toBeGreaterThan(0);
 
     // Arm via the production path: live menu → Tab accept.
-    const menu = await suggest(provider, ["natio"], 0, 5);
-    const nationalItem = menu!.items.find((i) => i.value === "National")!;
-    provider.applyCompletion(["natio"], 0, 5, nationalItem, "natio");
-    expect(chain.state()).toEqual({ word: "national" });
+    const menu = await suggest(provider, ["acme"], 0, 4);
+    const acmeItem = menu!.items.find((i) => i.value === "Acme")!;
+    provider.applyCompletion(["acme"], 0, 4, acmeItem, "acme");
+    expect(chain.state()).toEqual({ word: "acme" });
 
     // The zero-typed-char offer fires: bare single-word successors at
-    // prefix "", exactly the store's topSuccessors("national") list.
-    const offer = await suggest(provider, ["National "], 0, 9);
+    // prefix "", exactly the store's topSuccessors("acme") list rendered
+    // in the candidate display casing (PRD §07; Issue-2 fix).
+    const offer = await suggest(provider, ["Acme "], 0, 5);
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => i.value)).toEqual(
-      store.topSuccessors("national").map((s) => s.next),
+      store.topSuccessors("acme").map((s) => store.get(s.next)?.display ?? s.next),
     );
     expectSingleWordItems(offer?.items ?? []);
   });

@@ -65,9 +65,9 @@ const cand = (over: Partial<Candidate> = {}): Candidate => ({
 describe("admit — baked thresholds (PRD §04/§08)", () => {
   // Deliberate pin of the measured values (tools/calibrate-bands.mjs,
   // BUG-001): P1.M1.T2.S2's calibration test relies on these being exact.
-  it("exports REJECT_COMMON_THRESHOLD = 100 and MID_FREQ_THRESHOLD = 50", () => {
-    expect(REJECT_COMMON_THRESHOLD).toBe(100);
-    expect(MID_FREQ_THRESHOLD).toBe(50);
+  it("exports REJECT_COMMON_THRESHOLD = 50 and MID_FREQ_THRESHOLD = 20", () => {
+    expect(REJECT_COMMON_THRESHOLD).toBe(50);
+    expect(MID_FREQ_THRESHOLD).toBe(20);
   });
 });
 
@@ -129,17 +129,17 @@ describe("admit — subword clamp (PRD §04 h2.24)", () => {
   });
 
   it("parent group 0 + table group 1 → 1 (table already at parent + 1)", () => {
-    // q = 20: attested but below MID_FREQ_THRESHOLD → table group 1.
-    expect(admit(draft("token", true), dict({ token: 20 }), 0)).toBe(1);
+    // q = 10: attested but below MID_FREQ_THRESHOLD → table group 1.
+    expect(admit(draft("token", true), dict({ token: 10 }), 0)).toBe(1);
   });
 
   it("parent group 1 + table group 2 → 2", () => {
-    // q = 70: mid-frequency band → table group 2.
-    expect(admit(draft("token", true), dict({ token: 70 }), 1)).toBe(2);
+    // q = 30: mid-frequency band (MID ≤ q < REJECT) → table group 2.
+    expect(admit(draft("token", true), dict({ token: 30 }), 1)).toBe(2);
   });
 
   it("parent group 0 + table group 2 → 2", () => {
-    expect(admit(draft("token", true), dict({ token: 70 }), 0)).toBe(2);
+    expect(admit(draft("token", true), dict({ token: 30 }), 0)).toBe(2);
   });
 
   it("subword with q ≥ REJECT_COMMON_THRESHOLD → 'reject' regardless of parent (clamp never rescues)", () => {

@@ -15,24 +15,30 @@ Label casing matters: the menu shows the stored display casing verbatim
   re-labeled 2026-09 (bugfix 001_9e0f97150b68) after the REAL-corpus
   regeneration (hermitdave/FrequencyWords en_50k, HAPX v1, 48,802 entries)
   and the admission-band recalibration in score.ts
-  (REJECT_COMMON_THRESHOLD=100, MID_FREQ_THRESHOLD=50 — measured by
-  tools/calibrate-bands.mjs), with DEFAULT_CONFIG (trigger `#`, threshold 2,
+  (REJECT_COMMON_THRESHOLD=50, MID_FREQ_THRESHOLD=20 — measured by
+  tools/calibrate-bands.mjs; the 2026-09 Issue-1 retune moved the reject
+  boundary from 100 to 50 so the PRD's named example `context` at q=51
+  rejects), with DEFAULT_CONFIG (trigger `#`, threshold 2,
   maxSuggestions 8) — no network, deterministic fixtures.
-- Re-label after any change to: admission bands (score.ts 100/50),
+- Re-label after any change to: admission bands (score.ts 50/20),
   salience weights/taus, STORE_CAP/eviction, the fixture files, or the
   shipped dictionary artifact.
-- **Calibrated-band reality**: with the real corpus the reject band
-  (q ≥ 100 = top ~945 corpus ranks) is fully populated, so formerly
-  admitted common prose words (`water` q=121, `morning` q=129, `more`
-  q=150, `look` q=157, `long` q=138) are rejected at admission and never
-  reach a menu; mid/rare words still admit (prose store: 66 keys).
+- **Calibrated-band reality**: with the real (dialogue-register) corpus
+  the reject band (q ≥ 50 = top ~8,501 corpus ranks) is deep, so ordinary
+  prose words are rejected at admission and never reach a menu —
+  `water` q=121, `morning` q=129, `more` q=150, `look` q=157, `long`
+  q=138, and (since the Issue-1 retune) `garden` q=86, `kitchen` q=96,
+  `window` q=99, `fresh` q=93, `bread` q=84, `fence` q=71, and the PRD's
+  named example `context` q=51. Rare and mid-band words still admit: the
+  prose store holds exactly 5 keys (`fences`, `howls`, `posts`,
+  `sweeten`, `washes` — q 26–47 band members).
 
 ## zendesk-lwlock.jsonl (item 1 — jargon picked up mid-session)
 
 | fragment | mode | expected top-8 (in rank order) |
 | --- | --- | --- |
 | `ze` | threshold | `["Zendesk"]` — exactly one candidate, cased `Zendesk` |
-| `#l` | trigger | `["lwlock","locks","logs","loses"]` — `lwlock` first; `look`/`long` reject-band (q ≥ 100) |
+| `#l` | trigger | `["lwlock","logs"]` — `lwlock` first; `look`/`long`/`loses`/`locks` reject-band (q ≥ 50) |
 | `we` | threshold | `["webhook"]` |
 | `pos` | threshold | `["Postgres"]` |
 | `fix` | threshold | `["fixRoundingError"]` (camelCase token, stored casing) |
@@ -55,15 +61,15 @@ must delegate (never a menu).
 | `of`,`on`,`at`,`be`,`by`,`do`,`go`,`he`,`in`,`it`,`no`,`or`,`so`,`to`,`up`,`we`,`me`,`my`,`us`,`if` | `[]` for every one | source words are all <4 chars → gate-rejected at ingest |
 | `re` | `[]` | item 6 slash-command probe: no stored key starts `re` |
 | `men` | `[]` | item 6 @mention probe: no stored key starts `men` |
-| `garde` | `["garden"]` | positive control: a menu DOES appear for stored words (garden q=86 → group 2) |
+| `post` | `["posts"]` | positive control: a menu DOES appear for stored words (posts q=47 → group 2) |
 | `wate` | `[]` | `water` q=121 ≥ REJECT → rejected at admission, never stored |
-| `kit` | `["kitchen"]` | |
+| `kit` | `[]` | `kitchen` q=96 reject-band (since the Issue-1 retune) → never stored |
 | `mor` | `[]` | `morning` q=129 and `more` q=150 both reject-band → never stored |
-| `wind` | `["window","wind"]` | |
-| `fresh` | `["fresh"]` | |
-| `bread` | `["bread"]` | |
-| `gar` | `["garden"]` | |
-| `fenc` | `["fence","Fences"]` | display casing = most recent sighting |
+| `wind` | `[]` | `window` q=99 and `wind` q=92 reject-band → never stored |
+| `fresh` | `[]` | `fresh` q=93 reject-band → never stored |
+| `bread` | `[]` | `bread` q=84 reject-band → never stored |
+| `gar` | `[]` | `garden` q=86 reject-band → never stored |
+| `fenc` | `["Fences"]` | `fence` q=71 rejects but `fences` q=41 admits; display casing = most recent sighting |
 
 ## large-100k.jsonl (items 3 + 5 — restore performance, secrets never suggested)
 

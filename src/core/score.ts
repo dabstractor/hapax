@@ -10,7 +10,9 @@
  *   q === null                 → group 0    rare-by-default
  *   q < MID_FREQ_THRESHOLD     → group 1    rare-but-attested
  *   q < REJECT_COMMON_THRESHOLD → group 2   mid-frequency
- *   otherwise                  → 'reject'   very common ("the", "context")
+ *   otherwise                  → 'reject'   very common ("the", "context",
+ *                                           "data" — PRD §04's reject
+ *                                           examples and their band)
  *
  * Band values are pinned by MEASUREMENT against the shipped artifact —
  * tools/calibrate-bands.mjs prints the rank↔word↔q table and re-verifies the
@@ -66,25 +68,33 @@ import type { CandidateDraft } from "./segment.js";
 import type { Candidate, Dictionary, RankGroup } from "./types.js";
 
 /** Reject at/above this commonness rank — very common English that must
- *  never trigger a menu ("the", "with", "this", "them"). PRD §04 h2.24;
- *  baked per PRD §08 (the ONLY tuning surface — never config/env).
+ *  never trigger a menu ("the", "with", "this", "them", "context").
+ *  PRD §04 h2.24; baked per PRD §08 (the ONLY tuning surface — never
+ *  config/env).
  *
- *  Calibrated against the shipped artifact (tools/calibrate-bands.mjs,
- *  BUG-001 fix): under the frozen quant curve the original value 220 covered
- *  only ranks ≤ 3, making rejection mathematically unreachable. q ≥ 100 ⇔
- *  the top ~945 dictionary ranks of 48,802; the BUG-001 word set
+ *  Calibrated against the shipped artifact (tools/calibrate-bands.mjs).
+ *  BUG-001 fix: under the frozen quant curve the original value 220 covered
+ *  only ranks ≤ 3, making rejection mathematically unreachable; the first
+ *  recalibration (q ≥ 100) still left the PRD's own named reject example
+ *  "context" (q = 51) admitted at group 2, so ordinary prose opened menus
+ *  on context/data/code/jumps/lazy-class words (2026-09 validation Issue 1).
+ *  q ≥ 50 ⇔ the top ~8,501 dictionary ranks of 48,802 — the rank band the
+ *  dialogue-register corpus actually assigns to everyday prose words — and
+ *  "context" (q = 51), "jumps" (51), "lazy" (67), "ordinary" (79),
+ *  "data" (82), "code" (91) all clear it. The BUG-001 word set
  *  (the=240, with=179, this=197, them=156) clears it with margin. */
-export const REJECT_COMMON_THRESHOLD = 100 as const;
+export const REJECT_COMMON_THRESHOLD = 50 as const;
 
 /** Demote to group 2 at/above this commonness rank
- *  (50 ≤ q < 100 — mid-frequency, e.g. "context"/"data"/"code").
+ *  (20 ≤ q < 50 — mid-frequency, e.g. "gospel"/"brazil"-band words).
  *  PRD §04 h2.24; baked per PRD §08.
  *
  *  Calibrated against the shipped artifact (tools/calibrate-bands.mjs,
- *  BUG-001 fix): q ≥ 50 ⇔ dictionary ranks ~945–~8,501 land group 2; the
- *  attested tail below stays group 1. 50 is the largest clean value that
- *  still keeps "context" (q = 51) in group 2 rather than group 1. */
-export const MID_FREQ_THRESHOLD = 50 as const;
+ *  BUG-001 fix + 2026-09 Issue 1 retune): group 2 ⇔ dictionary ranks
+ *  ~8,502–~27,000 land group 2; the rarest attested tail below stays
+ *  group 1 (the corpus tail bottoms out at q ≈ 11, so 20 keeps three
+ *  live bands: reject [50,255], mid [20,50), rare-attested [0,20)). */
+export const MID_FREQ_THRESHOLD = 20 as const;
 
 /** Admission outcome: a rank group (0 = rarest/best … 2 = mid-frequency)
  *  or 'reject' (never enters the store). */
