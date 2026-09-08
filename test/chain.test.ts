@@ -521,8 +521,7 @@ describe("bare-word arming on a replayed store (BUG-005 part 2 successor route)"
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => [i.label, i.value])).toEqual([
       ["renewable", " renewable"],
-      ["license", " license"],
-      ["wind", " wind"],
+      ["wind", " wind"], // license dropped: was a gate-rejected-"lab" bridge (P1.M1.T3.S2)
     ]);
 
     // Tab → armed(renewable); the S1/S2 interaction stays intact.

@@ -640,10 +640,12 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     const nrel = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
     await replayNrel(pipeline, nrel);
 
-    // Successor chain (PRD §06 h3.9), deterministic top-1 per word:
+    // Successor chain (PRD §06 h3.9), deterministic top-1 per word.
+    // P1.M1.T3.S2: runs are strictly adjacent — "National lab license"
+    // no longer bridges national→license across the gate-rejected "lab",
+    // so only the direct "National wind" co-occurrence remains.
     expect(store.topSuccessors("national")).toEqual([
       { next: "renewable", count: 4 },
-      { next: "license", count: 1 },
       { next: "wind", count: 1 },
     ]);
     expect(store.topSuccessors("renewable")).toEqual([{ next: "energy", count: 4 }]);
@@ -701,8 +703,7 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     expect(offer1?.prefix).toBe("");
     expect(offer1?.items.map((i) => [i.label, i.value])).toEqual([
       ["renewable", " renewable"], // leading space: pi inserts value verbatim
-      ["license", " license"],
-      ["wind", " wind"],
+      ["wind", " wind"], // license no longer offered: was a "lab" bridge (P1.M1.T3.S2)
     ]);
     expect(provider.__hapaxLive()?.prefix).toBe("");
 
@@ -837,7 +838,7 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     // (first paint of this stack is never delayed, S3 rule 4a).
     const painted = await display.getSuggestions(["National"], 0, 8, opts());
     expect(painted?.prefix).toBe("");
-    expect(painted?.items.map((i) => i.label)).toEqual(["renewable", "license", "wind"]);
+    expect(painted?.items.map((i) => i.label)).toEqual(["renewable", "wind"]);
     expect(display.dispose).toBeDefined();
   });
 });

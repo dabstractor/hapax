@@ -97,6 +97,86 @@ const emptyGateCounts = (): IngestStats["rejectedByGate"] => ({
   consonantRun: 0,
 });
 
+/** One admitted WHOLE token with its span (UTF-16 offsets into the masked
+ *  segment) plus the raw gap text between it and the previous entry of the
+ *  same line — the unit the adjacency-run splitter consumes (PRD 002 §06
+ *  h3.6). Internal to the pipeline. */
+interface SpanEntry {
+  key: string;
+  start: number;
+  end: number;
+  gapBefore: string;
+}
+
+/** What #admitSegment hands back to the line assembler: the post-
+ *  maskSecrets segment text (gaps are computed against it — see
+ *  appendSegment) and the spans of its admitted whole tokens, in document
+ *  order. */
+interface SegmentResult {
+  masked: string;
+  entries: { key: string; start: number; end: number }[];
+}
+
+/** Gap test for strict adjacency (PRD 002 §06 h3.6): a run continues only
+ *  across a gap of ONE OR MORE spaces/tabs. Deliberately not `\s` (it
+ *  admits `\n`/`\r` — newlines are structural breaks) and not `*` (a
+ *  zero-width gap must break; tokens never emit adjacently anyway, but the
+ *  regex decides, not that accident). */
+const WHITESPACE_GAP_RE = /^[ \t]+$/;
+
+/** Split a finalized line's span entries into adjacency runs: a new run
+ *  starts at the line's first entry (its empty gapBefore breaks by
+ *  construction) and at every entry whose gapBefore is not pure
+ *  spaces/tabs. Never emits empty runs. */
+function splitRuns(entries: SpanEntry[]): string[][] {
+  const runs: string[][] = [];
+  let cur: string[] = [];
+  for (const e of entries) {
+    if (cur.length > 0 && !WHITESPACE_GAP_RE.test(e.gapBefore)) {
+      runs.push(cur);
+      cur = [];
+    }
+    cur.push(e.key);
+  }
+  if (cur.length > 0) runs.push(cur);
+  return runs;
+}
+
+/** Append one segment's span entries to the open line, computing each
+ *  entry's gapBefore, and return the updated carry: the newline-free
+ *  masked text after the line's last admitted token (spans chunk
+ *  boundaries).
+ *
+ *  GAP PROVENANCE — all gaps are taken against the MASKED segment:
+ *  maskSecrets is length-preserving (" ".repeat(m.length) per match), so
+ *  token spans also index the raw text, but the gap TEXT is read from the
+ *  masked string. A masked secret becomes spaces, so two words around a
+ *  removed secret look adjacent — accepted: the secret's bytes are gone,
+ *  the gap is real whitespace.
+ *
+ *  Segments with NO admitted tokens still extend the carry (their whole
+ *  masked text is gap text): dropping it would lose punctuation that must
+ *  break the run — e.g. "zephyr," | " quuxblat" split across a chunk
+ *  boundary inside the gap would silently chain if the comma were dropped. */
+function appendSegment(
+  openLine: SpanEntry[],
+  openTail: string,
+  r: SegmentResult,
+): string {
+  if (r.entries.length === 0) return openTail + r.masked;
+  for (let j = 0; j < r.entries.length; j++) {
+    const e = r.entries[j]!;
+    const gapBefore =
+      j > 0
+        ? r.masked.slice(r.entries[j - 1]!.end, e.start)
+        : openLine.length > 0
+          ? openTail + r.masked.slice(0, e.start) // gap spans the boundary
+          : ""; // line's first entry: always opens a run
+    openLine.push({ key: e.key, start: e.start, end: e.end, gapBefore });
+  }
+  return r.masked.slice(r.entries[r.entries.length - 1]!.end);
+}
+
 /** Construction options for IngestPipeline (PRD §05, P1.M3.T2.S2). */
 export interface IngestPipelineOptions {
   /** session candidate store — the pipeline feeds sightings into it */
@@ -120,13 +200,17 @@ export interface IngestPipelineOptions {
   /** awaited between slices; default scheduler.yield/setImmediate/Promise
    *  fallback chain; test-injectable to count chunk boundaries */
   yieldFn?: YieldFn;
-  /** M2 n-gram hook (P2.M1.T1.S1): per-LINE arrays of the lowercase keys
-   *  of admitted WHOLE-token candidates, in document order, once per
-   *  message. A newline is the only window break — a line never spans
-   *  one, and a slice boundary never breaks one (open lines carry
-   *  across). Empty lines produce empty arrays; a message whose lines
-   *  admit nothing still calls with its (possibly empty-array) lines. */
-  onAdmittedTokens?: (lines: string[][]) => void;
+  /** M2 successor-index hook (P1.M1.T3.S2, PRD 002 §06 h3.6): adjacency
+   *  RUNS of the lowercase keys of admitted WHOLE-token candidates, in
+   *  document order, exactly one call per message. A run breaks between
+   *  two consecutive admitted tokens unless the raw gap between them is
+   *  plain spaces/tabs on the same line — clause punctuation, quoting and
+   *  bracketing, digits/hexish/symbols, and intervening rejected words all
+   *  break; a newline always breaks; a chunk boundary never does (gap text
+   *  carries across). Runs hold ≥ 1 word (empty lines emit nothing).
+   *  Wired to store.recordBigramRuns, whose per-run adjacent-pair counting
+   *  builds the word → top-3 successor index. */
+  onAdmittedTokens?: (runs: string[][]) => void;
 }
 
 /**
@@ -144,7 +228,8 @@ export interface IngestPipelineOptions {
  * session_shutdown handler calls dispose() to drop the debounce timer and
  * any queued-but-unprocessed text; restore replay (P1.M3.T2.S3) calls
  * flush/processText directly; /acwords (P1.M3.T4.S1) reads getStats;
- * n-grams (P2.M1.T1.S1) supply onAdmittedTokens (per-line keys).
+ * the successor index (P1.M1.T3.S2) supplies onAdmittedTokens with
+ * adjacency runs (strict whitespace-only adjacency, PRD 002 §06 h3.6).
  */
 export class IngestPipeline {
   #store: CandidateStore;
@@ -152,7 +237,7 @@ export class IngestPipeline {
   #debounceMs: number;
   #chunkBytes: number;
   #yieldFn: YieldFn;
-  #onAdmittedTokens?: (lines: string[][]) => void;
+  #onAdmittedTokens?: (runs: string[][]) => void;
   /** Optional disable gate (BUG-004) — see IngestPipelineOptions. */
   #isDisabled?: () => boolean;
   /** FIFO queue; entries hold nothing but { text, fromUser } and are
@@ -251,50 +336,68 @@ export class IngestPipeline {
    *  a multi-MB message never blocks a keystroke (§02 h2.15). P1.M3.T2.S3
    *  restore calls this directly to bypass the debounce. A slice boundary
    *  can split one token — an accepted approximation (regex tokenize is
-   *  safe on any slice) — but NEVER a phrase-window line: text is split
-   *  on '\n' per slice, every newline-terminated segment finalizes a
-   *  line, and an unterminated tail segment carries the open line into
-   *  the next slice, so only a newline breaks a window (PRD §06 M2). */
+   *  safe on any slice) — but NEVER an adjacency run: text is split on
+   *  '\n' per slice, every newline-terminated segment finalizes a line,
+   *  and an unterminated tail segment carries the open line AND its
+   *  trailing gap text (openTail) into the next slice, so only a newline
+   *  structurally breaks a run (PRD 002 §06 h3.6); within a line, runs
+   *  break on any gap that is not plain spaces/tabs (splitRuns). */
   async processText(text: string, fromUser: boolean): Promise<void> {
     if (this.#isDisabled?.()) return; // BUG-004: disabled pipeline = total no-op
     if (text.length === 0) return; // no content → no ordinal, no stats
     const ordinal = this.#store.nextOrdinal(); // ONCE per message
-    const lines: string[][] = []; // finalized per-line key arrays, in order
-    let openLine: string[] = []; // the line still open at a slice boundary
+    const runs: string[][] = []; // finalized adjacency runs, in order
+    // The line still open at a chunk boundary: its admitted whole tokens
+    // (with spans) plus the masked gap text after the last one — the gap
+    // between "zephyr   " and "   quuxblat" straddling a 64 KiB edge is
+    // openTail + the next segment's prefix, so it chains like any other.
+    let openLine: SpanEntry[] = [];
+    let openTail = "";
     for (let off = 0; off < text.length; off += this.#chunkBytes) {
       const slice = text.slice(off, off + this.#chunkBytes);
-      // Newline is the ONLY phrase-window break (PRD §06 M2) — a slice
-      // boundary never breaks one. segments[0..n-2] were each terminated
-      // by a '\n' inside this slice → finalize each as a line; the tail
+      // Newline is the only STRUCTURAL break (PRD 002 §06 h3.6) — a chunk
+      // boundary never breaks a run. segments[0..n-2] were each terminated
+      // by a '\n' inside this slice → finalize each line's runs; the tail
       // segment stays open. (An empty tail segment is just the newline's
-      // right side — nothing to carry; empty lines finalize as [].)
+      // right side — nothing to carry; an empty line finalizes as zero
+      // runs, since runs hold ≥ 1 word.)
       const segments = slice.split("\n");
       for (let i = 0; i < segments.length - 1; i++) {
-        const keys = this.#admitSegment(segments[i]!, ordinal, fromUser);
-        lines.push(openLine.length > 0 ? [...openLine, ...keys] : keys);
+        openTail = appendSegment(
+          openLine,
+          openTail,
+          this.#admitSegment(segments[i]!, ordinal, fromUser),
+        );
+        runs.push(...splitRuns(openLine));
         openLine = [];
+        openTail = "";
       }
-      openLine.push(
-        ...this.#admitSegment(segments[segments.length - 1]!, ordinal, fromUser),
+      openTail = appendSegment(
+        openLine,
+        openTail,
+        this.#admitSegment(segments[segments.length - 1]!, ordinal, fromUser),
       );
       // BUG-004: a failure observed mid-message ends the message HERE —
-      // remaining slices are skipped and the phrase hook below is NOT
-      // called: a half-admitted message's phrase windows are meaningless
-      // once the extension is dead.
+      // remaining slices are skipped and the hook below is NOT called: a
+      // half-admitted message's runs are meaningless once the extension
+      // is dead.
       if (this.#isDisabled?.()) return;
       await this.#yieldFn(); // keystroke path resumes between slices
     }
-    if (openLine.length > 0) lines.push(openLine); // unterminated final line
-    // M2 n-gram hook — per line, once per message. Empty text never gets
-    // here (early return); null-extracted messages never enqueue.
-    this.#onAdmittedTokens?.(lines);
+    runs.push(...splitRuns(openLine)); // unterminated final line
+    // Successor-index hook — adjacency runs, once per message. Empty text
+    // never gets here (early return); null-extracted messages never enqueue.
+    this.#onAdmittedTokens?.(runs);
   }
 
   /** Run one '\n'-free segment through the core chain (maskSecrets →
    *  tokenize → expandCandidates → passesShape → admit → store.upsert) and
-   *  return the lowercase keys of its admitted WHOLE tokens, in order.
-   *  Sub-words are stored as candidates but never enter phrase windows
-   *  (PRD §06 M2). Gate/admission accounting and #stats updates are
+   *  return the post-maskSecrets segment plus span-carrying entries for its
+   *  admitted WHOLE tokens, in document order. Spans are the RawToken's own
+   *  UTF-16 offsets into the MASKED segment (tokenize runs on the masked
+   *  text and maskSecrets is length-preserving, so they index the raw text
+   *  too). Sub-words are stored as candidates but never enter runs
+   *  (PRD 002 §06 h3.6). Gate/admission accounting and #stats updates are
    *  exactly the message-loop behavior this was extracted from
    *  (P1.M3.T2.S2). Masking (BUG-003 layer 1) runs FIRST so structured
    *  secret windows never reach tokenize — this method is the single
@@ -304,14 +407,14 @@ export class IngestPipeline {
     segment: string,
     ordinal: number,
     fromUser: boolean,
-  ): string[] {
+  ): SegmentResult {
     // Blank structured secret windows before tokenization (BUG-003 layer
     // 1): key bytes never become tokens, hence never candidates. The
     // token-level rules in isSecretShaped stay the layer-2 residue net
     // (P1.M2.T2.S1) — untouched here.
-    segment = maskSecrets(segment);
-    const keys: string[] = [];
-    for (const token of tokenize(segment)) {
+    const masked = maskSecrets(segment);
+    const entries: SegmentResult["entries"] = [];
+    for (const token of tokenize(masked)) {
       if (this.#isDisabled?.()) break; // BUG-004: dict failure mid-message
       const drafts = expandCandidates(token); // whole token first
       // Group of the whole token WHEN ADMITTED — the only state shared
@@ -348,7 +451,7 @@ export class IngestPipeline {
         this.#stats.admitted++;
         if (!draft.isSubword) {
           wholeGroup ??= result;
-          keys.push(draft.key);
+          entries.push({ key: draft.key, start: token.start, end: token.end });
         }
         const sighting: Sighting = {
           key: draft.key,
@@ -365,7 +468,7 @@ export class IngestPipeline {
         this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)
       }
     }
-    return keys;
+    return { masked, entries };
   }
 
   /** Cumulative counters (PRD §08 /acwords). Returns a copy — a live

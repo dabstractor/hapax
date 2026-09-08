@@ -165,8 +165,9 @@ export default function hapax(pi: ExtensionAPI): void {
       // funnel through processText).
       isDisabled: () => disabled,
       // Bigram capture (PRD §06 h2.38), live only when enabled (PRD §08):
-      // per-line admitted whole-token keys → bigram upserts. The store
-      // reads currentOrdinal() itself — the message's ordinal was already
+      // adjacency RUNS of admitted whole-token keys (P1.M1.T3.S2 — strict
+      // whitespace-only adjacency, PRD 002 §06 h3.6) → bigram upserts. The
+      // store reads currentOrdinal() itself — the message's ordinal was already
       // issued by processText (nextOrdinal before the first slice).
       //
       // Successor capture rides the SAME gate (PRD §06 h3.9): the store
@@ -178,7 +179,7 @@ export default function hapax(pi: ExtensionAPI): void {
       // (P1.M3.T1.S2 re-points this gate to `enableChaining`.)
       ...(config.enablePhrases
         ? {
-            onAdmittedTokens: (lines) => sessionStore.recordBigramRuns(lines),
+            onAdmittedTokens: (runs) => sessionStore.recordBigramRuns(runs),
           }
         : {}),
     });

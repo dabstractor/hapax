@@ -430,7 +430,9 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     // FULL nrel replay — the /resume scenario — through a REAL pipeline
     // with the SHIPPED dict and the phrase hook wired exactly like
     // src/pi/index.ts's session_start: phrases admitted, successor index
-    // complete (store.topSuccessors: national→renewable/license/wind,
+    // complete (store.topSuccessors: national→renewable/wind — the old
+    // "license" entry was a gate-rejected-"lab" bridge, removed by
+    // P1.M1.T3.S2's strict adjacency — renewable→energy, energy→laboratory).
     // renewable→energy, energy→laboratory).
     const entries = parseSessionFixture(NREL);
     const s = new CandidateStore();
@@ -493,7 +495,6 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     expect(offer1!.prefix, "hop 1: pending offer must answer with zero typed chars").toBe("");
     expect(offer1!.items.map((i) => i.label), "hop 1: 'national' successors (count-desc)").toEqual([
       "renewable",
-      "license",
       "wind",
     ]);
     provider.applyCompletion(

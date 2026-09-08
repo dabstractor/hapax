@@ -99,7 +99,7 @@ interface Harness {
 function makePipeline(
   opts: {
     chunkBytes?: number;
-    onAdmittedTokens?: (lines: string[][]) => void;
+    onAdmittedTokens?: (runs: string[][]) => void;
     withYieldFn?: boolean;
   } = {},
 ): Harness {
@@ -242,17 +242,16 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     expect(h.store.get("time")?.rankGroup).toBe(1);
   });
 
-  it("calls onAdmittedTokens once per message with per-line whole-token keys", async () => {
+  it("calls onAdmittedTokens once per message with adjacency runs of whole-token keys", async () => {
     const calls: string[][][] = [];
-    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(userMsg("zephyr deltaWave"));
     h.pipeline.onMessageEnd(assistantMsg([{ type: "text", text: "vortex" }]));
     h.pipeline.onMessageEnd(userMsg("abc")); // nothing admitted anywhere
     await drainNow(h);
     // Whole tokens only ("delta"/"wave" subwords excluded), doc order,
-    // one call per message. Newline-terminated lines always appear (even
-    // empty); the unterminated tail line is reported only when it holds
-    // keys — "abc" admitted nothing, so its lines array is empty.
+    // one call per message. Runs hold ≥ 1 word: "abc" admitted nothing,
+    // so its runs array is empty (the old per-line shape emitted []s).
     expect(calls).toEqual([[["zephyr", "deltawave"]], [["vortex"]], []]);
     // Role plumbing: user → userTyped sticky, assistant → not.
     expect(h.store.get("zephyr")?.userTyped).toBe(true);
@@ -332,9 +331,19 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
   });
 });
 
-// --- onAdmittedTokens: per-line shape (P2.M1.T1.S1) -------------------------
+// --- onAdmittedTokens: adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2) -------
 
-describe("onAdmittedTokens — per-line n-gram hook (PRD §06 M2)", () => {
+/**
+ * A run breaks between two consecutive admitted tokens unless the raw gap
+ * is plain spaces/tabs on the SAME line: clause punctuation, quotes and
+ * brackets, digits/hexish/symbols, intervening rejected words ("of", "the",
+ * "v2"), and newlines all break; multi-space/tab gaps chain, including
+ * across a chunk boundary (gap text carries via openTail). Counting cases
+ * feed the captured runs to the real store (index.ts's wiring shape) and
+ * check the successor index, so a bridged bigram can never hide behind a
+ * well-shaped runs array.
+ */
+describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
@@ -342,40 +351,210 @@ describe("onAdmittedTokens — per-line n-gram hook (PRD §06 M2)", () => {
     vi.useRealTimers();
   });
 
-  it("splits lines on newline — windows never span lines", async () => {
+  it("chains whitespace-only gaps — single space, mixed space/tab, 3-word run", async () => {
     const calls: string[][][] = [];
-    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz\nvortex granite"));
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("zephyr deltaWave"));
+    h.pipeline.onMessageEnd(userMsg("zephyr \t deltaWave")); // space+tab+space
+    h.pipeline.onMessageEnd(userMsg("zephyr quartz vortex"));
     await drainNow(h);
-    expect(calls).toEqual([[["zephyr", "quartz"], ["vortex", "granite"]]]);
-    // Recording through the real store (index.ts's wiring shape) proves
-    // the line break broke the window: "quartz vortex" must not exist.
-    h.store.recordBigramRuns(calls[0]!);
-    expect(h.store.topSuccessors("quartz")).toEqual([]);
+    expect(calls).toEqual([
+      [["zephyr", "deltawave"]],
+      [["zephyr", "deltawave"]],
+      [["zephyr", "quartz", "vortex"]],
+    ]);
+    // A 3-word run yields BOTH adjacent-pair bigrams via the real wiring.
+    h.store.recordBigramRuns(calls[2]!);
     expect(h.store.topSuccessors("zephyr")).toEqual([{ next: "quartz", count: 1 }]);
+    expect(h.store.topSuccessors("quartz")).toEqual([{ next: "vortex", count: 1 }]);
   });
 
-  it("a chunk boundary never breaks a line — only '\\n' does", async () => {
+  it.each([",", ";", ":", ".", "!", "?", "—", "–", "…", "|"])(
+    "clause punctuation %j breaks the run",
+    async (p) => {
+      const calls: string[][][] = [];
+      const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+      h.pipeline.onMessageEnd(userMsg(`zephyr${p} quuxblat`));
+      await drainNow(h);
+      expect(calls).toEqual([[["zephyr"], ["quuxblat"]]]);
+      h.store.recordBigramRuns(calls[0]!);
+      expect(h.store.topSuccessors("zephyr")).toEqual([]); // no cross bigram
+    },
+  );
+
+  it("backtick-quoted words never chain", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("`zephyr` `quuxblat`"));
+    await drainNow(h);
+    expect(calls).toEqual([[["zephyr"], ["quuxblat"]]]);
+  });
+
+  it.each([
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+    ["<", ">"],
+    ['"', '"'],
+    ["'", "'"],
+  ])("words entering/leaving %s…%s never chain to neighbors outside", async (open, close) => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(
+      userMsg(`vortex ${open}zephyr quuxblat${close} granite`),
+    );
+    await drainNow(h);
+    // The inner pair chains; both boundary words are fenced off by the
+    // bracket characters in their gaps.
+    expect(calls).toEqual([[["vortex"], ["zephyr", "quuxblat"], ["granite"]]]);
+  });
+
+  it.each(["/", "\\", "=", "+", "&", "%", "#", "*", "@", "-", "~", "^"])(
+    "symbol %j between two words breaks the run",
+    async (s) => {
+      const calls: string[][][] = [];
+      const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+      h.pipeline.onMessageEnd(userMsg(`zephyr ${s} quuxblat`));
+      await drainNow(h);
+      expect(calls).toEqual([[["zephyr"], ["quuxblat"]]]);
+    },
+  );
+
+  it("digit runs and hexish tokens break the chain ACROSS them", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    // "v2" is gate-rejected (too short) → pure gap text → the run breaks.
+    h.pipeline.onMessageEnd(userMsg("zephyr v2 quuxblat"));
+    // "0f3a9c2" is hexish and ADMITS (rare) → it sits IN the run — but
+    // only consecutive pairs bigram, so zephyr→quuxblat never happens.
+    h.pipeline.onMessageEnd(userMsg("zephyr 0f3a9c2 quuxblat"));
+    await drainNow(h);
+    expect(calls).toEqual([
+      [["zephyr"], ["quuxblat"]],
+      [["zephyr", "0f3a9c2", "quuxblat"]],
+    ]);
+    h.store.recordBigramRuns([...calls[0]!, ...calls[1]!]);
+    expect(h.store.topSuccessors("zephyr")).toEqual([
+      { next: "0f3a9c2", count: 1 },
+    ]);
+    expect(h.store.topSuccessors("0f3a9c2")).toEqual([
+      { next: "quuxblat", count: 1 },
+    ]);
+    expect(h.store.topSuccessors("quuxblat")).toEqual([]);
+  });
+
+  it("a rejected word between two admitted words breaks the run (no stopword bridging)", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    // "of" is gate-rejected (2 chars) — its TEXT stays in the gap and must
+    // break, never bridge: the PRD §06 h3.6 exemplar. Same class: "the".
+    h.pipeline.onMessageEnd(userMsg("United States of America"));
+    h.pipeline.onMessageEnd(userMsg("zephyr the quuxblat"));
+    await drainNow(h);
+    expect(calls).toEqual([
+      [["united", "states"], ["america"]],
+      [["zephyr"], ["quuxblat"]],
+    ]);
+    h.store.recordBigramRuns(calls[0]!);
+    expect(h.store.topSuccessors("united")).toEqual([
+      { next: "states", count: 1 },
+    ]);
+    expect(h.store.topSuccessors("states")).toEqual([]); // never bridges to america
+  });
+
+  it("ZorpWibbleEngine, quuxblat never chains (the stopword-bridge bug class)", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("ZorpWibbleEngine, quuxblat"));
+    h.pipeline.onMessageEnd(userMsg("ZorpWibbleEngine, the quuxblat"));
+    await drainNow(h);
+    // ", " and ", the " both break — under the old per-line shape the
+    // first message's line array produced the bridged bigram.
+    expect(calls).toEqual([
+      [["zorpwibbleengine"], ["quuxblat"]],
+      [["zorpwibbleengine"], ["quuxblat"]],
+    ]);
+    h.store.recordBigramRuns(calls[0]!);
+    expect(h.store.topSuccessors("zorpwibbleengine")).toEqual([]);
+  });
+
+  it("newline breaks runs; blank lines yield nothing (no empty arrays); one call per message", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("zephyr quartz\nvortex granite"));
+    h.pipeline.onMessageEnd(userMsg("zephyr\n\nvortex\n"));
+    await drainNow(h);
+    expect(calls).toEqual([
+      [["zephyr", "quartz"], ["vortex", "granite"]],
+      [["zephyr"], ["vortex"]], // the blank line emits NO empty run
+    ]);
+  });
+
+  it("a chunk boundary inside a whitespace gap still chains", async () => {
+    const calls: string[][][] = [];
+    // "zephyr" + 6 spaces + "quuxblat", sliced at 12: slice 1 ends exactly
+    // at the gap's end ("zephyr      "), slice 2 starts at "quuxblat".
+    const h = makePipeline({
+      chunkBytes: 12,
+      onAdmittedTokens: (runs) => calls.push(runs),
+    });
+    h.pipeline.onMessageEnd(userMsg("zephyr      quuxblat"));
+    await drainNow(h);
+    expect(h.counts.yields).toBe(2); // the boundary really happened
+    expect(calls).toEqual([[["zephyr", "quuxblat"]]]); // gap carried → chains
+    h.store.recordBigramRuns(calls[0]!);
+    expect(h.store.topSuccessors("zephyr")).toEqual([
+      { next: "quuxblat", count: 1 },
+    ]);
+  });
+
+  it("a chunk boundary inside a punctuation gap still breaks", async () => {
+    const calls: string[][][] = [];
+    // "zephyr, quuxblat" sliced at 8: slice 1 ends mid-gap ("zephyr, ").
+    // The comma must survive the carry (openTail) and break the run.
+    const h = makePipeline({
+      chunkBytes: 8,
+      onAdmittedTokens: (runs) => calls.push(runs),
+    });
+    h.pipeline.onMessageEnd(userMsg("zephyr, quuxblat"));
+    await drainNow(h);
+    expect(h.counts.yields).toBe(2);
+    expect(calls).toEqual([[["zephyr"], ["quuxblat"]]]);
+  });
+
+  it("a chunk boundary never breaks a run — only '\\n' does", async () => {
     const calls: string[][][] = [];
     // "zephyr quartz vortex" cut after each token (7-char slices): two
-    // slice boundaries, zero newlines — still ONE line with all words.
+    // chunk boundaries, zero newlines — still ONE run with all words.
     const h = makePipeline({
       chunkBytes: 7,
-      onAdmittedTokens: (lines) => calls.push(lines),
+      onAdmittedTokens: (runs) => calls.push(runs),
     });
     h.pipeline.onMessageEnd(userMsg("zephyr quartz vortex"));
     await drainNow(h);
     expect(h.counts.yields).toBe(3); // boundaries really happened
     expect(calls).toEqual([[["zephyr", "quartz", "vortex"]]]);
-    // The window SPANNING the slice 2–3 boundary survives recording.
+    // The pairs SPANNING the slice boundaries survive recording.
     h.store.recordBigramRuns(calls[0]!);
     expect(h.store.topSuccessors("quartz")).toEqual([{ next: "vortex", count: 1 }]);
     expect(h.store.topSuccessors("zephyr")).toEqual([{ next: "quartz", count: 1 }]);
   });
 
-  it("sub-words never enter line arrays — only whole-token keys", async () => {
+  it("repeated runs double the successor count", async () => {
     const calls: string[][][] = [];
-    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("zephyr quartz"));
+    h.pipeline.onMessageEnd(userMsg("zephyr quartz"));
+    await drainNow(h);
+    expect(calls).toEqual([[["zephyr", "quartz"]], [["zephyr", "quartz"]]]);
+    h.store.recordBigramRuns(calls[0]!);
+    h.store.recordBigramRuns(calls[1]!);
+    expect(h.store.topSuccessors("zephyr")).toEqual([{ next: "quartz", count: 2 }]);
+  });
+
+  it("sub-words never enter runs — only whole-token keys", async () => {
+    const calls: string[][][] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     // Whole "contextzephyr" is COMMON → admission reject; its admitted
     // subwords ("context", "zephyr") are subword drafts — excluded.
     h.pipeline.onMessageEnd(userMsg("contextZephyr standalone"));
@@ -387,17 +566,9 @@ describe("onAdmittedTokens — per-line n-gram hook (PRD §06 M2)", () => {
     expect(h.store.get("standalone")).toBeDefined();
   });
 
-  it("empty lines produce empty arrays; a trailing newline adds no extra line", async () => {
+  it("multi-block messages produce runs per line (extractText joins with '\\n')", async () => {
     const calls: string[][][] = [];
-    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
-    h.pipeline.onMessageEnd(userMsg("zephyr\n\nvortex\n"));
-    await drainNow(h);
-    expect(calls).toEqual([[["zephyr"], [], ["vortex"]]]);
-  });
-
-  it("multi-block messages arrive as separate lines (extractText joins with '\\n')", async () => {
-    const calls: string[][][] = [];
-    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(
       userMsg([
         { type: "text", text: "zephyr quartz" },
@@ -410,7 +581,7 @@ describe("onAdmittedTokens — per-line n-gram hook (PRD §06 M2)", () => {
 
   it("no callback for empty text or null-extraction messages", async () => {
     const calls: string[][][] = [];
-    const h = makePipeline({ onAdmittedTokens: (lines) => calls.push(lines) });
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(toolResultMsg()); // null extraction → never queued
     h.pipeline.onMessageEnd(userMsg("")); // empty text → processText early-return
     await drainNow(h);
