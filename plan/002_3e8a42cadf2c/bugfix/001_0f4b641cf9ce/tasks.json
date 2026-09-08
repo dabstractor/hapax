@@ -104,7 +104,7 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Admission and secret-defense correctness (BUG-002, BUG-003)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Make the PRD's own M2 acceptance phrase (National -> Renewable -> Energy -> Laboratory at zero typed chars) reachable again without reintroducing common-word menu noise, via a capitalized-occurrence (proper-noun) admission relief band validated by the §09 tuning protocol and pinned in an automated test; and close the secret-fragment leak by lowering the raw-text bare-run mask floor to 32 and propagating whole-token secret rejection to its sub-word drafts, verified against the PRD's paste battery.",
           "tasks": [
             {
@@ -170,7 +170,7 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "Suppress fragments of pasted secrets (BUG-003)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Sub-16-char, <=1-digit camelCase sub-words of secret-shaped whole tokens (CYEXAMPLEKEY from the 38-char AWS example key) and fragments of npm/glpat/sk_live/Bearer synthetics currently pass every gate and surface in the menu. Fix all three PRD levers: bare-run mask floor 40->32, parent-secret propagation so sub-words of a secret-rejected whole token are never stored, and a conservative synthetic-token battery.",
               "subtasks": [
                 {
@@ -192,7 +192,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S2",
                   "title": "Propagate whole-token secret rejection to sub-word drafts in the ingest memo",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — #computeAdmitMemo (src/pi/ingest.ts ~590-650) gates each CandidateDraft from expandCandidates independently; the ONLY cross-draft state is wholeGroup, set just when the whole token gate-passed AND admitted ('if (!draft.isSubword && result !== \"reject\") wholeGroup ??= result;'). A whole token rejected with GateRejectReason 'secret' leaves no trace, so its sub-words (jalr, femik7, mden, cyexamplekey — all sub-16-char, <=1 digit, defeating rules 6/7) pass. expandCandidates emits the whole draft FIRST, then sub-words — an ordered flag works.\n2. INPUT: GateResult/GateRejectReason from src/core/types.ts ('tooShort'|'tooLong'|'lowEntropy'|'unigramRun'|'secret'|'consonantRun'); expandCandidates draft order; #computeAdmitMemo structure and #replayAdmitMemo counters.\n3. LOGIC: Implement the PRD h3.2 minimum bar 'suppress candidates whose parent token was secret-rejected': in #computeAdmitMemo, when the whole-token draft's passesShape rejects with reason 'secret', mark the token and reject ALL its sub-word drafts for that token (never stored; count them with the existing secret-reject counters). Masked-away text never reaches tokenize (maskSecrets blanks it), so shape-gate-rejected parents are the remaining leak. TDD in test/ingest-pipeline.test.ts or test/adversarial-ingest.test.ts with the real pipeline + synthetic dict: processText('password wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY trailing') -> store.entries() contains NONE of jalr/femik7/mden/cyexamplekey; provider.getSuggestions(['cy'],...) returns no items; sub-words of gate-PASSING parents still admit (regression). Mock: none (real modules; synthetic dict binary via test/helpers/dict-writer.ts).\n4. OUTPUT: Parent-secret-aware memo in src/pi/ingest.ts consumed by P1.M2.T2.S3 battery.\n5. DOCS: [Mode A] Update the #computeAdmitMemo doc-block documenting the parent-secret propagation rule and its rationale (§01 'never embarrass'; §09 item 5).",
@@ -207,7 +207,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S3",
                   "title": "Synthetic-token paste battery: npm/glpat/sk_live/Bearer fragments never offered",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T2.S1",
@@ -236,14 +236,14 @@
               "type": "Task",
               "id": "P1.M3.T1",
               "title": "Code-point-correct Unicode boundary guard in tokenize (BUG-004)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "isUniLetter reads codePointAt one code unit at a time, so an astral (surrogate-pair) letter immediately BEFORE a match is seen as its lone low surrogate and the run slips through: tokenize('𝔘sword') -> ['sword'] while §04 rule 3 requires nothing.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T1.S1",
                   "title": "Fix the before-side boundary check to step by full code points at both guard sites",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — isUniLetter (src/core/segment.ts:78-83) takes a code point; guard sites at :130-131 (base pass) and :152-155 (hexish pass) call isUniLetter(text.codePointAt(m.index - 1)). For an astral letter before a match, codePointAt at that offset returns the lone LOW surrogate (0xDC00-0xDFFF), which is not \\p{L}. The AFTER side is already correct (codePointAt at a high surrogate returns the full pair). The function's own JSDoc documents this as an 'Accepted v1 trade-off' — the PRD demotes it to a spec deviation.\n2. INPUT: tokenize(text) in src/core/segment.ts; UNI_LETTER_RE (/\\p{L}/u) and ASCII_LETTER_RE constants; RawToken output shape.\n3. LOGIC: Implement PRD §Minor Issue 1 (h3.3): add a helper (e.g. isUniLetterBefore(text, index)) that, when the code unit at index-1 is a low surrogate, backs up one more unit and tests the combined code point; use it at BOTH before-side guard sites (base and hexish passes); keep the after-side logic unchanged. TDD in test/segment.test.ts: tokenize('𝔘sword') -> []; tokenize('sword𝔘') -> [] (regression, already passing); 'ΩbsidianMirror' -> []; 'Þórhildur' -> []; BMP 'é' adjacency both sides still disqualifies; an astral letter between two ASCII runs kills both; hexish variant with astral prefix. Remove the 'Accepted v1 trade-off' JSDoc limitation note. Mock: none (pure function).\n4. OUTPUT: Correct tokenize() in src/core/segment.ts; consumed by P1.M4.T1.S1 regression and the final docs task (README known-limitations sweep).\n5. DOCS: [Mode A] Replace the isUniLetter/tokenize JSDoc trade-off note with the code-point-correct behavior description (the README 'Known limitations' mention is swept by P1.M4.T2.S1).",

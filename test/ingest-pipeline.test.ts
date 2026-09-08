@@ -14,6 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CandidateStore } from "../src/core/store.js";
+import { rankMatches } from "../src/core/query.js";
 import {
   MID_FREQ_THRESHOLD,
   REJECT_COMMON_THRESHOLD,
@@ -591,5 +592,111 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     await drainNow(h);
     expect(calls).toEqual([]);
     expect(h.store.currentOrdinal()).toBe(0); // no ordinal issued either
+  });
+});
+
+// --- parent-secret propagation (BUG-003 layer 2, PRD h3.5) -------------------
+
+/**
+ * A whole token rejected with reason 'secret' must poison its sub-word
+ * drafts: camelCase/snake_case fragments of a pasted secret are short and
+ * letter-heavy and defeat isSecretShaped's token-level rules on their own
+ * gate ("cy" → "CYEXAMPLEKEY" was the leak). Vectors verified non-vacuous
+ * against maskSecrets + tokenize: the 38-char AWS repro is MASKED by S1's
+ * BARE_RUN_MIN = 32 layer and never reaches the gate (kept as the PRD
+ * contract pin), while the ghp_ vector below survives masking, its whole
+ * token is secret-rejected AT the gate, and every sub-word passes its own
+ * gate pre-fix (empirically checked — the PRP's literal AbCdEfGhIjKlMn
+ * payload has no ≥4-char sub-words and would make the case vacuous).
+ */
+describe("parent-secret propagation to sub-words (BUG-003 residue, PRD h3.5)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("PRD repro: the masked 38-char AWS secret stores none of its fragments", async () => {
+    const h = makePipeline();
+    h.pipeline.onMessageEnd(
+      userMsg("password wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY trailing"),
+    );
+    await drainNow(h);
+    // No fragment of the secret exists anywhere — the run is blanked by
+    // maskSecrets (layer 1) before tokenize, so nothing reaches the gate.
+    for (const leak of [
+      "jalr",
+      "femik7",
+      "mden",
+      "cyexamplekey",
+      "wjalrxutnfemik7mdengbpxrficyexamplekey",
+    ]) {
+      expect(h.store.get(leak)).toBeUndefined();
+    }
+    expect(rankMatches(h.store, "cy")).toEqual([]); // provider-equivalent
+    // Layer-1 pin: the secret never even reached the gate.
+    expect(h.pipeline.getStats().rejectedByGate.secret).toBe(0);
+    // Positive control: prose words of the same message admit.
+    expect(h.store.get("password")).toBeDefined();
+    expect(h.store.get("trailing")).toBeDefined();
+  });
+
+  it("layer 2: a gate-reaching ghp_ whole token poisons every sub-word draft", async () => {
+    const h = makePipeline();
+    h.pipeline.onMessageEnd(userMsg("gate ghp_AbcdEfghIjklmnop done"));
+    await drainNow(h);
+    // Whole token secret-rejected AT the gate; each camelCase sub-word
+    // (all gate-clean on their own — verified) inherits the verdict.
+    expect(h.store.get("ghp_abcdefghijklmnop")).toBeUndefined();
+    for (const frag of ["abcd", "efgh", "ijklmnop"]) {
+      expect(h.store.get(frag)).toBeUndefined();
+    }
+    expect(rankMatches(h.store, "ij")).toEqual([]); // provider-equivalent
+    // Exactly 1 whole + 3 poisoned sub-words in the EXISTING secret
+    // bucket (via #replayAdmitMemo's !gate.ok branch — no new field).
+    expect(h.pipeline.getStats().rejectedByGate.secret).toBe(4);
+    // Positive control: prose words of the same message admit.
+    expect(h.store.get("gate")).toBeDefined();
+    expect(h.store.get("done")).toBeDefined();
+  });
+
+  it("memoized replay: the same secret text twice doubles the secret counter", async () => {
+    const h = makePipeline();
+    h.pipeline.onMessageEnd(userMsg("gate ghp_AbcdEfghIjklmnop done"));
+    h.pipeline.onMessageEnd(userMsg("gate ghp_AbcdEfghIjklmnop done"));
+    await drainNow(h);
+    // 4 secret rejects per occurrence (1 whole + 3 poisoned subs); the
+    // memo is computed once per distinct token and replayed per
+    // occurrence, so the count doubles — never re-computed, never lost.
+    expect(h.pipeline.getStats().rejectedByGate.secret).toBe(8);
+    for (const frag of ["abcd", "efgh", "ijklmnop"]) {
+      expect(h.store.get(frag)).toBeUndefined();
+    }
+  });
+
+  it("regression: sub-words of a gate-PASSING parent still admit", async () => {
+    const h = makePipeline();
+    h.pipeline.onMessageEnd(userMsg("ZendeskLwlockTool"));
+    await drainNow(h);
+    expect(h.store.get("zendesklwlocktool")).toBeDefined();
+    expect(h.store.get("zendesk")).toBeDefined();
+    expect(h.store.get("lwlock")).toBeDefined();
+    expect(h.store.get("tool")).toBeDefined();
+  });
+
+  it("non-propagation: a consonantRun whole-token reject does NOT poison gate-clean sub-words", async () => {
+    const h = makePipeline();
+    h.pipeline.onMessageEnd(userMsg("qqqxxxzzzvvvWord"));
+    await drainNow(h);
+    // The parent (and its noise-shaped sub "qqqxxxzzzvvv") die at their
+    // own gates for consonantRun — but "word" is gate-clean and must
+    // still admit independently: only 'secret' propagates (§04).
+    expect(h.store.get("qqqxxxzzzvvvword")).toBeUndefined();
+    expect(h.store.get("qqqxxxzzzvvv")).toBeUndefined();
+    expect(h.store.get("word")).toBeDefined();
+    const stats = h.pipeline.getStats();
+    expect(stats.rejectedByGate.consonantRun).toBe(2);
+    expect(stats.rejectedByGate.secret).toBe(0);
   });
 });

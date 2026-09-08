@@ -491,20 +491,57 @@ export class IngestPipeline {
    *  whole token's group, computed before sub-drafts are admitted) and
    *  the post-lookup isDisabled re-check (NEW-001): when the gate fires,
    *  the draft's lookup result is discarded, `complete` stays false, and
-   *  the caller replays the computed prefix once without caching. */
+   *  the caller replays the computed prefix once without caching.
+   *
+   *  Parent-secret propagation (BUG-003 layer 2, PRD h3.5 minimum bar):
+   *  when the WHOLE-token draft is gate-rejected with reason 'secret',
+   *  every later sub-word draft of that token inherits a synthetic
+   *  {ok:false, reason:'secret'} gate instead of being gated — let alone
+   *  admitted — independently. CamelCase/snake_case fragments of a
+   *  pasted secret (cyexamplekey, femik7, …) are short and letter-heavy
+   *  and defeat isSecretShaped's token-level rules on their own gate, so
+   *  without the poison they surface as completions (§01 "never
+   *  embarrass"; §09 integration item 5; masking is layer 1 and never
+   *  reaches tokenize). Only 'secret' propagates, and only whole →
+   *  sub-word: the other reject reasons are per-draft noise shapes, and
+   *  a sub-word secret reject already dies at its own gate (no
+   *  secret→secret chain). The plan stays a pure function of the token's
+   *  drafts — the flag lives only inside this call, ordered reliance is
+   *  expandCandidates' whole-token-first contract — so memoization is
+   *  untouched; #replayAdmitMemo counts the synthetic gates per
+   *  occurrence through its existing !gate.ok branch (no new stats
+   *  field), and poisoned drafts skip admit() so the disable seams and
+   *  wholeGroup clamp semantics are unaffected. */
   #computeAdmitMemo(token: RawToken): AdmitMemoEntry {
     const drafts = expandCandidates(token); // whole token first
     const entry: AdmitMemoEntry = { drafts, gates: [], admits: [], complete: true };
     // Group of the whole token WHEN ADMITTED — the only state shared
     // by a token's drafts (subword clamp input, PRD §04).
     let wholeGroup: RankGroup | undefined;
+    // BUG-003 layer 2 (PRD h3.5 minimum bar): set when the whole-token
+    // draft is secret-rejected; poisons every later sub-word draft.
+    let parentSecret = false;
     for (const draft of drafts) {
+      if (parentSecret && draft.isSubword) {
+        // Fragment of a secret-rejected whole token: inherits the
+        // parent's verdict as a synthetic secret gate — never gated
+        // independently, never admitted, counted per occurrence by
+        // #replayAdmitMemo's existing !gate.ok branch. passesShape is
+        // deliberately not recomputed (cheaper, and semantically the
+        // fragment "inherits" rather than re-earns the verdict).
+        entry.gates.push({ ok: false, reason: "secret" });
+        entry.admits.push(undefined);
+        continue;
+      }
       const gate = passesShape(draft);
       entry.gates.push(gate);
       if (!gate.ok) {
         // reason is present iff !ok (GateResult contract); gate-rejected
         // drafts never reach admit (and can never trigger the dict load).
         entry.admits.push(undefined);
+        // Only a WHOLE-token 'secret' reject poisons sub-words (BUG-003
+        // layer 2); non-secret reasons stay per-draft (§04 semantics).
+        if (!draft.isSubword && gate.reason === "secret") parentSecret = true;
         continue;
       }
       const result = admit(
