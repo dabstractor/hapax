@@ -1,0 +1,98 @@
+# Bug Fix Requirements
+
+## Overview
+Creative end-to-end validation of hapax against the PRD, driven by a faithful probe harness (real shipped dictionary dict/common-en.bin, real pi-tui editor semantics read from @earendil-works/pi-tui dist, IngestPipeline + provider stack wired exactly as src/pi/index.ts wires them). The 636-test suite passes, tsc is clean, config/debounce/restore/casing/eviction/unicode-BMP/hexish/one-word-invariant/force-single-item/delegation-when-no-candidates all behave per spec, and realistic query latency is ~0.1ms on a 20k store. However, six real defects were found: (1) threshold-mode 'fires everywhere' preempts stock slash-command/@-mention/quoted-path completion, and pi-tui's slash-context Tab path (force:false + explicitTab) returns the full hapax set so a single Tab OPENS the menu and a second Tab corrupts the command line — violating the acceptance-critical 'Tab never opens the menu' invariant and §09 integration item 6; (2) the admission-band retune (50/20 vs PRD 220/120) rejects national/energy/laboratory, making the PRD's own M2 acceptance scenario (integration item 7) unreachable — chaining works only between adjacent rare words; (3) sub-16-char, ≤1-digit fragments of pasted secrets (CYEXAMPLEKEY from the 38-char AWS example key) pass every gate and are offered as completions, against §09 item 5 and the §01 'never embarrass' principle; (4) astral-plane letters before an ASCII run leak the remainder (𝔘sword → 'sword') contrary to §04 rule 3; (5) an armed chain swallows the trigger char and returns a mis-prefixed successor set; (6) the bigram map can sit above its 10k hard cap after one large message.
+
+
+## Critical Issues (Must Fix)
+Issues that prevent core functionality from working.
+
+None.
+
+
+## Major Issues (Should Fix)
+Issues that significantly impact user experience or functionality.
+
+### Issue 1: Threshold mode preempts stock slash-command, @-mention, and quoted-path completion; Tab in a slash context opens the hapax word menu
+**Severity**: Major
+**ID**: BUG-001
+**Location**: src/pi/provider.ts:110-135 (extractMatchState threshold branch) and src/pi/provider.ts:345-360 (getSuggestions returns hapax set without consulting `current` for slash/@/path contexts)
+
+**Description**:
+extractMatchState's threshold regex /[A-Za-z][A-Za-z0-9_]*$/ fires on ANY trailing identifier regardless of what precedes it, and getSuggestions returns hapax's own word items without ever consulting `current`. Verified with the real shipped dictionary and the real pi-tui editor flow: (a) typing '/re' in a session where a rare word like 'renewable' was admitted returns hapax items [renewable, refresh] with prefix 're' — current.getSuggestions is never called, so pi's slash-command menu (/resume, /compact...) is replaced by hapax's word menu; same for '@' mentions and fragments inside quoted paths (typing '"src/roun' with 'Rounding' in the store offers 'Rounding' instead of the file src/rounding.ts, and Tab inserts it into the path). (b) pi-tui's Tab-with-no-menu path branches on context (components/editor.js handleTabCompletion): in a slash-command context it calls requestAutocomplete({force: false, explicitTab: true}) — NOT force — so hapax returns its full multi-item word set, the single-item fast path (force && explicitTab && items.length===1) does not apply, and applyAutocompleteSuggestions('regular') OPENS THE MENU on a single Tab keypress. A second Tab inserts the word into the command line ('/re' → '/renewable'). This violates PRD §01 design invariant 2 ('Tab never opens, toggles, or summons the menu' — acceptance-critical), §07 ('otherwise return current.getSuggestions(...) untouched (path/slash completion must keep working exactly as before, including inside quoted paths)'), and §09 integration item 6 (path/slash/@ behaviors identical to stock pi). The §07 h3.8 mitigation only covers options.force === true and explicitly leaves the force:false+explicitTab slash path untreated.
+
+**Steps to Reproduce**:
+1) Build a session (CandidateStore + IngestPipeline with the real dict/common-en.bin) and ingest text containing a rare word, e.g. processText('renewable energy compact resume theme refresh'). 2) Wrap a stock provider whose getSuggestions returns slash commands for '/'-prefixed input (mirroring pi's CombinedAutocompleteProvider). 3) Call provider.getSuggestions(['/re'], 0, 3, {signal:{aborted:false}, force:false}) — result: hapax word items [renewable('session x1'), refresh('session x1')], prefix 're'; stock provider never invoked (verified by call log). In real pi, typing '/re' shows the word menu instead of the command menu. 4) Press Tab with no menu open while the line is '/re': pi-tui handleTabCompletion → isInSlashCommandContext → handleSlashCommandCompletion → requestAutocomplete({force:false, explicitTab:true}) → provider returns 2 items → editor.js line ~1915 applyAutocompleteSuggestions(suggestions, 'regular') → menu OPENS on Tab (violates the Tab contract); pressing Tab again completes 'renewable' at prefix 're' → line becomes '/renewable'.
+
+### Issue 2: PRD M2 acceptance item 7 (National → Renewable → Energy → Laboratory chaining) can never pass: the phrase's words are admission-rejected
+**Severity**: Major
+**ID**: BUG-002
+**Location**: src/core/score.ts:60-80 (REJECT_COMMON_THRESHOLD = 50) interacting with dict/common-en.bin quantization; acceptance case in spec/09-testing-and-acceptance.md:109-110
+
+**Description**:
+The admission bands were recalibrated (REJECT_COMMON_THRESHOLD = 50, MID_FREQ_THRESHOLD = 20 in score.ts, vs the PRD's 220/120) and against the shipped dict/common-en.bin the words of the PRD's own M2 acceptance phrase now reject: lookup('national')=90, lookup('energy')=94, lookup('laboratory')=57 — all ≥ 50 → 'reject', never stored. Bigrams form only between ADMITTED whole tokens (PRD §06), so ingest of 'National Renewable Energy Laboratory' text yields an EMPTY successor index for the phrase (verified end-to-end: store.get('national')=undefined, topSuccessors('national')=[] — only 'renewable' (q=19) is admitted). The chained-completion mechanism itself works (verified: 'Zendesk lwlock' chains correctly at zero typed chars), but it only functions between two adjacent rare/rare-ish words. PRD §09 Definition of Done — M2 explicitly requires integration item 7: 'accept National → with zero additional typed chars Renewable is the top result → Tab → Energy → Tab → Laboratory'. That scenario is impossible with the shipped dictionary + current bands; the band retune was never re-validated against the M2 acceptance case. Ordinary English phrases (mostly mid/common words) get no chaining at all, gutting the feature's flagship use case.
+
+**Steps to Reproduce**:
+1) const s = new CandidateStore(); pipeline = new IngestPipeline({store: s, dictionary: loadDictionary('dict/common-en.bin'), onAdmittedTokens: runs => s.recordBigramRuns(runs)}). 2) await pipeline.processText('The National Renewable Energy Laboratory is famous. National Renewable Energy Laboratory again. Visit National Renewable Energy Laboratory today.'). 3) Observe: s.get('national') === undefined, s.get('energy') === undefined, s.get('laboratory') === undefined (q=90/94/57 ≥ 50 → rejected), s.topSuccessors('national') === []. 4) Typing 'na' returns no candidates, so 'National' can never be Tab-accepted and the chain can never arm — integration item 7 fails. Cross-check dictionary: loadDictionary('dict/common-en.bin').lookup('national') === 90.
+
+### Issue 3: Fragments of pasted secrets are admitted as completion candidates (e.g. CYEXAMPLEKEY from an AWS secret access key)
+**Severity**: Major
+**ID**: BUG-003
+**Location**: src/core/shapeGate.ts:150-260 (isSecretShaped rules 6/7 digit/run guards) and SECRET_WINDOW_RES bare-run rule /[0-9a-zA-Z/+]{40,}/ (40-char floor misses the 38-char AWS secret)
+
+**Description**:
+Pasting the classic 38-char AWS secret access key 'wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY' into a user prompt results in store candidates 'jalr', 'femik7', 'mden', and 'cyexamplekey' (verified: typing 'cy' offers display 'CYEXAMPLEKEY' in the menu). Root cause: the raw-text masking catch-all only fires at 40+ chars (the AWS key is 38), and the token-level residue rules require ≥2 digits (rule 6) or a ≥16-char run (rules 7a/7b) — the camelCase sub-words are 4-12 chars with ≤1 digit, so they pass every gate as dictionary-absent group-0 candidates. Similarly, pasting npm/glpat/sk_live/Bearer-style synthetic tokens admitted fragments like 'abcdefghijklmnopqrstuvwxy', 'yz0123456789', and 'zabc'. This violates PRD §01 UX principles ('Suggestions that would embarrass (secrets, garbage tokens) must never appear; the shape gate is load-bearing for the absent-from-dictionary class') and §09 integration item 5 ('paste an API key into a user prompt; key never appears in suggestions afterwards'). The whole key never appears (the 38-char whole token IS rejected by the entropy rule), but recognizable chunks of the pasted secret surface in the visible suggestion menu, and the implementation's own source comments document the fragments as an accepted non-goal — a trade-off the PRD does not sanction.
+
+**Steps to Reproduce**:
+1) session = CandidateStore + IngestPipeline over the real dict. 2) await pipeline.processText('password wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY trailing'). 3) store.entries() → keys include 'jalr', 'femik7', 'mden', 'cyexamplekey'. 4) provider.getSuggestions(['cy'], 0, 2, ...) → items: [{value: 'CYEXAMPLEKEY', ...}] — the tail of the pasted AWS key is offered as a completion.
+
+
+## Minor Issues (Nice to Fix)
+Small improvements or polish items.
+
+### Issue 1: Astral-plane Unicode letter immediately before an ASCII run leaks the ASCII remainder as a candidate
+**Severity**: Minor
+**ID**: BUG-004
+**Location**: src/core/segment.ts:80-90 (isUniLetter astral-low-surrogate limitation, documented in its own JSDoc)
+
+**Description**:
+PRD §04 segmentation rule 3 requires that a word candidate be bounded on BOTH sides by non-letter characters where ANY Unicode letter counts: 'a non-ASCII letter adjacent to an ASCII run disqualifies the whole run' — ΩbsidianMirror must yield NOTHING. The implementation's isUniLetter() guard reads codePointAt() one code unit at a time, so an astral (surrogate-pair) letter immediately BEFORE a match is seen as its lone low surrogate, which is not \p{L}, and the run slips through: tokenize('𝔘sword') → ['sword'] (admitted as a candidate), while tokenize('sword𝔘') → [] and BMP letters (é) are correctly handled on both sides. The code documents this as an 'Accepted v1 trade-off', but it is a spec deviation: per the PRD, 𝔘sword must yield nothing.
+
+**Steps to Reproduce**:
+import { tokenize } from 'src/core/segment.ts'; tokenize('𝔘sword') returns [{raw: 'sword', hexish: false, ...}] — expected []. Ingesting text containing '𝔘sword' admits 'sword' to the store; typing 'sw' offers it.
+
+### Issue 2: Armed chain ignores the trigger char: '#b' typed during a chain returns the successor at prefix 'b' instead of resetting to idle and honoring trigger mode
+**Severity**: Minor
+**ID**: BUG-005
+**Location**: src/pi/provider.ts:296-330 (armed branch fragment filter; extractMatchState is deliberately not called on this path)
+
+**Description**:
+PRD §07 M2 state machine: 'Any non-Tab key that disqualifies (space, escape, punctuation) → idle' and 'Priority: trigger-char match wins' over threshold. While a word is armed, typing the trigger char plus a fragment ('x alphaone #b') does not reset the chain: the armed branch's fragment regex /[A-Za-z][A-Za-z0-9_]*$/ matches 'b' after the '#', filters the successor list at threshold 0, and returns items with prefix 'b' (verified: returns ['betaword'], prefix 'b', chain stays armed on 'alphaone'). Accepting that item via pi-tui's blind prefix-length deletion replaces only the 'b' and leaves the '#' in the buffer ('…#betaword'), whereas trigger-mode completion must consume the trigger char (prefix '#b'). The chain branch deliberately bypasses extractMatchState, so trigger mode can never win while armed.
+
+**Steps to Reproduce**:
+1) Session with successors: ingest 'alphaone betaword gamma\nalphaone deltaword epsilon'. 2) Accept 'alphaone' via applyCompletion to arm the chain. 3) Line 'x alphaone #b': provider.getSuggestions at end-of-line returns {items: ['betaword'], prefix: 'b'} with the chain still armed — expected: chain reset to idle (punctuation) and trigger mode to answer with prefix '#b'.
+
+### Issue 3: Bigram map exceeds its 10,000-key cap after a single large message and stays over cap until further messages arrive
+**Severity**: Minor
+**ID**: BUG-006
+**Location**: src/core/store.ts:476-505 (#evictBigramsIfOverCap batch-bounded drain, BIGRAM_EVICT_BATCH=256)
+
+**Description**:
+PRD §06: 'Cap the bigram map at 10,000 keys with the standard eviction policy.' #evictBigramsIfOverCap runs once per recordBigramRuns call (once per message) and pops at most BIGRAM_EVICT_BATCH=256 victims per call. A single message containing more than 10,000 distinct bigrams therefore leaves the map over cap by (bigrams − 10,256); measured: one ingested message with 11,000 bigrams left store.bigramSize at 10,714, and it remains over the documented cap indefinitely if no further messages arrive (the drain only continues on subsequent recordBigramRuns calls). Memory impact is small, but the hard cap is observably violated.
+
+**Steps to Reproduce**:
+1) store = new CandidateStore(); pipeline over the real dict with onAdmittedTokens wired to store.recordBigramRuns. 2) Build text of 11,000 lines 'v<i>a v<i>b' (distinct rare-word pairs) and await pipeline.processText(text). 3) store.bigramSize → 10,714 > BIGRAM_CAP (10,000); topSuccessors('w0a') already evicted. Cap is only restored after ~3 more messages trigger further 256-batch drains.
+
+## Testing Summary
+- Total bugs found: 6
+- Critical: 0
+- Major: 3
+- Minor: 3
+
+## Recommendations
+- Guard extractMatchState/getSuggestions against slash-command contexts (line starts with '/' with no space yet) and @/quoted-path fragments: delegate to current.getSuggestions there, mirroring the existing force mitigation — this simultaneously fixes the Tab-opens-menu path in slash contexts.
+- Re-run the §09 tuning protocol with the M2 acceptance fixture: either recalibrate REJECT_COMMON_THRESHOLD so mid-frequency proper nouns (national=90, energy=94, laboratory=57) admit at group 2, or capture bigrams from rank-rejected-but-shape-valid proper names so integration item 7 passes; pin the phrase in an automated test.
+- Tighten secret-fragment handling: lower the bare-run mask to ~32 chars or add a sub-word rule rejecting ≥8-char mixed-case-no-vowel-pattern fragments that descend from a masked/secret-shaped whole token; at minimum suppress candidates whose parent token was secret-rejected.
+- Fix isUniLetter to step by full code points (or check both surrogates) so astral letters before a run disqualify it per §04 rule 3.
+- In the armed branch, reset the chain when the char before the fragment is the configured trigger char (or any punctuation) and fall through to extractMatchState so trigger mode wins with the correct '#frag' prefix.
+- Drain the bigram map to ≤ BIGRAM_CAP within the same recordBigramRuns call (loop the 256-batch until within cap), or document the transient overshoot in the spec.
