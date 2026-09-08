@@ -369,7 +369,7 @@
               "type": "Task",
               "id": "P1.M4.T1",
               "title": "Re-verify M2 Definition of Done (R6)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Full suite + typecheck + benches green, M1 acceptance suites re-run, M2 DoD checklist audited item by item, results recorded.",
               "subtasks": [
                 {
@@ -408,7 +408,7 @@
                   "type": "Subtask",
                   "id": "P1.M4.T1.S2",
                   "title": "M2 DoD item-by-item audit + record results",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M4.T1.S1"
