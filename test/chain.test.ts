@@ -1,33 +1,45 @@
 /**
- * Chain machine suite (P2.M2.T2.S1, PRD §07 h2.43) — the Tab-armed
- * successor-chaining state machine wired through the S2 provider:
+ * Chain machine suite (PRD §07 h2.43, plan 002 P1.M2.T1.S1 redesign) —
+ * the Tab-armed successor-chaining state machine wired through the hapax
+ * provider:
  *
  *   inner = createHapaxProvider(store, config, current, chain)
  *
- * Covers every armed rule of h2.43 (as redesigned in plan 002
- * P1.M2.T1.S1): arming from hapax items — whole words and chain
- * successors; never path completion or out-of-map values — the
- * zero-typed-char word-start offer (bare values, prefix ""),
- * successor-only menus at chain threshold 0 (NOT config.threshold),
- * live fragment filtering, Tab accept → armed(next) with verbatim
- * delegation, punctuation / zero-match disarm falling through to the
- * normal path on the SAME keystroke, reset-on-new-turn, and composition
- * with the S3 display debounce. The machine feeds the suggestion set
- * ONLY: applyCompletion always delegates verbatim —
- * test/provider.test.ts pins that and must stay green untouched.
+ * Every armed rule of h2.43, as redesigned (bare values, threshold 0):
+ *   - arming ONLY from hapax's own live items — whole words and chain
+ *     successors; never path completion or out-of-map values
+ *   - the ZERO-TYPED-CHAR word-start offer at EVERY armed word start
+ *     (line start or right after a space/tab): the armed word's
+ *     unfiltered top successors with BARE single-word values, prefix
+ *     "", description "chain" — pi-tui splices a bare value VERBATIM at
+ *     prefix "" (external_deps.md §2a), so the user's separating space
+ *     stays the single separator; no leading-space value exists
+ *   - live fragment filtering at CHAIN THRESHOLD 0 for the whole chain
+ *     duration (config.threshold is never consulted on this path)
+ *   - disqualification — punctuation, word-less non-start input, zero
+ *     matching successors, empty successor index — disarms and the
+ *     normal path (or pi's stock delegate) answers on the SAME keystroke
+ *   - Tab accept of a successor → armed(next), verbatim applyCompletion
+ *     delegation, exactly ONE word inserted (PRD §06 h2.38 one-word
+ *     invariant; §07 h2.44)
+ *   - reset on before_agent_start (h2.43; h2.54's M2 DoD audit builds on
+ *     these cases) and composition with the S3 display debounce (PRD §07
+ *     rules 2–4)
  *
- * SEEDING ORDER NOTE (PRD §06 h3.9 + h2.43): the bare first word stays a
- * menu item whenever topSuccessors() is non-empty (arming is whole-word
- * Tab acceptance), so the arming menu stays visible even after the
- * bigrams are recorded. The successor index
- * itself builds on EVERY bigram window recorded at ingest
- * (store.ts recordBigramRuns' successor bump) — admission rank groups do
- * not matter to it. The before-query
- * seeding order below is therefore only a determinism convenience now:
- * kept because it costs nothing and keeps each arming menu a pure word
- * list. Machine-level cases run against the inner
- * provider (no debounce interference); display composition is test 12's
- * job, under the fake timers of provider-display.test.ts.
+ * Machine-level cases run against the inner provider (no display
+ * debounce interference); display composition is case 14, under fake
+ * timers. Verbatim delegation of applyCompletion is pinned by
+ * test/provider.test.ts, which stays untouched; case 11 re-asserts the
+ * pass-through from this suite's side. The config gate is enablePhrases
+ * until P1.M3.T1.S1 renames it to enableChaining — the gate case is
+ * written so that swap is a one-line change.
+ *
+ * SEEDING (PRD §06 h3.9): bigrams enter ONLY through
+ * store.recordBigramRuns — the sole bigram seam (real ingest in the
+ * replay cases below). Successor bumps are admission-independent, and
+ * seeding order relative to the arming-menu query is only a determinism
+ * convenience: whole-word Tab acceptance arms regardless of menu
+ * membership, so each arming menu stays a pure word list.
  */
 
 import { describe, expect, it, vi, type Mock } from "vitest";
@@ -123,9 +135,10 @@ const makeCurrent = (over: Partial<AutocompleteProvider> = {}): MockedCurrent =>
     ...over,
   }) as MockedCurrent;
 
-/** Word candidates only — NO bigrams yet (see the seeding-order gotcha
- *  above). "theta"/"kappa" additionally carry a counted bigram for the
- *  successor-chaining case. */
+/** Word candidates only. Bigrams (theta→kappa ×2) enter exclusively
+ *  through store.recordBigramRuns — the only bigram seam — so the
+ *  successor index has a non-degenerate occupant independent of the
+ *  per-case alpha/beta seeds. */
 const seedStore = (): CandidateStore => {
   const s = new CandidateStore();
   for (let r = 0; r < 2; r++) s.recordBigramRuns([["theta", "kappa"]]);
@@ -137,16 +150,16 @@ const seedStore = (): CandidateStore => {
   return s;
 };
 
-/** Bigram seeding for alpha→beta(3), alpha→bravo(2) — the PRP §07
- *  success-definition index shape. Call ONLY after the arming menu for
- *  "alpha" has been captured. */
+/** Bigram seeding for alpha→beta(3), alpha→bravo(2) — count-desc menu
+ *  order. Exclusive seam: store.recordBigramRuns. Call ONLY after the
+ *  arming menu for "alpha" has been captured (determinism convenience). */
 const seedAlphaSuccessors = (s: CandidateStore): void => {
   for (let r = 0; r < 3; r++) s.recordBigramRuns([["alpha", "beta"]]);
   for (let r = 0; r < 2; r++) s.recordBigramRuns([["alpha", "bravo"]]);
 };
 
 /** Fresh provider stack with the chain machine exposed. Machine tests use
- *  `inner` (no display debounce); test 12 uses the full `provider`. */
+ *  `inner` (no display debounce); case 14 uses the full `provider`. */
 function makeStack(store: CandidateStore, current: AutocompleteProvider) {
   const chain = createChainMachine();
   const inner = createHapaxProvider(store, cfg(), current, chain);
@@ -165,10 +178,20 @@ const suggest = (
 const item = (value: string): AutocompleteItem => ({ value, label: value });
 
 /**
+ * One-word invariant on pi's menu shape (AutocompleteItem): h2.38/h2.44
+ * forbid multi-word (and leading-space) values everywhere. (helpers/
+ * query-invariants.ts's assertWordsOnly covers RankedMatch outputs; chain
+ * menus are pi items, so the assertion is direct here.)
+ */
+const expectSingleWordItems = (items: readonly AutocompleteItem[]): void => {
+  for (const i of items) expect(i.value).not.toContain(" ");
+};
+
+/**
  * Arm via the ONLY production path: a live menu + Tab acceptance. Seeds
- * `seed` AFTER the menu query (see the header note) — no longer required
- * for arming visibility (the BUG-005 exemption keeps successor-bearing
- * words in the menu), kept as a cheap determinism convenience.
+ * `seed` AFTER the menu query (see the header note) — arming visibility
+ * no longer depends on it (whole-word acceptance arms regardless), kept
+ * as a cheap determinism convenience.
  */
 async function armViaTab(
   inner: ReturnType<typeof createHapaxProvider>,
@@ -186,9 +209,9 @@ async function armViaTab(
   expect(chain.state()).toEqual({ word }); // precondition: armed
 }
 
-// ── cases ───────────────────────────────────────────────────────────────────
+// ── cases (PRD §07 h2.43, plan 002 P1.M2.T1.S1 redesign) ────────────────────
 
-describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
+describe("chain machine — armed successor chaining (PRD §07 h2.43, plan 002 S1 redesign)", () => {
   it("starts idle: state() is null and the first query takes the normal path", async () => {
     const current = makeCurrent();
     const store = seedStore();
@@ -202,16 +225,17 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     expect(chain.state()).toBeNull(); // suggestions alone never arm
   });
 
-  it("(1) Tab-accept of a live hapax word item arms the chain", async () => {
+  it("Tab-accept of a live hapax word item arms the chain (h2.43 whole-word arming)", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
 
     await armViaTab(inner, chain, store, "alpha", "al");
+    expect(chain.state()).toEqual({ word: "alpha" });
     expect(inner.__hapaxKey("alpha")).toBe("alpha"); // plain key, no space
   });
 
-  it("(2) accepting an item absent from the live map (path completion) never arms", async () => {
+  it("accepting an item absent from the live map (path completion) never arms", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
@@ -227,16 +251,80 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     expect(chain.state()).toBeNull();
   });
 
-  it("(4) armed + 1-char fragment → successor-only menu at threshold 1, count-desc order", async () => {
+  it("zero-char word-start offer after the separator: bare values, prefix \"\", count-desc, still armed (h2.43)", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
     await armViaTab(inner, chain, store, "alpha", "al");
 
-    // Precondition: 1-char fragment is BELOW config.threshold — the
-    // normal path would delegate; only the chain can answer it.
-    expect(extractMatchState(["alpha b"], 0, 8, cfg())).toBeNull();
+    // The user typed the separating space: the cursor sits at the empty
+    // NEXT word with zero typed chars — the redesign's word-start offer
+    // serves alpha's UNFILTERED successors with BARE values at prefix
+    // "" (external_deps.md §2a: pi-tui splices the value verbatim there,
+    // so a leading-space value would double-space — bare is the shape).
+    const res = await suggest(inner, ["alpha "], 0, 6);
+    expect(res).toEqual({
+      items: [
+        { value: "beta", label: "beta", description: "chain" },
+        { value: "bravo", label: "bravo", description: "chain" },
+      ],
+      prefix: "",
+    }); // beta(3) before bravo(2) — the index's count-desc order
+    expect(chain.state()).toEqual({ word: "alpha" }); // offer ≠ disarm
+    expect(inner.__hapaxLive()?.prefix).toBe(""); // lastLive == returned prefix
+    expect(current.getSuggestions).not.toHaveBeenCalled(); // pi never consulted
+    expectSingleWordItems(res?.items ?? []);
 
+    // Line-start variant: cursor on an EMPTY second line, col 0 —
+    // before === "" is a zero-typed-char word start too; same offer.
+    const lineStart = await suggest(inner, ["alpha", ""], 1, 0);
+    expect(lineStart).toEqual(res);
+    expect(chain.state()).toEqual({ word: "alpha" });
+  });
+
+  it("zero-char offer fires at EVERY armed word start, not just the first post-arm query (h2.43)", async () => {
+    const store = seedStore();
+    // The faithful editor IS the wrapped provider, so accepts mutate the
+    // one persistent buffer exactly like the real editor flow would.
+    const ed = editingCurrent(["al"], 2);
+    const { chain, inner } = makeStack(store, ed);
+    await armViaTab(inner, chain, store, "alpha", "al");
+    expect(ed.state.lines).toEqual(["alpha"]); // the arming accept landed
+
+    // FIRST word start: the user's separating space → alpha's unfiltered
+    // offer at zero typed chars.
+    ed.typeSpace();
+    const first = await suggest(inner, ed.state.lines, 0, ed.state.cursorCol);
+    expect(first?.prefix).toBe("");
+    expect(first?.items.map((i) => i.value)).toEqual(["beta", "bravo"]);
+
+    // Accept beta from the offer → armed(beta); exactly ONE word lands.
+    inner.applyCompletion(ed.state.lines, 0, ed.state.cursorCol, item("beta"), "");
+    expect(chain.state()).toEqual({ word: "beta" });
+    expect(ed.state.lines).toEqual(["alpha beta"]);
+
+    // SECOND word start: after the user's next separating space, beta's
+    // own successors are offered with zero typed chars — the offer is
+    // not a one-shot post-arm event; every armed word start gets it.
+    for (let r = 0; r < 2; r++) store.recordBigramRuns([["beta", "eyes"]]);
+    ed.typeSpace();
+    expect(ed.state.lines).toEqual(["alpha beta "]);
+    const second = await suggest(inner, ed.state.lines, 0, ed.state.cursorCol);
+    expect(second?.prefix).toBe("");
+    expect(second?.items.map((i) => i.value)).toEqual(["eyes"]);
+    expect(chain.state()).toEqual({ word: "beta" }); // still armed
+  });
+
+  it("1-char fragment offers at chain threshold 0; past-match fragment disarms + delegates on the SAME call (h2.43)", async () => {
+    const current = makeCurrent();
+    const store = seedStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alpha", "al");
+
+    // Threshold 0 for the whole chain duration: ONE typed char already
+    // filters the successor set. Precondition — config.threshold is 2,
+    // so extractMatchState would delegate here; only the chain answers.
+    expect(extractMatchState(["alpha b"], 0, 8, cfg())).toBeNull();
     const menu = await suggest(inner, ["alpha b"], 0, 8);
     expect(menu).toEqual({
       items: [
@@ -244,11 +332,25 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
         { value: "bravo", label: "bravo", description: "chain" },
       ],
       prefix: "b",
-    }); // beta(3) before bravo(2) — the index's count-desc order
+    });
     expect(inner.__hapaxLive()?.prefix).toBe("b"); // armed set is live
+    expect(chain.state()).toEqual({ word: "alpha" });
+
+    // Typing past every successor ("z" matches none) disarms on the
+    // SAME keystroke and the normal path answers — which at threshold 2
+    // has no match state for "z" → pi's stock delegate (null from the
+    // mock), with the original arguments forwarded untouched.
+    const options = opts();
+    const lines = ["alpha z"];
+    expect(await inner.getSuggestions(lines, 0, 7, options)).toBeNull();
+    expect(current.getSuggestions).toHaveBeenCalledOnce();
+    const call = current.getSuggestions.mock.calls[0]!;
+    expect(call[0]).toBe(lines); // verbatim array identity
+    expect(call[3]).toBe(options); // verbatim options identity
+    expect(chain.state()).toBeNull(); // disarmed THIS call
   });
 
-  it("(5) further typing filters the successor set live", async () => {
+  it("further typing filters the successor set live (threshold 0, never disarms while matching)", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
@@ -262,14 +364,15 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     expect(chain.state()).toEqual({ word: "alpha" }); // filtering never disarms
   });
 
-  it("(6) zero matching successors → disarm + normal candidates on the SAME call", async () => {
+  it("zero matching successors → disarm + normal candidates on the SAME call (h2.43 disqualification)", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
     await armViaTab(inner, chain, store, "alpha", "al");
 
     // No successor of alpha starts with "gam", but word candidate
-    // "gamma" does — the same keystroke must show the normal menu.
+    // "gamma" does — the same keystroke must show the normal menu
+    // (never an empty hapax set).
     const menu = await suggest(inner, ["alpha gam"], 0, 9);
     expect(menu?.items.map((i) => i.value)).toEqual(["gamma"]);
     expect(menu?.prefix).toBe("gam"); // normal path's prefix (threshold 2 ok)
@@ -277,7 +380,7 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     expect(inner.__hapaxLive()?.prefix).toBe("gam"); // normal live set republished
   });
 
-  it("(7) armed word with an empty successor index → disarm + normal path", async () => {
+  it("armed word with an empty successor index → disarm + normal path (h2.43)", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
@@ -288,76 +391,29 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     expect(chain.state()).toBeNull();
   });
 
-  it("(8) trailing space → zero-char successor offer; punctuation → disarm + delegate", async () => {
+  it("word-less non-start buffer (punctuation) → disarm + delegate with byte-identical args/options (h2.43; the old trailing-space disarm is superseded by case 4's offer)", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
-    await armViaTab(inner, chain, store, "alpha", "al");
 
-    // Trailing space: the cursor sits at the empty NEXT word with zero
-    // typed chars — the redesigned zero-char offer (PRD §07 h2.43, plan
-    // 002) serves alpha's UNFILTERED successors with BARE values at
-    // prefix "". Supersedes this case's old disarm+delegate pin, which
-    // belonged to the retired adjacency/pending mechanism and
-    // contradicted the PRD's word-start semantics. The chain STAYS
-    // armed (this is an offer, not disqualification) and pi is never
-    // consulted.
-    const lines = ["alpha "];
-    const result = await inner.getSuggestions(lines, 0, 6, opts());
-    expect(result).toEqual({
-      items: [
-        { value: "beta", label: "beta", description: "chain" },
-        { value: "bravo", label: "bravo", description: "chain" },
-      ],
-      prefix: "",
-    });
-    expect(chain.state()).toEqual({ word: "alpha" }); // still armed
-    expect(current.getSuggestions).not.toHaveBeenCalled();
+    // Fresh stack armed on "beta" (alpha's admitted bigrams would shadow
+    // its own arming menu — seeding-order gotcha; no stored word's key
+    // prefixes "be", so beta's menu is clean).
+    await armViaTab(inner, chain, store, "beta", "be", () => {});
 
-    // Punctuation: "!" ends the line — no word start, no trailing
-    // identifier → disarm + delegate, unchanged. Fresh stack armed on
-    // "beta" (alpha's admitted bigrams would shadow its own arming menu —
-    // seeding-order gotcha; no stored word's key prefixes "be", so beta's
-    // menu is clean).
-    const fresh = makeStack(store, current);
-    await armViaTab(fresh.inner, fresh.chain, store, "beta", "be", () => {});
+    // "!" ends the line — no word start, no trailing identifier →
+    // disarm + delegate on the same call, arguments/options identity
+    // preserved (acceptance-critical: never hijack, never clone).
     const options = opts();
     const pLines = ["beta!"];
-    expect(await fresh.inner.getSuggestions(pLines, 0, 5, options)).toBeNull();
-    const call = current.getSuggestions.mock.calls[0];
+    expect(await inner.getSuggestions(pLines, 0, 5, options)).toBeNull();
+    const call = current.getSuggestions.mock.calls[0]!;
     expect(call[0]).toBe(pLines); // verbatim array identity
-    expect(call[3]).toBe(options);
-    expect(fresh.chain.state()).toBeNull();
+    expect(call[3]).toBe(options); // verbatim options identity
+    expect(chain.state()).toBeNull();
   });
 
-  it("(8b) line start offers successors too; word start with no successors delegates", async () => {
-    const current = makeCurrent();
-    const store = seedStore();
-    const { chain, inner } = makeStack(store, current);
-    await armViaTab(inner, chain, store, "alpha", "al");
-
-    // Line start (before === "") is a zero-typed-char word start too —
-    // same unfiltered bare-value offer, prefix "".
-    const offer = await suggest(inner, [""], 0, 0);
-    expect(offer).toEqual({
-      items: [
-        { value: "beta", label: "beta", description: "chain" },
-        { value: "bravo", label: "bravo", description: "chain" },
-      ],
-      prefix: "",
-    });
-    expect(chain.state()).toEqual({ word: "alpha" });
-
-    // An armed word with an EMPTY successor index at a word start →
-    // disarm + fall through on the SAME keystroke: extractMatchState is
-    // null there, so the request delegates (pi stock behavior).
-    const fresh = makeStack(store, current);
-    await armViaTab(fresh.inner, fresh.chain, store, "gamma", "ga", () => {});
-    expect(await suggest(fresh.inner, ["gamma "], 0, 6)).toBeNull();
-    expect(fresh.chain.state()).toBeNull();
-  });
-
-  it("(9) Tab-accept of a successor re-arms to it and delegates verbatim", async () => {
+  it("Tab-accept of a successor: re-arms, delegates verbatim, and inserts exactly ONE word (h2.43 × h2.38)", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
@@ -371,8 +427,8 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     const accepted = item("beta");
     const ret = inner.applyCompletion(lines, 0, 8, accepted, "b");
 
-    // Verbatim delegation (case (b) discipline): same objects/numbers in,
-    // current's return passed through untouched.
+    // Verbatim delegation: same objects/numbers in, current's return
+    // passed through untouched (provider.test.ts pins this too).
     expect(current.applyCompletion).toHaveBeenCalledOnce();
     const forwarded = current.applyCompletion.mock.calls[0];
     expect(forwarded[0]).toBe(lines);
@@ -389,9 +445,37 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     const chained = await suggest(inner, ["beta e"], 0, 6);
     expect(chained?.items.map((i) => i.value)).toEqual(["eyes"]);
     expect(chained?.prefix).toBe("e");
+
+    // ONE-word insertion through a faithful buffer (pi-tui splice math):
+    // arm on the editor, let the user type the separator, accept the
+    // word-start offer — the user's space stays the SINGLE separator
+    // (bare value spliced verbatim at prefix ""), cursor after "beta".
+    const ed = editingCurrent(["al"], 2);
+    const edChain = createChainMachine();
+    const edInner = createHapaxProvider(store, cfg(), ed, edChain);
+    const armMenu = await suggest(edInner, ed.state.lines, 0, ed.state.cursorCol);
+    expect(armMenu?.items.map((i) => i.value)).toContain("alpha");
+    edInner.applyCompletion(ed.state.lines, 0, ed.state.cursorCol, item("alpha"), "al");
+    expect(edChain.state()).toEqual({ word: "alpha" });
+    expect(ed.state.lines).toEqual(["alpha"]);
+
+    ed.typeSpace(); // the separating space — a boundary, not a word char
+    const edOffer = await suggest(edInner, ed.state.lines, 0, ed.state.cursorCol);
+    expect(edOffer?.prefix).toBe("");
+    expectSingleWordItems(edOffer?.items ?? []);
+    edInner.applyCompletion(
+      ed.state.lines,
+      0,
+      ed.state.cursorCol,
+      edOffer!.items[0]!,
+      edOffer!.prefix,
+    );
+    expect(ed.state.lines).toEqual(["alpha beta"]); // single space, one word
+    expect(ed.state.cursorCol).toBe("alpha beta".length); // cursor after "beta"
+    expect(edChain.state()).toEqual({ word: "beta" });
   });
 
-  it("(10) reset() forces idle — the before_agent_start rule; normal threshold resumes", async () => {
+  it("reset() forces idle — the before_agent_start rule; normal config.threshold resumes (h2.43)", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
@@ -408,7 +492,7 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     expect(menu?.items.map((i) => i.value)).toEqual(["gamma"]);
   });
 
-  it("(11) trigger-mode acceptance arms too (whole-word insertion)", async () => {
+  it("trigger-mode acceptance arms too (whole-word insertion) (h2.43)", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
@@ -421,7 +505,7 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     expect(chained?.items.map((i) => i.value)).toEqual(["beta", "bravo"]);
   });
 
-  it("(12) armed sets flow through the display layer's classification + 100ms debounce", async () => {
+  it("armed word-start offer flows through display classification + 100ms debounce at prefix \"\" (h2.43 × S3 rules 2–4)", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0); // t=0; vitest 4 fakes Date.now too
     try {
@@ -431,45 +515,86 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
 
       await armViaTab(inner, chain, store, "alpha", "al");
 
-      // First armed query → immediate paint (first paint is never delayed).
-      const first = await suggest(provider, ["alpha b"], 0, 8);
+      // First armed word-start query → immediate paint (first paint is
+      // never delayed) with prefix "" on BOTH sides — the classifier
+      // (result.prefix === live.prefix) must accept the zero-char offer
+      // as hapax (S1 keeps the lastLive shape; this pins it).
+      const first = await suggest(provider, ["alpha "], 0, 6);
       expect(first?.items.map((i) => i.value)).toEqual(["beta", "bravo"]);
-      expect(first?.prefix).toBe("b");
+      expect(first?.prefix).toBe("");
 
-      // t=50: typing moved the anchor ("b" → "be"), so the display layer
-      // paints the narrowed armed set IMMEDIATELY (BUG-002 anchor safety:
-      // re-serving the old set would hand pi the stale "b" prefix, and
-      // Tab's blind prefix.length splice would corrupt the line).
+      // t=50, inside the suppression window: an IDENTICAL re-query (same
+      // set + same prefix "") repaints idempotently — classification and
+      // the debounce window compose unchanged at prefix "".
       vi.advanceTimersByTime(50);
+      const repainted = await suggest(provider, ["alpha "], 0, 6);
+      expect(repainted?.items.map((i) => i.value)).toEqual(["beta", "bravo"]);
+      expect(repainted?.prefix).toBe("");
+
+      // t=110: typing moved the anchor ("" → "be"), so the narrowed
+      // armed set paints IMMEDIATELY (BUG-002 anchor safety: re-serving
+      // the prefix-"" set would hand pi the stale anchor and Tab's blind
+      // splice would corrupt the line).
+      vi.advanceTimersByTime(60);
       const painted = await suggest(provider, ["alpha be"], 0, 9);
       expect(painted?.items.map((i) => i.value)).toEqual(["beta"]);
       expect(painted?.prefix).toBe("be");
-
-      // Identical re-query: same set + same prefix → idempotent repaint.
-      vi.advanceTimersByTime(60);
-      const repainted = await suggest(provider, ["alpha be"], 0, 9);
-      expect(repainted?.items.map((i) => i.value)).toEqual(["beta"]);
-      expect(repainted?.prefix).toBe("be");
     } finally {
       vi.useRealTimers();
     }
   });
+
+  it("one-word invariant: every chain item value is a single word, never leading/multi-word (h2.38/h2.44)", async () => {
+    const current = makeCurrent();
+    const store = seedStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alpha", "al");
+
+    // The zero-char word-start offer (case 4):
+    const offer = await suggest(inner, ["alpha "], 0, 6);
+    expectSingleWordItems(offer?.items ?? []);
+
+    // The live fragment sets (case 11):
+    const frag = await suggest(inner, ["alpha b"], 0, 8);
+    expectSingleWordItems(frag?.items ?? []);
+
+    // The re-armed word-start offer and its fragments:
+    inner.applyCompletion(["alpha "], 0, 6, item("beta"), ""); // armed(beta)
+    for (let r = 0; r < 2; r++) store.recordBigramRuns([["beta", "eyes"]]);
+    const chainedOffer = await suggest(inner, ["alpha beta "], 0, 11);
+    expectSingleWordItems(chainedOffer?.items ?? []);
+    const chainedFrag = await suggest(inner, ["alpha beta e"], 0, 12);
+    expectSingleWordItems(chainedFrag?.items ?? []);
+
+    // Explicitly: no leading or trailing space anywhere — a space is
+    // always the USER's separator, never part of a value.
+    for (const i of [
+      ...(offer?.items ?? []),
+      ...(frag?.items ?? []),
+      ...(chainedOffer?.items ?? []),
+      ...(chainedFrag?.items ?? []),
+    ]) {
+      expect(i.value.startsWith(" ")).toBe(false);
+      expect(i.value.endsWith(" ")).toBe(false);
+    }
+  });
 });
 
-// ── NREL chain-arming harness (BUG-005 part 2) ─────────────────────────
+// ── NREL replay harness (real ingest; the PRD §09 item-7 route) ────────
 // Mirrors acceptance.test.ts's item-7 helpers (makeNrelPipeline /
 // replayNrel / editingCurrent): the REAL ingest pipeline with the bigram
 // hook wired exactly like src/pi/index.ts, the SHIPPED dictionary, and a
 // pi-shaped editing current provider so ONE buffer flows through accepts
-// like the editor would. Local copies on purpose — this fix touches only
-// src/pi/provider.ts + this file (PRP scope), and small test-plumbing
+// like the editor would. Local copies on purpose — small test-plumbing
 // duplication across suites matches the repo's fixture-generator
 // discipline (cf. test/helpers/dict-writer.ts vs tools/build-dict.mjs).
 
 const FIXTURES = "test/fixtures/sessions";
 
 /** Pipeline wired like src/pi/index.ts's session_start: the bigram hook
- *  (and with it the successor index) exists ONLY under enablePhrases. */
+ *  is recordBigramRuns — the ONLY bigram path (phrase upserts are gone
+ *  since P1.M1.T2). The flag gates the whole chain layer; P1.M3.T1.S1
+ *  renames it to enableChaining. */
 function makeNrelPipeline(enablePhrases: boolean): { store: CandidateStore; pipeline: IngestPipeline } {
   const store = new CandidateStore();
   const pipeline = new IngestPipeline({
@@ -512,13 +637,25 @@ async function replayNrel(
   await finished;
 }
 
-/** Editing-harness mock (acceptance item-7 pattern): pi-shaped current
- *  provider whose applyCompletion performs pi-tui's insertion (replace
- *  `prefix` before the cursor with item.value) on ONE persistent buffer. */
-function editingCurrent() {
-  const state = { lines: ["natio"], cursorLine: 0, cursorCol: 5 };
+/** Editing-harness mock (item-7 pattern): pi-shaped current provider
+ *  whose applyCompletion performs pi-tui's insertion (replace `prefix`
+ *  before the cursor with item.value) on ONE persistent buffer.
+ *  `typeSpace()` simulates the user typing the separating space — a word
+ *  BOUNDARY, never a word char — without touching the machine, landing
+ *  the cursor at the zero-typed-char word start the offer fires at.
+ *  `initial`/`cursorCol` default to the item-7 shape ("natio", col 5). */
+function editingCurrent(initial: string[] = ["natio"], cursorCol = 5) {
+  const state = { lines: initial, cursorLine: 0, cursorCol };
   return {
     state,
+    typeSpace(): void {
+      const line = state.lines[state.cursorLine] ?? "";
+      const lines = [...state.lines];
+      lines[state.cursorLine] =
+        line.slice(0, state.cursorCol) + " " + line.slice(state.cursorCol);
+      state.lines = lines;
+      state.cursorCol += 1;
+    },
     getSuggestions: vi.fn(
       async (lines: string[], cursorLine: number, cursorCol: number, options: { signal: AbortSignal }) => null,
     ),
@@ -538,8 +675,8 @@ function editingCurrent() {
   };
 }
 
-describe("bare-word arming on a replayed store (BUG-005 part 2 successor route)", () => {
-  it("bare-word route (S1's exemption) still arms end-to-end: 'National' → renewable → energy", async () => {
+describe("replayed-store arming end-to-end (real ingest pipeline, NREL fixture — the PRD §09 item-7 route, h2.54)", () => {
+  it("bare-word arming end-to-end: 'National' in menu → accept → armed → word-start offer yields renewable → energy", async () => {
     const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
     const { store, pipeline } = makeNrelPipeline(true);
     const current = editingCurrent();
@@ -548,8 +685,9 @@ describe("bare-word arming on a replayed store (BUG-005 part 2 successor route)"
 
     await replayNrel(pipeline, entries);
 
-    // The exempt bare word is present in the word-only menu — the S1 fix
-    // this task composes with — sorting last among the word candidates.
+    // The bare word is present in the word-only menu (whole-word
+    // acceptance arms the chain — h2.43), sorting last among the word
+    // candidates.
     const menu = await suggest(provider, ["natio"], 0, 5);
     const nationalItem = menu!.items[menu!.items.length - 1]!;
     expect(nationalItem.value).toBe("National");
@@ -557,21 +695,21 @@ describe("bare-word arming on a replayed store (BUG-005 part 2 successor route)"
 
     provider.applyCompletion(["natio"], 0, 5, nationalItem, "natio");
     expect(chain.state()).toEqual({ word: "national" });
+    expect(current.state.lines).toEqual(["National"]);
 
     // The user types the separating space — the cursor is now at the
-    // empty next word with ZERO typed chars, which is where the
-    // redesigned word-start offer (plan 002) serves
-    // topSuccessors('national') at prefix "" with BARE values. The old
-    // pending offer fired from the adjacent-cursor position with
-    // leading-space values — retired with the pending mechanism.
-    current.state.lines = ["National "];
-    current.state.cursorCol = 9;
+    // empty next word with ZERO typed chars, where the redesigned
+    // word-start offer (plan 002) serves topSuccessors('national') at
+    // prefix "" with BARE values.
+    current.typeSpace();
+    expect(current.state.lines).toEqual(["National "]);
     const offer = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => [i.label, i.value])).toEqual([
       ["renewable", "renewable"],
       ["wind", "wind"], // license dropped: was a gate-rejected-"lab" bridge (P1.M1.T3.S2)
     ]);
+    expectSingleWordItems(offer?.items ?? []);
 
     // Tab → armed(renewable); pi-tui splices the BARE value verbatim at
     // the cursor (prefix ""), so the user's space stays the single
@@ -587,10 +725,45 @@ describe("bare-word arming on a replayed store (BUG-005 part 2 successor route)"
     expect(current.state.lines).toEqual(["National renewable"]); // ONE space
 
     // Space again → the chain continues at the next word start:
-    // renewable's successors.
-    current.state.lines = ["National renewable "];
-    current.state.cursorCol = 19;
+    // renewable's successors, still bare, still one word each.
+    current.typeSpace();
+    expect(current.state.lines).toEqual(["National renewable "]);
     const offer2 = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
+    expect(offer2?.prefix).toBe("");
     expect(offer2?.items.map((i) => i.label)).toEqual(["energy"]);
+    expectSingleWordItems(offer2?.items ?? []);
+  });
+
+  it("config gate inertness: enablePhrases:false never arms and never offers (the enableChaining rename is P1.M3.T1.S1 — swap the key here)", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    // Successors ARE present (hook on) so the case proves the CONFIG
+    // gate alone blocks the chain layer — not a missing index.
+    const { store, pipeline } = makeNrelPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(store, cfg({ enablePhrases: false }), current, chain);
+
+    await replayNrel(pipeline, entries);
+
+    // (i) Arming is gated: accepting a live word item must NOT arm
+    // (word completion itself still works — the flag disables the chain
+    // layer, not hapax's word menu).
+    const menu = await suggest(provider, ["natio"], 0, 5);
+    expect(menu?.items.map((i) => i.value)).toContain("National");
+    provider.applyCompletion(["natio"], 0, 5, menu!.items[menu!.items.length - 1]!, "natio");
+    expect(chain.state()).toBeNull();
+
+    // (ii) Even a machine armed by ANY means never offers: the armed
+    // branch is gated off, so the zero-char word start falls through to
+    // extractMatchState (null there) → pi's stock delegate, no chain
+    // item ever published. The machine's own state is untouched — the
+    // gate lives in the provider.
+    chain.arm("national");
+    const options = opts();
+    const lines = ["National "];
+    expect(await provider.getSuggestions(lines, 0, 9, options)).toBeNull();
+    expect(current.getSuggestions).toHaveBeenCalledOnce();
+    expect(current.getSuggestions.mock.calls[0]![3]).toBe(options); // args identity
+    expect(chain.state()).toEqual({ word: "national" }); // inert, never consulted
   });
 });

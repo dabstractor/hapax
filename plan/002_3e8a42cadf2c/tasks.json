@@ -178,14 +178,14 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Completion UI — zero-char chaining + Tab-only-completes (R4, R3)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Redesign the chain machine to offer the top successor at zero typed chars with threshold 0 and bare one-word values, then add the forced single-item branch so a Tab keypress with a live set completes instead of opening the menu.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Zero-typed-char successor chain offers (R4)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "While armed(W), a word start at zero typed chars offers the top successor immediately; typed chars filter; threshold stays 0 for the chain; Tab inserts one word and transitions armed(next); leading-space values retire.",
               "subtasks": [
                 {
@@ -214,7 +214,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "chain.test.ts rewrite + integration item 7 (zero additional typed chars)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M2.T1.S1"
@@ -234,14 +234,14 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "Forced single-item Tab completion — Tab only ever completes (R3)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "When options.force is true and a hapax fragment is live, getSuggestions returns exactly one item (the live top / chain successor) so pi-tui's single-item fast path applies it in the same keypress; forced returns bypass the 100 ms display debounce; non-hapax contexts delegate with options untouched.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "provider.ts force branch (abort → armed → force-aware returns → normal)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M2.T1.S1"
@@ -261,7 +261,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S2",
                   "title": "createDisplayProvider: forced results bypass the 100 ms display debounce",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T2.S1"
