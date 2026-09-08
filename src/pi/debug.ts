@@ -5,10 +5,11 @@
  * renders one store snapshot plus one stats copy and can only ever show
  * words and counters, never message bodies (PRD §08 privacy). The
  * registration function is a thin pi adapter that P1.M3.T5.S1 wires
- * inside its session_start handler after loadConfig. The M2 phrase dump
- * is a REMOVED design (PRD 002 delta R1); P1.M1.T2.S3 adds a successor
- * sample section — build sections through the small helpers below so a
- * new section lands in exactly one place.
+ * inside its session_start handler after loadConfig. The dump is
+ * word-only by design (PRD 002 delta R1); P1.M3.T2.S1 (R5) appends the
+ * successor-index sample section by adding one builder and one spread
+ * entry below — build sections through the small helpers so a new
+ * section lands in exactly one place.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 

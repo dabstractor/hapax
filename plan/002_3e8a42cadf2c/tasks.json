@@ -43,7 +43,7 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Delete the phrase layer; slim bigram store feeding the successor index (R1)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Remove PhraseEntry/admission/sticky/demotion/candidacy/eviction-heap and all phrase query/debug surfaces; keep and re-point the successor index with a slim 10k-capped bigram count map whose eviction splices successors.",
               "subtasks": [
                 {
@@ -88,7 +88,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S3",
                   "title": "debug.ts: strip the phrase dump and its imports",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1",
