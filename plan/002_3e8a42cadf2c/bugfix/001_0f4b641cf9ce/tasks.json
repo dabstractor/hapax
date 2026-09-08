@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "Fix six end-to-end validation defects (BUG-001..BUG-006) and restore spec compliance",
-      "status": "Ready",
+      "status": "Complete",
       "description": "Creative validation of hapax against the PRD found six real defects: (1) threshold mode preempts stock slash/@/quoted-path completion and Tab in a slash context opens the hapax menu (violates the acceptance-critical 'Tab never opens the menu' invariant and §09 item 6); (2) the admission-band retune (50/20) rejects national/energy/laboratory making the PRD's M2 acceptance scenario (item 7) unreachable; (3) sub-16-char, <=1-digit fragments of pasted secrets pass every gate and are offered as completions (§09 item 5, 'never embarrass'); (4) astral-plane letters before an ASCII run leak the remainder (𝔘sword -> 'sword', §04 rule 3); (5) an armed chain swallows the trigger char and returns a mis-prefixed successor set (§07 state machine); (6) the bigram map can sit above its 10k hard cap after one large message (§06). This phase fixes all six with research-grounded, test-first changes in src/pi/provider.ts, src/core/score.ts, src/core/shapeGate.ts, src/pi/ingest.ts, src/core/segment.ts, src/core/store.ts, plus regression re-verification and documentation sync. Research findings live in plan/002_3e8a42cadf2c/bugfix/001_0f4b641cf9ce/architecture/. Guardrails: spec/*.md is READ-ONLY (product spec); tests import constants from src, never hard-code; providers must pass the options object through unchanged on delegation.",
       "milestones": [
         {
@@ -286,7 +286,7 @@
           "type": "Milestone",
           "id": "P1.M4",
           "title": "Cross-cutting regression verification and documentation sync",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Re-verify the whole changeset against the 636-test suite, tsc, the §09 integration items (esp. 5, 6, 7) and perf gates, update the DoD evidence record, and sweep changeset-level documentation (README, DoD bugfix record) so no stale trade-off statements survive.",
           "tasks": [
             {
@@ -324,7 +324,7 @@
               "type": "Task",
               "id": "P1.M4.T2",
               "title": "Sync changeset-level documentation",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Final Mode B catch-all: sweep README.md and the DoD record so the whole six-fix delta is coherently surfaced and no stale limitation/trade-off statements survive (astral 'accepted trade-off', secret-fragment non-goal, band retune notes, bigram transient overshoot if mentioned).",
               "subtasks": [
                 {
@@ -349,7 +349,7 @@
                   "type": "Subtask",
                   "id": "P1.M4.T2.S2",
                   "title": "Append the bugfix-001 re-verification record to docs/M1-DoD.md",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M4.T1.S1"

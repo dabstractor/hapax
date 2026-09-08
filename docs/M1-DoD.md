@@ -502,3 +502,177 @@ npx vitest --run test/perf-gates.test.ts --disable-console-intercept            
 npm run bench                                                                                        # reporting numbers
 cat plan/002_3e8a42cadf2c/P1M4T1S1/research/regression-evidence.md                   # cited S1 evidence
 ```
+
+## Bugfix 001 re-verification (001_0f4b641cf9ce) — evidence record
+
+Closing record for the bugfix-001 changeset: six defects (BUG-001..BUG-006,
+mapped in PRD order to h3.0–h3.5 of the bugfix PRD), each fixed, locked by
+named green tests, and re-verified here. Every command below was re-run for
+this record; nothing is cited without a fresh measured result.
+
+- Re-verification date: 2026-09-08 (14:51 UTC) · Head commit: `1b5e942`
+  (full: `1b5e942c24741b3cb6aad429e3eed154e8959faa`)
+- Input: P1.M4.T1.S1 regression evidence —
+  `plan/002_3e8a42cadf2c/bugfix/001_0f4b641cf9ce/P1M4T1S1/research/regression-evidence.md`
+  (its counts, bench table, and empty triage log were re-confirmed by the
+  fresh run below; sweep head there was `f69e893`, one code commit earlier).
+- Suite: `npm run check` exit 0 · `npm test` → **33 test files, 723 passed /
+  1 skipped** (the pre-existing gc-dependent `dictionary.test.ts` skip),
+  exit 0 — matches S1's recorded 723 exactly.
+- Verdict: **all six defects fixed and locked by named green tests.**
+
+### BUG-001 (h3.0) — threshold mode preempts stock slash/@/quoted-path; Tab opens menu
+
+- Root cause: "extractMatchState's threshold regex fires on ANY trailing
+  identifier regardless of what precedes it, and getSuggestions returns
+  hapax's own word items without ever consulting `current`" (bugfix PRD
+  h3.0) — violating spec/07: "path/slash completion must keep working
+  exactly as before, including inside quoted paths"
+  (architecture/spec-acceptance-map.md §07 quotes).
+- Fix: P1.M1.T1.S1 (`classifyStockContext` pure helper + unit tests) +
+  P1.M1.T1.S2 (stock-context delegation in getSuggestions, verbatim, before
+  the armed-chain branch).
+- Locking tests: `test/provider-match.test.ts` (classify unit),
+  `test/provider.test.ts` + `test/provider-live.test.ts` (sentinel
+  delegation, args identity, never-hijack net).
+- Re-run:
+  ```
+  npx vitest --run test/provider-match.test.ts test/provider.test.ts test/provider-live.test.ts
+  ```
+  → exit 0, **3 files, 99/99 passed** (== S1's item-6 count).
+
+### BUG-002 (h3.1) — NREL phrase words admission-rejected; §09 item 7 unreachable
+
+- Root cause: "the admission bands were recalibrated (REJECT_COMMON_THRESHOLD
+  = 50, MID_FREQ_THRESHOLD = 20 …) and against the shipped dict/common-en.bin
+  the words of the PRD's own M2 acceptance phrase now reject: lookup
+  ('national')=90, lookup('energy')=94, lookup('laboratory')=57 — all ≥ 50 →
+  'reject', never stored" → empty successor index, item 7 impossible
+  (bugfix PRD h3.1; architecture/core-engine-findings.md).
+- Fix: P1.M2.T1.S1 (proper-noun relief band in `admit()`, relief-before-
+  reject ordering, whole-token + properName only) + P1.M2.T1.S2 (§09
+  tuning-protocol re-run) + P1.M2.T1.S3 (item-7 end-to-end pin).
+- **Recorded: relief ceiling `PROPER_NOUN_ADMIT_CEILING = 95`**
+  (src/core/score.ts; tuned 120 → 95 by the tuning-protocol re-run).
+  Constraint interval **94 < ceiling ≤ 156**: `energy`=94 must admit and
+  `them`=156-class common words must stay rejected (the ceiling itself
+  rejects — strict `q < ceiling`); a blanket retune was rejected because
+  raising REJECT to ≥95 would re-admit lowercase `context`(51)/`posts`(47)
+  and break the calibration suite (core-engine-findings.md).
+- **Recorded drift: spec/04 stays 220/120 by owner decision (spec/*.md is
+  READ-ONLY); code ships 50/20 + the relief band, documented in score.ts
+  JSDoc ("spec/04's original 220/120 table — spec/*.md is READ-ONLY; this
+  drift is intentional"). This doc is the drift record; the spec is not
+  edited.**
+- Locking tests: `test/score.test.ts` (relief unit, ceiling boundary),
+  `test/calibration.test.ts` + `test/shipped-dict.test.ts` (COMMON_PROBES
+  unaffected — lowercase probes), `test/chain.test.ts` + acceptance item 7.
+- Re-run:
+  ```
+  npx vitest --run test/score.test.ts test/calibration.test.ts test/shipped-dict.test.ts
+  ```
+  → exit 0, **3 files, 66/66 passed**.
+
+### BUG-003 (h3.2) — secret fragments (CYEXAMPLEKEY etc.) admitted
+
+- Root cause: "the raw-text masking catch-all only fires at 40+ chars (the
+  AWS key is 38), and the token-level residue rules require ≥2 digits
+  (rule 6) or a ≥16-char run (rules 7a/7b) — the camelCase sub-words are
+  4–12 chars with ≤1 digit, so they pass every gate"; and "NO parent context
+  is tracked … a secret-rejected parent leaves `wholeGroup` undefined and
+  its sub-words sail through" (bugfix PRD h3.2;
+  architecture/core-engine-findings.md BUG-003 section).
+- Fix: P1.M2.T2.S1 (mask floor 40 → 32, `BARE_RUN_MIN = 32`) +
+  P1.M2.T2.S2 (whole-token secret rejection propagated to all sub-word
+  drafts in the ingest memo) + P1.M2.T2.S3 (synthetic-token paste battery:
+  npm/glpat/sk_live/Bearer + AWS).
+- Locking tests: `test/mask-secrets.test.ts`, `test/shapeGate.test.ts`,
+  `test/adversarial-ingest.test.ts` (paste battery; no fragment —
+  `cyexamplekey`, `jalr`, `femik7` — ever offered by any prefix query).
+- Re-run:
+  ```
+  npx vitest --run test/mask-secrets.test.ts test/shapeGate.test.ts test/adversarial-ingest.test.ts
+  ```
+  → exit 0, **3 files, 110/110 passed** (S1's item-5 pair alone: 62/62).
+
+### BUG-004 (h3.3) — astral letter before ASCII run leaks remainder (𝔘sword → sword)
+
+- Root cause: "the implementation's isUniLetter() guard reads codePointAt()
+  one code unit at a time, so an astral (surrogate-pair) letter immediately
+  BEFORE a match is seen as its lone low surrogate, which is not \p{L}, and
+  the run slips through: tokenize('𝔘sword') → ['sword']" — a spec deviation
+  from §04 rule 3 ("a non-ASCII letter adjacent to an ASCII run disqualifies
+  the whole run") (bugfix PRD h3.3).
+- Fix: P1.M3.T1.S1 (code-point-correct boundary guard `isUniLetterBefore`
+  at the BEFORE guard site; the AFTER side already reads full pairs via
+  codePointAt at the high surrogate).
+- Locking tests: `test/segment.test.ts` astral cases (𝔘 on both sides, BMP
+  letters, paired guards).
+- Re-run: `npx vitest --run test/segment.test.ts` → exit 0,
+  **1 file, 43/43 passed**.
+
+### BUG-005 (h3.4) — armed chain swallows trigger char; mis-prefixed successor set
+
+- Root cause: "the armed branch's fragment regex matches 'b' after the '#',
+  filters the successor list at threshold 0, and returns items with prefix
+  'b' … the chain branch deliberately bypasses extractMatchState, so trigger
+  mode can never win while armed" — violating spec/07 "trigger-char match
+  wins" and the disarm rule "any non-Tab key that disqualifies → idle"
+  (bugfix PRD h3.4; spec-acceptance-map.md §07).
+- Fix: P1.M1.T2.S1 (word-start fragment requirement in the armed branch +
+  reset/fall-through on disqualification) + P1.M1.T2.S2 (editor-sim
+  integration test with pi-tui's blind prefix-deletion mirror).
+- Locking tests: `test/chain.test.ts` (trigger-reset cases, word-start
+  offer rules), `test/provider-live.test.ts`.
+- Re-run: `npx vitest --run test/chain.test.ts test/provider-live.test.ts`
+  → exit 0, **2 files, 48/48 passed**.
+
+### BUG-006 (h3.5) — bigram map over 10k cap after one large message
+
+- Root cause: "#evictBigramsIfOverCap runs once per recordBigramRuns call
+  … and pops at most BIGRAM_EVICT_BATCH=256 victims per call. A single
+  message containing more than 10,000 distinct bigrams therefore leaves the
+  map over cap by (bigrams − 10,256); measured: one ingested message with
+  11,000 bigrams left store.bigramSize at 10,714" — violating spec/06:
+  "Cap the bigram map at 10,000 keys with the standard eviction policy"
+  (bugfix PRD h3.5).
+- Fix: P1.M3.T2.S1 (drain loop: batched eviction repeats within the SAME
+  recordBigramRuns call until the map is within BIGRAM_CAP — same-call cap
+  guarantee, src/core/store.ts).
+- Locking tests: `test/bigrams.test.ts` (10k cap; 11k-bigram single
+  message lands at cap exactly).
+- Re-run: `npx vitest --run test/bigrams.test.ts` → exit 0,
+  **1 file, 12/12 passed**.
+
+### Explicit out-of-scope record
+
+- **`successorIndex` eviction cleanup known gap remains OPEN and out of
+  scope for this changeset** — see "Known accepted gap — successorIndex
+  eviction cleanup (recorded, NOT fixed)" above (word eviction does not
+  clean `#successorIndex`; bigram eviction splices its own successor
+  entries, but orphaned successor-index cleanup after word eviction is not
+  performed). The BUG-006 drain loop does not change this: it enforces the
+  bigram-map cap only. Future work owns the gap.
+
+### BUG-ID → PRD mapping
+
+BUG-001=h3.0 (stock-context preemption) · BUG-002=h3.1 (admission bands vs
+item 7) · BUG-003=h3.2 (secret fragments) · BUG-004=h3.3 (astral boundary) ·
+BUG-005=h3.4 (chain vs trigger char) · BUG-006=h3.5 (bigram cap) — in PRD
+issue order.
+
+### Reproduction
+
+```bash
+git rev-parse HEAD                                # 1b5e942c… (or later)
+npm run check
+npm test                                          # 33 files / 723 passed / 1 skipped
+npx vitest --run test/provider-match.test.ts test/provider.test.ts test/provider-live.test.ts   # BUG-001, 99/99
+npx vitest --run test/score.test.ts test/calibration.test.ts test/shipped-dict.test.ts          # BUG-002, 66/66
+npx vitest --run test/mask-secrets.test.ts test/shapeGate.test.ts test/adversarial-ingest.test.ts # BUG-003, 110/110
+npx vitest --run test/segment.test.ts             # BUG-004, 43/43
+npx vitest --run test/chain.test.ts test/provider-live.test.ts                                  # BUG-005, 48/48
+npx vitest --run test/bigrams.test.ts             # BUG-006, 12/12
+grep -n "PROPER_NOUN_ADMIT_CEILING = 95" src/core/score.ts   # relief ceiling shipped
+cat plan/002_3e8a42cadf2c/bugfix/001_0f4b641cf9ce/P1M4T1S1/research/regression-evidence.md       # cited S1 evidence
+```
