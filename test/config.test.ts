@@ -5,8 +5,12 @@
  * malformed-file fallback (exactly one warning naming the path; the
  * remaining layers still apply), per-field repair semantics (invalid
  * values fall back to the PREVIOUS layer's value with a warning;
- * out-of-range numbers clamp silently), exact defaults, and the pure
- * validation helpers. The loader is node-pure — notify, cwd and
+ * out-of-range numbers clamp silently), exact defaults, the pure
+ * validation helpers, and the enableChaining/enablePhrases pair
+ * (PRD §08 h2.46): enableChaining is the primary key, enablePhrases a
+ * deprecated alias resolved per layer (alias first, primary overrides)
+ * and mirrored into both interface fields. The loader is node-pure —
+ * notify, cwd and
  * homeDir are injected — so fixtures are plain JSON files inside
  * mkdtemp scratch dirs; no pi runtime involved.
  */
@@ -88,6 +92,7 @@ describe("defaults — no config files (PRD §08)", () => {
       triggerChar: "#",
       threshold: 2,
       maxSuggestions: 8,
+      enableChaining: true,
       enablePhrases: true,
       debug: false,
     });
@@ -98,8 +103,11 @@ describe("defaults — no config files (PRD §08)", () => {
     const cfg = loadConfig(loadOpts());
     cfg.triggerChar = "!";
     cfg.threshold = 3;
+    cfg.enableChaining = false;
     expect(DEFAULT_CONFIG.triggerChar).toBe("#");
     expect(DEFAULT_CONFIG.threshold).toBe(2);
+    expect(DEFAULT_CONFIG.enableChaining).toBe(true);
+    expect(DEFAULT_CONFIG.enablePhrases).toBe(true);
   });
 
   it("empty JSON objects in both files change nothing and stay silent", () => {
@@ -122,6 +130,7 @@ describe("layer precedence — defaults → user → project, later wins", () =>
     triggerChar: "%",
     threshold: 3,
     maxSuggestions: 20,
+    enableChaining: false,
     enablePhrases: false,
     debug: true,
   };
@@ -129,7 +138,13 @@ describe("layer precedence — defaults → user → project, later wins", () =>
   it("a valid user-global layer overrides every default", () => {
     writeUserConfig(allOverrides);
     expect(loadConfig(loadOpts())).toEqual(allOverrides);
-    expect(h.warnings).toEqual([]);
+    // The override set uses the deprecated alias key → one mapped warning.
+    expect(h.warnings).toEqual([
+      {
+        msg: "hapax: enablePhrases is deprecated; use enableChaining (mapped)",
+        level: "warning",
+      },
+    ]);
   });
 
   it("a valid project-local layer overrides the user-global layer", () => {
@@ -141,8 +156,16 @@ describe("layer precedence — defaults → user → project, later wins", () =>
     expect(cfg.debug).toBe(false);
     // Untouched keys keep the user-global values.
     expect(cfg.maxSuggestions).toBe(20);
-    expect(cfg.enablePhrases).toBe(false);
-    expect(h.warnings).toEqual([]);
+    expect(cfg.enableChaining).toBe(false);
+    expect(cfg.enablePhrases).toBe(false); // mirror
+    // Exactly the user layer's alias deprecation; the project layer's
+    // primary keys are silent.
+    expect(h.warnings).toEqual([
+      {
+        msg: "hapax: enablePhrases is deprecated; use enableChaining (mapped)",
+        level: "warning",
+      },
+    ]);
   });
 
   it("per-key precedence: only the keys a layer defines move", () => {
@@ -308,20 +331,6 @@ describe("threshold / maxSuggestions — clamp in range, repair on type", () => 
 });
 
 describe("boolean fields — real booleans only, no truthy coercion", () => {
-  it('enablePhrases "yes" repairs to the previous value with a warning; false is accepted', () => {
-    writeUserConfig({ enablePhrases: "yes" });
-    const cfg = loadConfig(loadOpts());
-    expect(cfg.enablePhrases).toBe(true);
-    expect(h.warnings).toHaveLength(1);
-    expect(h.warnings[0]!.msg).toContain("enablePhrases");
-    expect(h.warnings[0]!.msg).toContain(userPath());
-
-    h.warnings.length = 0;
-    writeUserConfig({ enablePhrases: false });
-    expect(loadConfig(loadOpts()).enablePhrases).toBe(false);
-    expect(h.warnings).toEqual([]);
-  });
-
   it("debug 1 repairs to the previous value with a warning; true is accepted", () => {
     writeProjectConfig({ debug: 1 });
     const cfg = loadConfig(loadOpts());
@@ -336,15 +345,115 @@ describe("boolean fields — real booleans only, no truthy coercion", () => {
     expect(loadConfig(loadOpts()).debug).toBe(true);
     expect(h.warnings).toEqual([]);
   });
+});
 
-  it("a user-level repair is the previous value for a later project layer", () => {
+describe("enableChaining / enablePhrases — primary key + deprecated alias (PRD §08 h2.46)", () => {
+  it("primary key parses: { enableChaining: false } → both fields false, no warnings", () => {
+    writeUserConfig({ enableChaining: false });
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.enableChaining).toBe(false);
+    expect(cfg.enablePhrases).toBe(false); // mirror
+    expect(h.warnings).toEqual([]);
+  });
+
+  it("alias maps: { enablePhrases: false } → both fields false + exactly one deprecation warning", () => {
     writeUserConfig({ enablePhrases: false });
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.enableChaining).toBe(false);
+    expect(cfg.enablePhrases).toBe(false);
+    expect(h.warnings).toEqual([
+      {
+        msg: "hapax: enablePhrases is deprecated; use enableChaining (mapped)",
+        level: "warning",
+      },
+    ]);
+  });
+
+  it("both present, one layer: enableChaining wins; the deprecation warning still fires", () => {
+    writeUserConfig({ enablePhrases: true, enableChaining: false });
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.enableChaining).toBe(false);
+    expect(cfg.enablePhrases).toBe(false);
+    expect(h.warnings).toEqual([
+      {
+        msg: "hapax: enablePhrases is deprecated; use enableChaining (mapped)",
+        level: "warning",
+      },
+    ]);
+  });
+
+  it("both present, reversed: { enablePhrases: false, enableChaining: true } → true", () => {
+    writeUserConfig({ enablePhrases: false, enableChaining: true });
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.enableChaining).toBe(true);
+    expect(cfg.enablePhrases).toBe(true);
+    expect(h.warnings).toHaveLength(1); // alias was present+valid → deprecation fires
+  });
+
+  it("cross-layer: project primary overrides a user-layer alias", () => {
+    writeUserConfig({ enablePhrases: true });
+    writeProjectConfig({ enableChaining: false });
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.enableChaining).toBe(false);
+    expect(cfg.enablePhrases).toBe(false);
+    expect(h.warnings).toHaveLength(1); // the user layer's deprecation only
+  });
+
+  it("cross-layer: project alias overrides a user-layer primary (later layer wins)", () => {
+    writeUserConfig({ enableChaining: true });
+    writeProjectConfig({ enablePhrases: false });
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.enableChaining).toBe(false);
+    expect(cfg.enablePhrases).toBe(false);
+    expect(h.warnings).toEqual([
+      {
+        msg: "hapax: enablePhrases is deprecated; use enableChaining (mapped)",
+        level: "warning",
+      },
+    ]);
+  });
+
+  it("alias invalid alone: repair-notify naming enablePhrases, defaults unchanged", () => {
+    writeUserConfig({ enablePhrases: "yes" });
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.enableChaining).toBe(true);
+    expect(cfg.enablePhrases).toBe(true);
+    expect(h.warnings).toHaveLength(1);
+    expect(h.warnings[0]!.msg).toContain("enablePhrases");
+    expect(h.warnings[0]!.msg).toContain(userPath());
+  });
+
+  it("valid alias + invalid primary in one layer: alias applies, primary repair-notifies against the kept (alias) value", () => {
+    writeUserConfig({ enablePhrases: false, enableChaining: "nope" });
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.enableChaining).toBe(false); // alias-resolved value kept
+    expect(cfg.enablePhrases).toBe(false);
+    expect(h.warnings).toHaveLength(2);
+    expect(h.warnings[0]!.msg).toBe(
+      "hapax: enablePhrases is deprecated; use enableChaining (mapped)",
+    );
+    expect(h.warnings[1]!.msg).toContain("invalid enableChaining");
+    expect(h.warnings[1]!.msg).toContain("using false"); // next.enableChaining
+    expect(h.warnings[1]!.msg).toContain(userPath());
+  });
+
+  it("a user-level chaining value is the repair target for a later project alias", () => {
+    writeUserConfig({ enableChaining: false });
     writeProjectConfig({ enablePhrases: "yes" });
     const cfg = loadConfig(loadOpts());
-    expect(cfg.enablePhrases).toBe(false); // repaired to user's false
+    expect(cfg.enableChaining).toBe(false); // repaired to user's false
+    expect(cfg.enablePhrases).toBe(false);
     expect(h.warnings).toHaveLength(1);
     expect(h.warnings[0]!.msg).toContain("enablePhrases");
     expect(h.warnings[0]!.msg).toContain(projectPath());
+  });
+
+  it("deprecation notify fires per alias-using layer, never for the primary key", () => {
+    writeUserConfig({ enablePhrases: false });
+    writeProjectConfig({ enableChaining: false }); // primary: silent
+    loadConfig(loadOpts());
+    expect(h.warnings).toHaveLength(1);
+    expect(h.warnings[0]!.msg).toContain("deprecated");
   });
 });
 

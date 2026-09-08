@@ -15,6 +15,15 @@
  * not repair). Missing files are the normal case and stay silent.
  * Unknown keys are ignored (forward compatibility).
  *
+ * Chaining flag (PRD §08 h2.46): the primary key is `enableChaining`,
+ * gating ONLY the successor-index chain layer (word completion is
+ * unaffected either way). `enablePhrases` is accepted as a DEPRECATED
+ * alias, resolved per layer (alias first, primary overrides) with a
+ * one-per-layer deprecation notify. Until P1.M3.T1.S2 re-points the
+ * pre-S2 gate reads, HapaxConfig carries BOTH fields and applyLayer
+ * mirrors the resolved value into `enablePhrases`, so the two can
+ * never diverge.
+ *
  * This module imports ONLY node builtins — zero pi imports — so the
  * loader is trivially unit-testable: notify, cwd, projectTrusted and
  * homeDir are all injected. src/pi/index.ts (P1.M3.T5) wires them to
@@ -38,7 +47,14 @@ export interface HapaxConfig {
   threshold: number;
   /** 1–20 */
   maxSuggestions: number;
-  /** M2 flag; INERT in M1 builds */
+  /** PRIMARY chaining flag (PRD §08 h2.46): gates the successor-index
+   *  chain layer ONLY — word completion is unaffected either way. */
+  enableChaining: boolean;
+  /** TRANSITIONAL MIRROR of enableChaining — same resolved value every
+   *  time (applyLayer writes both) so pre-S2 gate reads (index.ts,
+   *  provider.ts) keep compiling. DEPRECATED as a config key — accepted
+   *  as an alias of enableChaining; removed from this interface by
+   *  P1.M3.T1.S2. */
   enablePhrases: boolean;
   /** enables /acwords command + store dump */
   debug: boolean;
@@ -48,6 +64,7 @@ export const DEFAULT_CONFIG: HapaxConfig = {
   triggerChar: "#",
   threshold: 2,
   maxSuggestions: 8,
+  enableChaining: true,
   enablePhrases: true,
   debug: false,
 };
@@ -194,17 +211,42 @@ function applyLayer(
     }
   }
 
+  // Chaining flag pair (PRD §08 h2.46): the deprecated `enablePhrases`
+  // alias resolves FIRST, then the primary `enableChaining` overrides
+  // when present and valid — so the primary wins when both appear
+  // (in-layer or across layers, via ordinary later-wins). Only real
+  // booleans; no truthy coercion.
   if ("enablePhrases" in raw) {
     const v = raw.enablePhrases;
     if (typeof v === "boolean") {
-      next.enablePhrases = v;
+      next.enableChaining = v;
+      notify(
+        `hapax: enablePhrases is deprecated; use enableChaining (mapped)`,
+        "warning",
+      );
     } else {
       notify(
-        `hapax: invalid enablePhrases in ${filePath}, using ${formatValue(current.enablePhrases)}`,
+        `hapax: invalid enablePhrases in ${filePath}, using ${formatValue(current.enableChaining)}`,
         "warning",
       );
     }
   }
+
+  if ("enableChaining" in raw) {
+    const v = raw.enableChaining;
+    if (typeof v === "boolean") {
+      next.enableChaining = v;
+    } else {
+      // Repair target is next.enableChaining — the alias-resolved value
+      // when a valid alias preceded in this layer (that is the value
+      // actually kept), else the pre-layer value.
+      notify(
+        `hapax: invalid enableChaining in ${filePath}, using ${formatValue(next.enableChaining)}`,
+        "warning",
+      );
+    }
+  }
+  next.enablePhrases = next.enableChaining; // transitional mirror (S2 removes)
 
   if ("debug" in raw) {
     const v = raw.debug;

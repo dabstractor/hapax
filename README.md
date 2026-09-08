@@ -313,7 +313,7 @@ silently (forward compatibility):
 | `triggerChar`    | string  | `"#"`   | one non-word, non-space character (`/^[^\w\s]$/`), or `""` to disable trigger mode entirely | prefix that opens the completion popup |
 | `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | chars before threshold matching                 |
 | `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once               |
-| `enablePhrases`  | boolean | `true`  | `true` / `false`                                         | `true` enables phrase completions and Tab-chained successor completion; `false` removes the entire phrase layer — no phrase items, no constituent suppression, no successor capture or chaining — while word completion is unchanged |
+| `enableChaining` | boolean | `true`  | `true` / `false`                                         | gates chained (successor) completion only; word completion unaffected either way; `enablePhrases` is accepted as a deprecated alias and is mapped to this key |
 | `debug`          | boolean | `false` | `true` / `false`                                         | enables the `/acwords` command + store dump     |
 
 #### File paths and precedence
