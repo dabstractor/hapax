@@ -1,0 +1,78 @@
+h1.0 hapax — Context-Driven Autocomplete Extension
+ h2.0 Purpose
+ h2.1 Design invariants (non-negotiable)
+ h2.2 Document index
+h1.1 01 — Goals and Scope
+ h2.3 Problem
+ h2.4 Core definitions
+ h2.5 Goals (M1)
+ h2.6 Goals (M2)
+ h2.7 Non-goals (explicit)
+ h2.8 Known limitations (accepted)
+ h2.9 UX principles
+h1.2 02 — Architecture
+ h2.10 Components
+ h2.11 Module layout
+ h2.12 Data flow
+  h3.0 Ingest path (background, never on keystroke path)
+  h3.1 Query path (synchronous, every keystroke)
+  h3.2 Popup path (display only)
+ h2.13 Extension lifecycle wiring
+ h2.14 Portability note (future iteration, out of M1/M2 scope)
+ h2.15 Performance budgets (hard requirements)
+h1.3 03 — Dictionary Format and Build
+ h2.16 Purpose
+ h2.17 Packed binary format (dict/common-en.bin)
+ h2.18 Hash and probing
+ h2.19 Loader contract (src/core/dictionary.ts)
+ h2.20 Build pipeline (tools/build-dict.mjs)
+ h2.21 Versioning contract
+h1.4 04 — Tokenization and Scoring
+ h2.22 Segmentation (src/core/segment.ts)
+  h3.3 What counts as a word
+  h3.4 camelCase / snake_case splitting
+  h3.5 Normalization
+ h2.23 Shape gate (src/core/shapeGate.ts)
+ h2.24 Admission decision (src/core/score.ts)
+ h2.25 Salience formula (ranking)
+ h2.26 Query ranking (final order)
+ h2.27 Case handling
+h1.5 05 — Ingestion Pipeline
+ h2.28 Event contract
+ h2.29 Debounce and scheduling (src/pi/ingest.ts)
+ h2.30 Chunked processing
+ h2.31 Session restore (rebuild)
+ h2.32 Compaction
+ h2.33 Eviction interplay
+ h2.34 What ingestion must NOT do
+h1.6 06 — Candidate Store
+ h2.35 M1: word candidates
+ h2.36 Upsert semantics
+ h2.37 Eviction
+ h2.38 M2: successor index (chained completion)
+  h3.6 Bigram capture (raw-text adjacency, strictly)
+  h3.7 Successor index (for chained completion)
+h1.7 07 — Completion UI
+ h2.39 Provider integration
+ h2.40 Trigger modes
+ h2.41 Debounce, flicker, and the Tab contract
+  h3.8 Tab-open gesture: root cause (traced) and mitigation
+ h2.42 Never-hijack rules (acceptance-critical)
+ h2.43 M2: chained completion
+ h2.44 Menu item shape
+h1.8 08 — Configuration
+ h2.45 Config surface (deliberately tiny)
+ h2.46 Schema
+ h2.47 Not configurable (by settled decision)
+ h2.48 Debug command (/acwords, registered when debug: true)
+h1.9 09 — Testing and Acceptance
+ h2.49 Unit tests (per module)
+ h2.50 Integration acceptance (manual or scripted via pi)
+ h2.51 Performance gates (CI-scriptable micro-benchmarks)
+ h2.52 Tuning protocol
+ h2.53 Definition of done — M1
+ h2.54 Definition of done — M2
+ h2.55 Decision log (all settled)
+ h2.56 Implementation milestones
+---
+code:13 para:72 list:49 table:5
