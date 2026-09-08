@@ -30,8 +30,11 @@
  * plus 2.0·log2(1 + count) on the repetition path (count >= 2) — and
  * CONSTITUENT SUPPRESSION: a phrase shadows the single-word candidate
  * whose key equals its first word when the phrase's salience is >= the
- * word's (the settled tie rule: >=, tie → phrase). Only the first word
- * can prefix-collide with the fragment, so middle/last constituents are
+ * word's (the settled tie rule: >=, tie → phrase) — EXCEPT the BUG-005
+ * exemption: a first word that can ARM the chain (topSuccessors() non-
+ * empty, PRD §07 h2.43 arming is whole-word Tab acceptance) stays
+ * acceptable, co-presenting BELOW its phrase. Only the first word can
+ * prefix-collide with the fragment, so middle/last constituents are
  * never suppressed. Phrase items reuse RankedMatch unchanged — key is the
  * lowercase phrase key, display is the constituent display casings joined
  * with single spaces, description is the exact literal "phrase" — and the
@@ -218,13 +221,25 @@ export function rankMatches(
     });
   }
 
-  // ── Constituent suppression (PRD §06 h3.8, settled >= tie rule) ───────
+  // ── Constituent suppression (PRD §06 h3.8 + BUG-005 exemption) ────────
   // A phrase shadows the single-word candidate whose key equals its first
-  // word when the phrase's salience is >= the word's (tie → phrase).
-  // Middle/last constituents are never touched — typing "renew" cannot
-  // co-present with "energy" anyway (different prefixes).
+  // word when the phrase's salience is >= the word's (tie → phrase) —
+  // EXCEPT when the word can still arm the chain: if the successor index
+  // has successors for it (topSuccessors().length > 0), the bare word
+  // must stay acceptable (PRD §07 h2.43: arming is whole-word Tab
+  // acceptance, so a chain can never be armed from a suppressed menu —
+  // fatal for resumed sessions, BUG-005). It co-presents BELOW the
+  // phrase: phrase salience (1.2·Σ + repetition bonus) is by
+  // construction >= the word's, so the merged sort keeps the phrase
+  // first. Successor-less words keep the plain h3.8 rule (the exemption
+  // is inert there — nothing to arm; with phrases off the successor
+  // index is empty everywhere, so behavior is identical to the word-only
+  // days). Middle/last constituents are never touched — typing "renew"
+  // cannot co-present with "energy" anyway (different prefixes).
   for (const p of phraseHits) {
     const fw = firstWord(p.key);
+    const canArm = store.topSuccessors(fw).length > 0; // O(1) read; NO_SUCCESSORS is length 0
+    if (canArm) continue; // BUG-005: successor-bearing word stays acceptable
     for (let i = words.length - 1; i >= 0; i--) {
       if (words[i].c.key === fw && phraseSuppresses(p.sal, words[i].sal)) {
         words.splice(i, 1);

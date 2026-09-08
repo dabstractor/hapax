@@ -555,17 +555,17 @@ async function replayEntries(
 // the real ingest pipeline (phrase hook wired exactly like src/pi/index.ts)
 // and the SHIPPED dictionary.
 //
-// Fixture phases (the seeding-order gotcha from test/chain.test.ts, applied
-// to a real fixture): the chain bigrams recur ×4, so they are ADMITTED
-// phrases and h3.8 constituent suppression permanently shadows the bare
-// word "National" in "natio"-prefixed menus once they land. The arming
-// accept therefore happens on the EARLY (phrase-free) prefix of the
-// transcript — phase 1, messages n01–n03 — exactly like armViaTab queries
-// the menu before its bigrams are recorded; the phrase-bearing messages
-// (phase 2) replay afterwards and fill the successor index. This mirrors a
-// real session: the user accepts the word before the repeated phrase ever
-// occurs; the chain engages on the very next query with zero typing.
-// ─────────────────────────────────────────────────────────────────────────────
+// Arming visibility (BUG-005, fixed): the chain bigrams recur ×4, so they
+// are ADMITTED phrases — before the rankMatches exemption the h3.8
+// constituent suppression removed the bare word "National" from every
+// "natio" menu once they landed, making the chain un-armable in any
+// resumed session. The exemption keeps the successor-bearing first word
+// co-presented BELOW its phrases, so the fixture sanity test and the
+// zero-typing chain below arm on the FULL replay — exactly the /resume
+// scenario. The later tests keep the phase-split scaffold (arm on the
+// phrase-free prefix, NREL_PHASE1) purely as narration: it exercises the
+// same machine flow and stays green either way.
+// ───────────────────────────────────────────────────────────────────────���────
 
 /** Entries 0..PHASE1 (header + n01–n03) carry NO "National Renewable …"
  *  adjacency; PHASE1.. carries the four verbatim phrase occurrences. */
@@ -666,10 +666,19 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     expect(store.get("nrel")?.display).toBe("NREL"); // acronym stays a rare word
     expect(store.phraseSize).toBeGreaterThan(0);
 
-    // Documented consequence (drives the phase-split arming below): with
-    // the phrase bigrams admitted, h3.8 suppression shadows the bare word.
+    // Documented consequence (BUG-005, fixed): the bare word co-presents
+    // BELOW its phrases — the successor index can arm a chain from it
+    // (h2.43 whole-word arming), so it must stay acceptable — while the
+    // phrases still sort first (S_P >= S_W always).
     const menu = rankMatches(store, "natio");
-    expect(menu.map((m) => m.description)).toEqual(["phrase", "phrase"]);
+    expect(menu.map((m) => m.description)).toEqual(["phrase", "phrase", "session x6"]);
+    expect(menu[0]!.description).toBe("phrase");
+    expect(menu[menu.length - 1]!.key).toBe("national");
+    expect(menu[menu.length - 1]!.display).toBe("National");
+    // 'na'-width probe (the adversarial audit's failing query, inverted):
+    const wide = rankMatches(store, "na");
+    expect(wide.map((m) => m.key)).toContain("national");
+    expect(wide[0]!.description).toBe("phrase");
   });
 
   it("zero-typing chain — accept National → renewable → energy → laboratory with no fragment characters between accepts", async () => {
@@ -680,27 +689,27 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     const chain = createChainMachine();
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
-    // Phase 1: phrase-free traffic only.
-    await replayNrel(pipeline, entries.slice(0, NREL_PHASE1));
+    // FULL replay: the BUG-005 exemption keeps "National" in the "natio"
+    // menu even with its phrases and successor tail already recorded —
+    // arming works on a resumed session, no phase-split workaround.
+    await replayNrel(pipeline, entries);
 
-    // Live menu for "natio" contains the whole-word item (no phrases yet):
+    // Live menu for "natio": phrases first, the exempt bare word below.
     const menu = await provider.getSuggestions(["natio"], 0, 5, opts());
-    expect(menu?.items).toEqual([
-      { value: "National", label: "National", description: expect.stringMatching(/^session x\d+$/) },
+    expect(menu?.items.map((i) => i.description)).toEqual([
+      "phrase",
+      "phrase",
+      expect.stringMatching(/^session x\d+$/),
     ]);
     expect(menu?.prefix).toBe("natio");
+    const nationalItem = menu!.items[menu!.items.length - 1]!;
 
-    // Tab accepts it → harness buffer "natio" becomes "National", cursor
-    // adjacent; the arming intercept arms the chain (T2.S1).
-    const nationalItem: AutocompleteItem = { value: "National", label: "National" };
+    // Tab accepts the word item → harness buffer "natio" becomes
+    // "National", cursor adjacent; the arming intercept arms the chain.
     provider.applyCompletion(["natio"], 0, 5, nationalItem, "natio");
     expect(chain.state()).toEqual({ word: "national" });
     expect(current.state.lines).toEqual(["National"]);
     expect(current.state.cursorCol).toBe(8);
-
-    // Phase 2: the four verbatim phrase occurrences land (successor index
-    // fills) — NO keystrokes, NO chain reset in between.
-    await replayNrel(pipeline, entries.slice(NREL_PHASE1));
 
     // ZERO typed characters: the very next getSuggestions runs on the
     // post-accept buffer ("National", cursor 8) and the PENDING OFFER

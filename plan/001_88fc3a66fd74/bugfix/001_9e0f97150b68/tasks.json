@@ -243,7 +243,7 @@
           "type": "Milestone",
           "id": "P1.M4",
           "title": "Completion-UI safety & chain reachability (BUG-002, BUG-005)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Make the display provider incapable of returning a stale prefix (Tab can never corrupt typed text), and restore chained-completion reachability after phrases have been learned or a session restored.",
           "tasks": [
             {
@@ -275,14 +275,14 @@
               "type": "Task",
               "id": "P1.M4.T2",
               "title": "Restore chained-completion reachability after phrase learning",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Exempt successor-bearing bare words from constituent suppression and arm the chain on phrase acceptance, so the M2 zero-typing chain works in resumed sessions where phrases already exist.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M4.T2.S1",
                   "title": "Successor-aware constituent-suppression exemption in rankMatches",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See system_context.md BUG-005. phraseSalience (src/core/query.ts:112: 1.2·Σ constituents + 2.0·log2(1+count) when count>=2, PHRASE_MULTIPLIER=1.2 at L83) mathematically always exceeds the first word's own salience, and phraseSuppresses (L133: phraseSal >= wordSal, tie→phrase) therefore ALWAYS removes the bare word from every menu once a phrase starting with it exists (suppression loop query.ts ~L222-232). Store API store.topSuccessors(word) (store.ts:856, O(1), frozen NO_SUCCESSORS on miss) is the ready-made has-successors predicate. CRITICAL: test/acceptance.test.ts:606-610 currently PINS the bug (`expect(menu.map(m=>m.description)).toEqual(['phrase','phrase'])` after nrel.jsonl replay) and the fixture-phase comment at L498-514 works around it — both must be updated to the fixed behavior, and test/chain.test.ts L17-22 documents the same 'seeding order gotcha'.\n2. INPUT: None from other subtasks — self-contained in src/core/query.ts rankMatches.\n3. LOGIC: In the constituent-suppression loop, skip removing the bare first word when store.topSuccessors(firstWord).length > 0 (the word can arm the chain, so it must stay acceptable; it co-presents BELOW the phrase since salience sorts it after). Words without successors keep today's suppression (spec §06 behavior preserved where it is harmless). With enablePhrases=false the successor index is empty → behavior identical to today. Unit tests: full NREL-style replay (or test/fixtures/sessions/nrel.jsonl) then rankMatches(store,'natio') MUST contain the bare 'national' word item alongside phrase items; 'na' probe likewise; words without successors still suppressed; compareRankedMatches ordering unchanged (phrase first). Update acceptance.test.ts item 7 and chain.test.ts gotcha comment to the new invariant. Mock nothing — real store + pipeline per existing test/chain.test.ts harness.\n4. OUTPUT: rankMatches behavior where successor-bearing bare words survive suppression, for consumption by P1.M4.T2.S2 (arming) and P1.M5.T1.S1 (chain post-restore probe).\n5. DOCS: [Mode A] Update the suppression-loop comment in query.ts and the spec-referencing comments in the tests. No config surface change.",
@@ -298,7 +298,7 @@
                   "type": "Subtask",
                   "id": "P1.M4.T2.S2",
                   "title": "Arm the chain on phrase acceptance (last-word successor semantics)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M4.T2.S1",
@@ -335,7 +335,7 @@
                   "type": "Subtask",
                   "id": "P1.M5.T1.S1",
                   "title": "Typing-path probes: prose no-menu, Tab-corruption, chain post-restore",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S2",

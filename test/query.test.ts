@@ -16,7 +16,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CandidateStore } from "../src/core/store.js";
+import { CandidateStore, PHRASE_CAP } from "../src/core/store.js";
 import { compareCandidates, salience } from "../src/core/score.js";
 import {
   compareRankedMatches,
@@ -491,24 +491,31 @@ describe("rankMatches — phrase salience + constituent suppression (PRD §06 h3
     expect(m.salience).toBeCloseTo(sum * 1.2, 12); // no +2.0·log2 term
   });
 
-  it("suppression fires: first word dropped when phrase salience >= its salience", () => {
+  it("suppression exempts the successor-bearing first word (BUG-005); phrase still first", () => {
     const s = phraseStore();
     put(s, "renewer", 1, 1); // same-prefix word that is NOT the first word
+    // Exemption precondition: the bigram capture gave "renewable" a
+    // successor tail, so a Tab acceptance can arm the chain from it
+    // (PRD §07 h2.43 — arming is whole-word acceptance).
+    expect(s.topSuccessors("renewable").length).toBeGreaterThan(0);
     const hits = rankMatches(s, "renew");
     const keys = hits.map((x) => x.key);
     // the fired arm really is >=: phrase salience strictly exceeds the word's
     const phraseSal = hits.find((x) => x.key === PHRASE)!.salience;
     const wordSal = salience(s.get("renewable")!, s.currentOrdinal());
     expect(phraseSal).toBeGreaterThan(wordSal);
-    expect(keys).not.toContain("renewable"); // suppressed
-    expect(keys).toContain(PHRASE); // phrase kept
+    // BUG-005 fix: the exempt word co-presents BELOW its phrases (it can
+    // still arm the chain); the phrase items keep the first two slots and
+    // equal-salience words keep the length tiebreak (renewer 7 < renewable 9).
+    expect(keys).toEqual([PHRASE, "renewable energy", "renewer", "renewable"]);
     expect(keys).toContain("renewer"); // unrelated word NEVER suppressed
   });
 
   it("a real store can never produce word salience > phrase salience — the first word IS a constituent", () => {
     // S_P = 1.2·(S_W + rest) + bonus >= 1.2·S_W > S_W, so through rankMatches
-    // the word always yields; the PRD h3.8 "word strictly outranks → both kept"
-    // arm is exercised at the pure-helper level above (phraseSuppresses/compareRankedMatches).
+    // the phrase always sorts above its first word; the PRD h3.8 "word
+    // strictly outranks → both kept, word above" arm is exercised at the
+    // pure-helper level above (phraseSuppresses/compareRankedMatches).
     const s = new CandidateStore();
     put(s, "renewable", 10, 9, { rankGroup: 0, fromUser: true }); // monster word
     put(s, "energy", 1, 1, { rankGroup: 2 }); // weak constituents
@@ -519,8 +526,9 @@ describe("rankMatches — phrase salience + constituent suppression (PRD §06 h3
     const phraseSal = hits.find((x) => x.key === PHRASE)!.salience;
     const wordSal = salience(s.get("renewable")!, s.currentOrdinal());
     expect(phraseSal).toBeGreaterThan(wordSal); // invariant holds even here
-    expect(hits.map((x) => x.key)).not.toContain("renewable");
     expect(hits[0]!.key).toBe(PHRASE); // phrase ranks above everything
+    // BUG-005 exemption: the successor-bearing word co-presents below.
+    expect(hits.map((x) => x.key)).toContain("renewable");
   });
 
   it("word strictly outranking a phrase keeps both, word ranked above (helper level)", () => {
@@ -549,9 +557,10 @@ describe("rankMatches — phrase salience + constituent suppression (PRD §06 h3
     // the trigram's first word is "renewable" — "energy" cannot surface it
     expect(hits.some((x) => x.key === PHRASE)).toBe(false);
     // recordPhraseLines also captured the bigram "energy laboratory" (count 2),
-    // whose FIRST word IS "energy" — so the bigram surfaces and, by the same
-    // h3.8 rule, suppresses the bare word (S_P = 1.2·Σ >= S_word always).
-    expect(hits.map((x) => x.key)).toEqual(["energy laboratory"]);
+    // whose FIRST word IS "energy" — so the bigram surfaces and, with the
+    // BUG-005 exemption (energy→laboratory successors exist), the bare word
+    // co-presents BELOW it (S_P = 1.2·Σ >= S_word always → phrase first).
+    expect(hits.map((x) => x.key)).toEqual(["energy laboratory", "energy"]);
   });
 
   it("missing constituent contributes 0 — phrase still surfaces with exact salience", () => {
@@ -596,12 +605,14 @@ describe("rankMatches — phrase salience + constituent suppression (PRD §06 h3
     const hits = rankMatches(s, "renew"); // default limit 8
     expect(hits).toHaveLength(DEFAULT_LIMIT);
     // Hand-computed ladder: capture made the trigram AND the bigram
-    // "renewable energy" (both count 2 → candidates; both suppress the word
-    // "renewable"). Trigram salience (1.2·3-word Σ + bonus) > bigram (1.2·
-    // 2-word Σ + bonus) > every count-1 word; surviving words tie → shorter
-    // key first, byte-lex:
+    // "renewable energy" (both count 2 → candidates). The BUG-005
+    // exemption keeps "renewable" itself acceptable BELOW its phrases
+    // (it has a successor tail). Trigram salience (1.2·3-word Σ + bonus)
+    // > bigram (1.2·2-word Σ + bonus) > every count-1 word; words tie →
+    // shorter key first, byte-lex:
     //   renewal(7) renewed(7) renewer(7) renewly(7) renewing(8)
-    //   renewment(9) renewables(10) renewableness(15)  ← truncated at 8
+    //   renewable(9)  ← exempt bare word, byte-lex before renewment(9)
+    //   truncated at 8: renewment(9) renewables(10) renewableness(15) drop
     expect(hits.map((x) => x.key)).toEqual([
       PHRASE,
       "renewable energy",
@@ -610,7 +621,7 @@ describe("rankMatches — phrase salience + constituent suppression (PRD §06 h3
       "renewer",
       "renewly",
       "renewing",
-      "renewment",
+      "renewable",
     ]);
     expect(hits.some((x) => x.key === "renewableness")).toBe(false);
     expect(hits.some((x) => x.key === "renewables")).toBe(false);
@@ -628,6 +639,51 @@ describe("rankMatches — phrase salience + constituent suppression (PRD §06 h3
         salience: salience(s.get("alpha")!, s.currentOrdinal()),
       },
     ]);
+  });
+
+  it("successor-less shadowed word is STILL suppressed — the exemption is successor-gated", () => {
+    // Production path to a phrase candidate whose first word has NO
+    // successor entries: phrase eviction (#dropSuccessorFor) spliced the
+    // only bigram tails away while the sticky trigram survived. (Mere
+    // recordPhraseLines can never produce the state — every bigram window
+    // bumps the head's successor array.)
+    const s = new CandidateStore();
+    put(s, "alpha", 3, 1, { rankGroup: 0 });
+    put(s, "beta", 1, 1, { rankGroup: 0 });
+    put(s, "gamma", 1, 1, { rankGroup: 0 });
+    s.recordPhraseLines([["alpha", "beta", "gamma"]], 1); // + both bigrams
+    expect(s.isPhraseCandidate("alpha beta gamma")).toBe(true);
+    expect(s.topSuccessors("alpha")).toEqual([{ next: "beta", count: 1 }]);
+    // Sticky shields the trigram; the count-1 bigrams (ordinal 1) are the
+    // lowest eviction keys once PHRASE_CAP junk n-grams flood in at ordinal 2:
+    s.setPhraseSticky("alpha beta gamma");
+    for (let i = 0; i < PHRASE_CAP; i++) {
+      s.recordPhraseLines([["zz", `w${i}`]], 2);
+    }
+    expect(s.getPhrase("alpha beta gamma")).toBeDefined(); // survived
+    expect(s.isPhraseCandidate("alpha beta gamma")).toBe(true);
+    expect(s.getPhrase("alpha beta")).toBeUndefined(); // bigram evicted
+    expect(s.topSuccessors("alpha").length).toBe(0); // tail spliced away
+    // Plain h3.8 fires again: nothing to arm → the bare word is shadowed.
+    expect(rankMatches(s, "alpha").map((x) => x.key)).toEqual(["alpha beta gamma"]);
+  });
+
+  it("A/B: the bare word's presence no longer hinges on phrase recording", () => {
+    // enablePhrases-off parity (BUG-005 success criterion): without the
+    // phrase hook the menu is pure words — identical to M1; with phrases
+    // the word STILL appears (exempt), only co-presented below them.
+    const plain = new CandidateStore();
+    put(plain, "national", 4, 1);
+    expect(plain.topSuccessors("national").length).toBe(0);
+    expect(rankMatches(plain, "natio").map((m) => m.key)).toEqual(["national"]);
+
+    const withPhrases = new CandidateStore();
+    put(withPhrases, "national", 4, 1);
+    withPhrases.recordPhraseLines([["national", "renewable"]], 1);
+    withPhrases.recordPhraseLines([["national", "renewable"]], 2);
+    const menu = rankMatches(withPhrases, "natio");
+    expect(menu[0]!.key).toBe("national renewable"); // phrase still first
+    expect(menu.map((m) => m.key)).toContain("national"); // exempt below
   });
 
   it("opts.suppress still filters WORD candidates independently of phrases", () => {

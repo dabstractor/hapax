@@ -14,14 +14,20 @@
  * always delegates verbatim — test/provider.test.ts pins that and must
  * stay green untouched.
  *
- * SEEDING ORDER GOTCHA (PRD §06 h3.8): an ADMITTED phrase (bigram count
- * ≥ 2 — the repetition path) always shadows its first-word constituent
- * in rankMatches (PHRASE_MULTIPLIER 1.2 makes phraseSalience ≥ the
- * word's). The arming word IS the bigrams' first word, so its live
- * arming menu must be queried BEFORE the bigrams are recorded. The
- * successor index itself builds on EVERY phrase upsert regardless of
- * admission (store.ts #upsertPhrase's bigram successor tail), so seeding after the menu
- * query costs nothing. Machine-level cases run against the inner
+ * SEEDING ORDER NOTE (PRD §06 h3.8 + BUG-005 exemption): an ADMITTED
+ * phrase (bigram count ≥ 2 — the repetition path) always ranks ABOVE its
+ * first-word constituent (PHRASE_MULTIPLIER 1.2 makes phraseSalience ≥
+ * the word's), and before the BUG-005 fix it REMOVED the bare word from
+ * the menu entirely — making the chain un-armable in any session where
+ * the bigrams already recurred. Since the exemption (rankMatches keeps
+ * the bare first word whenever topSuccessors() is non-empty, PRD §07
+ * h2.43: arming is whole-word Tab acceptance), the arming menu stays
+ * visible even after the bigrams are recorded. The successor index
+ * itself builds on EVERY phrase upsert regardless of admission
+ * (store.ts #upsertPhrase's bigram successor tail). The before-query
+ * seeding order below is therefore only a determinism convenience now:
+ * kept because it costs nothing and keeps each arming menu a pure word
+ * list. Machine-level cases run against the inner
  * provider (no debounce interference); display composition is test 12's
  * job, under the fake timers of provider-display.test.ts.
  */
@@ -149,8 +155,9 @@ const item = (value: string): AutocompleteItem => ({ value, label: value });
 
 /**
  * Arm via the ONLY production path: a live menu + Tab acceptance. Seeds
- * `seed` AFTER the menu query (gotcha above), so the armed word can own
- * high-count bigrams without its arming menu being phrase-shadowed.
+ * `seed` AFTER the menu query (see the header note) — no longer required
+ * for arming visibility (the BUG-005 exemption keeps successor-bearing
+ * words in the menu), kept as a cheap determinism convenience.
  */
 async function armViaTab(
   inner: ReturnType<typeof createHapaxProvider>,
@@ -214,10 +221,12 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     const store = seedStore(); // "theta kappa" admitted (count 2)
     const { chain, inner } = makeStack(store, current);
 
-    // The admitted phrase shadows its first-word constituent (h3.8),
-    // so the menu is the phrase item alone — key "theta kappa".
+    // The admitted phrase ranks ABOVE its first-word constituent, and
+    // the BUG-005 exemption keeps the bare word co-presented below it
+    // (theta carries a successor tail). The PHRASE item itself is what
+    // this case accepts — a space-joined key must never arm (h2.43).
     const menu = await suggest(inner, ["thet"], 0, 4);
-    expect(menu?.items.map((i) => i.value)).toEqual(["theta kappa"]);
+    expect(menu?.items.map((i) => i.value)).toEqual(["theta kappa", "theta"]);
     expect(inner.__hapaxKey("theta kappa")).toBe("theta kappa"); // space
 
     inner.applyCompletion(["thet"], 0, 4, item("theta kappa"), "thet");

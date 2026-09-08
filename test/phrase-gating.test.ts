@@ -182,13 +182,15 @@ describe("enablePhrases: false — capture layer fully inert (P2.M2.T3.S1)", () 
     expect(chain.state()).toBeNull();
   });
 
-  it("contrast — with enablePhrases: true the same ingest phrase-completes and suppresses", async () => {
-    // Documents exactly what the flag removes: the "natio" menu's bare
-    // word is shadowed by the admitted "National Renewable …" phrases and
-    // the successor index is populated for the chain machine.
+  it("contrast — with enablePhrases: true the same ingest phrase-completes, exempting the arming word", async () => {
+    // Documents exactly what the flag removes: with phrases ON the
+    // "natio" menu is phrase-FIRST, and since the BUG-005 fix the bare
+    // "National" word co-presents BELOW its phrases (the successor index
+    // can arm the chain from it). Flag OFF (tests above): pure M1 words.
     const { store } = await ingestFixture(`${FIXTURES}/nrel.jsonl`, true);
     const menu = rankMatches(store, "natio");
-    expect(menu.map((m) => m.description)).toEqual(["phrase", "phrase"]);
+    expect(menu.map((m) => m.description)).toEqual(["phrase", "phrase", "session x6"]);
+    expect(menu[menu.length - 1]!.display).toBe("National"); // exempt bare word
     expect(store.topSuccessors("national")[0]).toEqual({ next: "renewable", count: 4 });
   });
 });
