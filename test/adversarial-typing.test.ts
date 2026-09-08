@@ -183,9 +183,6 @@ async function replay(
         await real(text, fromUser);
         if (++done === total) resolve();
       },
-      // BUG-006 (P1.M3.T2.S1): replay never sweeps phrases — identical to
-      // the calibration and acceptance harnesses.
-      sweepPhrases: () => {},
     },
     asSessionManager(entries) as unknown as RestoreSessionManager,
   );
@@ -440,8 +437,7 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     const pipeline = new IngestPipeline({
       store: s,
       dictionary: loadDictionary(resolveDictPath()),
-      onAdmittedTokens: (lines: string[][]) =>
-        s.recordPhraseLines(lines, s.currentOrdinal()),
+      onAdmittedTokens: (lines: string[][]) => s.recordBigramRuns(lines),
     });
     store = s;
     await replay(pipeline, entries);

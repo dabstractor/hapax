@@ -96,9 +96,6 @@ async function ingestFixture(path: string): Promise<{ store: CandidateStore; pip
         await real(text, fromUser);
         if (++done === total) resolve();
       },
-      // BUG-006 (P1.M3.T2.S1) widened the Pick; the tail sweep is out of
-      // scope for these journeys — no-op keeps replay behavior identical.
-      sweepPhrases: () => {},
     },
     asSessionManager(entries) as unknown as RestoreSessionManager,
   );
@@ -538,8 +535,6 @@ async function replayEntries(
         await real(text, fromUser);
         if (++done === total) resolve();
       },
-      // BUG-006 (P1.M3.T2.S1): no-op sweep — see ingestFixture.
-      sweepPhrases: () => {},
     },
     asSessionManager(entries) as unknown as RestoreSessionManager,
   );
@@ -552,26 +547,23 @@ async function replayEntries(
 // `Renewable` → Tab → `Energy` → Tab → `Laboratory` with ZERO additional
 // typed characters — driven through the REAL provider (chain machine,
 // pending offer) against a store built from the NEW nrel.jsonl fixture via
-// the real ingest pipeline (phrase hook wired exactly like src/pi/index.ts)
+// the real ingest pipeline (bigram hook wired exactly like src/pi/index.ts)
 // and the SHIPPED dictionary.
 //
-// Arming visibility (BUG-005, fixed): the chain bigrams recur ×4, so they
-// are ADMITTED phrases — before the rankMatches exemption the h3.8
-// constituent suppression removed the bare word "National" from every
-// "natio" menu once they landed, making the chain un-armable in any
-// resumed session. The exemption keeps the successor-bearing first word
-// co-presented BELOW its phrases, so the fixture sanity test and the
-// zero-typing chain below arm on the FULL replay — exactly the /resume
-// scenario. The later tests keep the phase-split scaffold (arm on the
-// phrase-free prefix, NREL_PHASE1) purely as narration: it exercises the
-// same machine flow and stays green either way.
+// Arming visibility: the chain bigrams recur ×4, so the successor index
+// is fully populated by the replay — the bare word "National" (a stored
+// word candidate) co-presents in the "natio" menu and can always arm the
+// chain, in ANY resumed session, with no phase-split workaround. The
+// later tests keep the phase-split scaffold (arm on the early prefix,
+// NREL_PHASE1) purely as narration: it exercises the same machine flow
+// and stays green either way.
 // ───────────────────────────────────────────────────────────────────────���────
 
 /** Entries 0..PHASE1 (header + n01–n03) carry NO "National Renewable …"
- *  adjacency; PHASE1.. carries the four verbatim phrase occurrences. */
+ *  adjacency; PHASE1.. carries the four verbatim bigram occurrences. */
 const NREL_PHASE1 = 4;
 
-/** Pipeline wired like src/pi/index.ts's session_start: the phrase hook
+/** Pipeline wired like src/pi/index.ts's session_start: the bigram hook
  *  (and with it the successor index) exists ONLY under enablePhrases. */
 function makeNrelPipeline(enablePhrases: boolean): { store: CandidateStore; pipeline: IngestPipeline } {
   const store = new CandidateStore();
@@ -581,8 +573,7 @@ function makeNrelPipeline(enablePhrases: boolean): { store: CandidateStore; pipe
     dictionary,
     ...(enablePhrases
       ? {
-          onAdmittedTokens: (lines: string[][]) =>
-            store.recordPhraseLines(lines, store.currentOrdinal()),
+          onAdmittedTokens: (lines: string[][]) => store.recordBigramRuns(lines),
         }
       : {}),
   });
@@ -610,8 +601,6 @@ async function replayNrel(
         await real(text, fromUser);
         if (++done === total) resolve();
       },
-      // BUG-006 (P1.M3.T2.S1): no-op sweep — see ingestFixture.
-      sweepPhrases: () => {},
     },
     asSessionManager(entries) as unknown as RestoreSessionManager,
   );
@@ -660,25 +649,22 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     expect(store.topSuccessors("renewable")).toEqual([{ next: "energy", count: 4 }]);
     expect(store.topSuccessors("energy")).toEqual([{ next: "laboratory", count: 4 }]);
 
-    // The vocabulary admits as word candidates (replay for the phrase
+    // The vocabulary admits as word candidates (the replay that feeds the
     // bigrams also stores the tokens themselves):
     expect(store.get("national")).toBeDefined();
     expect(store.get("nrel")?.display).toBe("NREL"); // acronym stays a rare word
-    expect(store.phraseSize).toBeGreaterThan(0);
+    expect(store.bigramSize).toBeGreaterThan(0);
 
-    // Documented consequence (BUG-005, fixed): the bare word co-presents
-    // BELOW its phrases — the successor index can arm a chain from it
-    // (h2.43 whole-word arming), so it must stay acceptable — while the
-    // phrases still sort first (S_P >= S_W always).
+    // The bare word co-presents in the menu (the phrase layer is gone —
+    // rankMatches is word-only, PRD 002 delta R1 — and the successor
+    // index arms the chain from it, h2.43 whole-word arming).
     const menu = rankMatches(store, "natio");
-    expect(menu.map((m) => m.description)).toEqual(["phrase", "phrase", "session x6"]);
-    expect(menu[0]!.description).toBe("phrase");
+    expect(menu.map((m) => m.key)).toContain("national");
     expect(menu[menu.length - 1]!.key).toBe("national");
     expect(menu[menu.length - 1]!.display).toBe("National");
     // 'na'-width probe (the adversarial audit's failing query, inverted):
     const wide = rankMatches(store, "na");
     expect(wide.map((m) => m.key)).toContain("national");
-    expect(wide[0]!.description).toBe("phrase");
   });
 
   it("zero-typing chain — accept National → renewable → energy → laboratory with no fragment characters between accepts", async () => {
@@ -689,18 +675,15 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     const chain = createChainMachine();
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
-    // FULL replay: the BUG-005 exemption keeps "National" in the "natio"
-    // menu even with its phrases and successor tail already recorded —
-    // arming works on a resumed session, no phase-split workaround.
+    // FULL replay: "National" stays in the "natio" menu even with its
+    // successor tail already recorded — arming works on a resumed
+    // session, no phase-split workaround.
     await replayNrel(pipeline, entries);
 
-    // Live menu for "natio": phrases first, the exempt bare word below.
+    // Live menu for "natio": word-only (PRD 002 delta R1) — the bare
+    // word candidate is offered and can arm the chain.
     const menu = await provider.getSuggestions(["natio"], 0, 5, opts());
-    expect(menu?.items.map((i) => i.description)).toEqual([
-      "phrase",
-      "phrase",
-      expect.stringMatching(/^session x\d+$/),
-    ]);
+    expect(menu?.items.map((i) => i.value)).toContain("National");
     expect(menu?.prefix).toBe("natio");
     const nationalItem = menu!.items[menu!.items.length - 1]!;
 
@@ -776,10 +759,10 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
 
     // The pending word was consumed by that one-shot query (it never
     // re-fires): a later adjacency-position query takes the NORMAL path —
-    // phrase-shadowed menu at threshold — with no chain menu.
+    // plain threshold menu — with no chain menu.
     const normal = await provider.getSuggestions(["National"], 0, 8, opts());
     expect(normal?.prefix).toBe("National");
-    expect(normal?.items[0]?.description).toBe("phrase");
+    expect(normal?.items.map((i) => i.value)).toContain("National");
     expect(chain.state()).toBeNull();
   });
 
@@ -827,10 +810,10 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     chain.reset(); // the before_agent_start handler
 
     // Adjacent cursor position, but the arm (and its pending offer) is
-    // gone: plain threshold matching answers — phrase-shadowed menu.
+    // gone: plain threshold matching answers — plain word menu.
     const menu = await provider.getSuggestions(["National"], 0, 8, opts());
     expect(menu?.prefix).toBe("National");
-    expect(menu?.items[0]?.description).toBe("phrase");
+    expect(menu?.items.map((i) => i.value)).toContain("National");
     expect(chain.state()).toBeNull();
   });
 

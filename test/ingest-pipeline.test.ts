@@ -100,7 +100,6 @@ function makePipeline(
   opts: {
     chunkBytes?: number;
     onAdmittedTokens?: (lines: string[][]) => void;
-    onSweepPhrases?: () => void;
     withYieldFn?: boolean;
   } = {},
 ): Harness {
@@ -118,7 +117,6 @@ function makePipeline(
         }),
     ...(opts.chunkBytes !== undefined ? { chunkBytes: opts.chunkBytes } : {}),
     ...(opts.onAdmittedTokens ? { onAdmittedTokens: opts.onAdmittedTokens } : {}),
-    ...(opts.onSweepPhrases ? { onSweepPhrases: opts.onSweepPhrases } : {}),
   });
   return { pipeline, store, counts };
 }
@@ -352,9 +350,9 @@ describe("onAdmittedTokens — per-line n-gram hook (PRD §06 M2)", () => {
     expect(calls).toEqual([[["zephyr", "quartz"], ["vortex", "granite"]]]);
     // Recording through the real store (index.ts's wiring shape) proves
     // the line break broke the window: "quartz vortex" must not exist.
-    h.store.recordPhraseLines(calls[0]!, h.store.currentOrdinal());
-    expect(h.store.getPhrase("quartz vortex")).toBeUndefined();
-    expect(h.store.getPhrase("zephyr quartz")).toBeDefined();
+    h.store.recordBigramRuns(calls[0]!);
+    expect(h.store.topSuccessors("quartz")).toEqual([]);
+    expect(h.store.topSuccessors("zephyr")).toEqual([{ next: "quartz", count: 1 }]);
   });
 
   it("a chunk boundary never breaks a line — only '\\n' does", async () => {
@@ -370,9 +368,9 @@ describe("onAdmittedTokens — per-line n-gram hook (PRD §06 M2)", () => {
     expect(h.counts.yields).toBe(3); // boundaries really happened
     expect(calls).toEqual([[["zephyr", "quartz", "vortex"]]]);
     // The window SPANNING the slice 2–3 boundary survives recording.
-    h.store.recordPhraseLines(calls[0]!, h.store.currentOrdinal());
-    expect(h.store.getPhrase("quartz vortex")).toBeDefined();
-    expect(h.store.getPhrase("zephyr quartz")).toBeDefined();
+    h.store.recordBigramRuns(calls[0]!);
+    expect(h.store.topSuccessors("quartz")).toEqual([{ next: "vortex", count: 1 }]);
+    expect(h.store.topSuccessors("zephyr")).toEqual([{ next: "quartz", count: 1 }]);
   });
 
   it("sub-words never enter line arrays — only whole-token keys", async () => {
@@ -418,65 +416,5 @@ describe("onAdmittedTokens — per-line n-gram hook (PRD §06 M2)", () => {
     await drainNow(h);
     expect(calls).toEqual([]);
     expect(h.store.currentOrdinal()).toBe(0); // no ordinal issued either
-  });
-});
-
-// --- onSweepPhrases: once-per-flush demotion sweep (P2.M1.T2.S2) ------------
-
-describe("onSweepPhrases — once-per-flush demotion sweep (P2.M1.T2.S2, PRD §06 h3.7)", () => {
-  beforeEach(() => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  });
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("fires exactly once per flush drain, even for several messages", async () => {
-    let sweeps = 0;
-    const h = makePipeline({ onSweepPhrases: () => sweeps++ });
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz vortex"));
-    h.pipeline.onMessageEnd(userMsg("granite context zephyr")); // same drain
-    await drainNow(h);
-    expect(sweeps).toBe(1); // one drain → one sweep, not one per message
-  });
-
-  it("fires again on the NEXT flush (once per flush, not once per pipeline)", async () => {
-    let sweeps = 0;
-    const h = makePipeline({ onSweepPhrases: () => sweeps++ });
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz"));
-    await drainNow(h);
-    h.pipeline.onMessageEnd(userMsg("granite context")); // fresh debounce+drain
-    await drainNow(h);
-    expect(sweeps).toBe(2);
-  });
-
-  it("absent onSweepPhrases is a no-op", async () => {
-    const h = makePipeline();
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz vortex"));
-    await drainNow(h); // must not throw
-    expect(h.pipeline.getStats().admitted).toBeGreaterThan(0);
-  });
-
-  it("dispose() before the debounce fires never sweeps", async () => {
-    let sweeps = 0;
-    const h = makePipeline({ onSweepPhrases: () => sweeps++ });
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz")); // arms the timer
-    h.pipeline.dispose(); // cancels timer, empties queue → no drain, no sweep
-    await h.pipeline.flush(); // nothing pending → no drain started
-    expect(sweeps).toBe(0);
-    expect(h.store.currentOrdinal()).toBe(0);
-  });
-
-  it("a throwing sweep callback never wedges the pipeline", async () => {
-    const h = makePipeline({
-      onSweepPhrases: () => {
-        throw new Error("boom");
-      },
-    });
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz"));
-    await drainNow(h); // must not reject
-    h.pipeline.onMessageEnd(userMsg("granite context")); // next flush still works
-    await drainNow(h);
-    expect(h.pipeline.getStats().admitted).toBeGreaterThan(0);
   });
 });

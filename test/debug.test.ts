@@ -10,7 +10,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { PHRASE_CAP, STORE_CAP, CandidateStore } from "../src/core/store.js";
+import { STORE_CAP, CandidateStore } from "../src/core/store.js";
 import type { IngestStats, Sighting } from "../src/core/types.js";
 import { formatAcwordsDump, registerAcwordsCommand } from "../src/pi/debug.js";
 
@@ -257,89 +257,5 @@ describe("acwords registration (PRD §08)", () => {
     await options.handler("", { ui: { notify: second } });
     expect(second.mock.calls[0][0]).toContain("(ordinal 1)");
     expect(second.mock.calls[0][0]).toContain("zendesk");
-  });
-});
-// --- phrases / successor sample section (P2.M2.T3.S1, PRD §08 h2.48) -----
-
-/** All lines of the dump's trailing "hapax phrases" section (it is the
- *  LAST section, so slice to the end of the dump). */
-function phrasesSectionOf(dump: string): string[] {
-  const lines = dump.split("\n");
-  const start = lines.findIndex((l) => l === "hapax phrases");
-  return lines.slice(start);
-}
-
-describe("acwords dump — phrases + successor sample (P2.M2.T3.S1)", () => {
-  it("populated store: count vs cap, top-10 by phrase salience, (repeat) markers, successor sample", () => {
-    const store = new CandidateStore();
-    // Word candidates first: phrase salience sums their word saliences,
-    // and the display casings come from the word store (h2.27).
-    const ord = 1;
-    for (const [key, display] of [
-      ["national", "National"],
-      ["renewable", "Renewable"],
-      ["energy", "Energy"],
-      ["laboratory", "Laboratory"],
-    ] as const) {
-      for (let r = 0; r < 3; r++) see(store, key, display, { ordinal: ord });
-    }
-    // Three verbatim windows of the 4-gram → 3 bigrams + 2 trigrams ×3,
-    // plus one count-1 bigram (golden colorado — rare+constituents would
-    // fast-path admit; the dump lists the stored map either way).
-    for (let r = 0; r < 3; r++) {
-      store.recordPhraseLines([["national", "renewable", "energy", "laboratory"]], ord);
-    }
-    store.recordPhraseLines([["golden", "colorado"]], ord);
-
-    const dump = formatAcwordsDump(store, fakeStats);
-    expect(dump).toContain("hapax phrases");
-    expect(dump).toContain(`phrases: 6   (cap ${PHRASE_CAP})`);
-
-    const section = phrasesSectionOf(dump);
-    // Deterministic order: trigrams (3 constituents) before bigrams (2),
-    // byte-lex within equal salience; count-1 phrase last (no bonus).
-    expect(section.slice(2, 9)).toEqual([
-      "  top 10 by salience:",
-      "    1. National Renewable Energy  ×3  (repeat)",
-      "    2. Renewable Energy Laboratory  ×3  (repeat)",
-      "    3. Energy Laboratory  ×3  (repeat)",
-      "    4. National Renewable  ×3  (repeat)",
-      "    5. Renewable Energy  ×3  (repeat)",
-      "    6. golden colorado  ×1",
-    ]);
-    // Successor sample: top successors of the TOP phrase's first word,
-    // count-descending — the PRD §09 tuning signal for the chain machine.
-    expect(section[9]).toBe("  successor sample (top successors of the top word):");
-    expect(section[10]).toBe("    national → renewable ×3");
-  });
-
-  it("caps the phrase rows at exactly 10", () => {
-    const store = new CandidateStore();
-    for (let i = 0; i < 12; i++) {
-      store.recordPhraseLines([[`p${String(i).padStart(2, "0")}`, `q${String(i).padStart(2, "0")}`]], 1);
-    }
-    const section = phrasesSectionOf(formatAcwordsDump(store, fakeStats));
-    expect(section[2]).toBe("  top 10 by salience:");
-    expect(section[3]).toContain("1. p00 q00");
-    expect(section[12]).toContain("10. p09 q09");
-    expect(formatAcwordsDump(store, fakeStats)).not.toContain("p10");
-  });
-
-  it("empty store renders (none) and omits the successor sample", () => {
-    const dump = formatAcwordsDump(new CandidateStore(), fakeStats);
-    expect(dump).toContain("hapax phrases");
-    expect(dump).toContain("  phrases: (none)");
-    expect(dump).not.toContain("successor sample");
-    expect(dump).not.toContain("top 10 by salience:");
-  });
-
-  it("phrases-disabled renders identically to empty — capture never ran", () => {
-    // `enablePhrases: false` leaves the capture hook unwired (index.ts),
-    // so a disabled session's store IS an empty-phrase store; the section
-    // must not distinguish the two.
-    const disabled = formatAcwordsDump(new CandidateStore(), fakeStats);
-    const empty = formatAcwordsDump(new CandidateStore(), fakeStats);
-    expect(disabled).toBe(empty);
-    expect(phrasesSectionOf(disabled)).toEqual(["hapax phrases", "  phrases: (none)"]);
   });
 });

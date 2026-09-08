@@ -39,42 +39,32 @@
  * duplicated: eviction imports evictionScore from score.js — the single
  * source of truth.
  *
- * PHRASE LAYER (P2.M1.T1.S1, PRD §06 M2): a second, independent map —
- * single-space-joined lowercase phrase key → PhraseEntry — captures
- * bigram and trigram windows of consecutive admitted whole tokens within
- * one line (the ingest pipeline splits lines; newline is the only window
- * break). Same upsert/evict discipline as words — count++ on repeat,
- * PHRASE_CAP = 10,000 hard cap, exactly-`needed` lowest-score eviction —
- * with a phrase-specific score (count × exp(-Δ/50): score.ts's
- * evictionScore requires a full Candidate, so the math is a local helper
- * sharing only the τ = 50 constant) and `sticky` instead of `userTyped`
- * in the victim-pool filter. The two stores share NOTHING: phrase writes
- * never touch #map, #sortedKeys, or #dirty (the word prefix index never
- * rebuilds for phrase activity), and word eviction never touches
- * #phrases. sticky starts false and is only ever set through
- * setPhraseSticky. ADMISSION (P2.M1.T2.S1, PRD §06 h3.7) runs at each
- * phrase upsert's tail: a phrase becomes a completion CANDIDATE when its
- * count reaches 2 (repetition path) or — first sight only — every
- * constituent word is rankGroup 0 or properName and the n-gram is ≤ 5
- * words (fast path); both paths firing makes it sticky. Candidacy lives
- * in #phraseCandidates, orthogonal to counts; demotion
- * (removePhraseCandidacy, called by T2.S2's sweepPhraseDemotions) drops
- * candidacy while counts, ordinals, and sticky stay.
+ * BIGRAM MAP (PRD §06 h2.38, delta R1): a slim count map keyed
+ * "first second" (lowercase, single-space-joined) → { count,
+ * lastSeenOrdinal } — no admission, no sticky, no demotion, no trigrams.
+ * recordBigramRuns() upserts every ADJACENT pair of consecutive admitted
+ * whole-token keys within one line (the ingest pipeline splits lines; a
+ * newline is the only window break): absent → create { count: 1,
+ * lastSeenOrdinal }, present → count++ + lastSeen refresh. The map is
+ * capped at BIGRAM_CAP = 10,000 keys with lazy-heap eviction
+ * (#evictBigramsIfOverCap); evicting a bigram ALSO splices it from the
+ * successor index. Phrase candidacy — admission, sticky, fast paths,
+ * demotion sweeps — is a REMOVED design (PRD 002 delta R1): the only
+ * phrase behavior is successor chaining.
  *
- * SUCCESSOR INDEX (P2.M2.T1.S1, PRD §06 h3.9): every bigram phrase key
- * ("w1 w2") bumps w1 → w2 in #successorIndex at INGEST time, inside the
- * phrase upsert — never via a map-wide scan (§05 h2.34) and never on the
- * keystroke path. Each word keeps at most 3 successors, ordered
- * count-descending with byte-lex ties; on overflow the sorted tail drops
- * and eviction never backfills it (a dropped successor returns only when
- * its bigram recurs). topSuccessors() is a pure O(1) read returning the
- * live array (read-only contract) or the shared NO_SUCCESSORS constant.
+ * SUCCESSOR INDEX (P2.M2.T1.S1, PRD §06 h3.9): every bigram bumps
+ * w1 → w2 in #successorIndex at INGEST time, inside recordBigramRuns —
+ * never via a map-wide scan (§05 h2.34) and never on the keystroke
+ * path. Each word keeps at most 3 successors, ordered count-descending
+ * with byte-lex ties; on overflow the sorted tail drops and eviction
+ * never backfills it (a dropped successor returns only when its bigram
+ * recurs). topSuccessors() is a pure O(1) read returning the live array
+ * (read-only contract) or the shared NO_SUCCESSORS constant.
  */
 
 import { evictionScore } from "./score.js";
 import type {
   Candidate,
-  PhraseEntry,
   RankGroup,
   Sighting,
   Successor,
@@ -92,21 +82,28 @@ export const STORE_CAP = 20_000;
  *  eviction size stays ≤ STORE_CAP (drop ≥ exact overflow). */
 export const EVICT_BATCH = 256;
 
-/** Hard cap on stored phrase n-grams (bigrams AND trigrams count toward
- *  the same cap). PRD §06 M2; baked, not config (PRD §08 h2.47). The word
- *  store's cap is INDEPENDENT — the phrase map never evicts words. */
-export const PHRASE_CAP = 10_000;
-/** Phrase eviction batch size: the snapshot + sort that selects phrase
- *  victims is amortized over drops of this many entries (same reading of
- *  "batches of 256" as the word store's EVICT_BATCH). Every overflow pass
- *  rounds its victim count UP to a whole batch (bounded by the pool), so
- *  a saturated phrase map pays one sort per ≥ PHRASE_EVICT_BATCH new
- *  distinct phrases per drain — never per message — while post-eviction
- *  size stays ≤ PHRASE_CAP. */
-export const PHRASE_EVICT_BATCH = 256;
+/** Hard cap on stored bigrams (PRD §06 h2.38: "Cap the bigram map at
+ *  10,000 keys"). Baked, not config (PRD §08 h2.47). The word store's
+ *  cap is INDEPENDENT — bigram eviction never evicts words. */
+const BIGRAM_CAP = 10_000;
+/** Bigram eviction batch: each recordBigramRuns tail pass pops at most
+ *  this many victims, so a saturated map drains gradually across calls
+ *  instead of stalling one message (the §06 h2.37 "batches of 256"
+ *  amortization, batch-bounded form). */
+const BIGRAM_EVICT_BATCH = 256;
 
-/** Phrase eviction key (PRD §06 M2) — the log domain of the phrase
- *  eviction score `count · exp(-(now - lastSeen) / 50)`:
+/** One bigram's counted state (PRD §06 h2.38): "first second" → this.
+ *  No firstSeenOrdinal, no sticky — the delta design keeps only what
+ *  eviction needs. */
+interface BigramEntry {
+  /** occurrences of this exact word pair this session */
+  count: number;
+  /** message ordinal at last occurrence */
+  lastSeenOrdinal: number;
+}
+
+/** Bigram eviction key — the log domain of the phrase-era eviction score
+ *  `count · exp(-(now - lastSeen) / 50)`:
  *
  *      log(score) = log(count) - now/50 + lastSeenOrdinal/50
  *
@@ -115,15 +112,13 @@ export const PHRASE_EVICT_BATCH = 256;
  *  score (same floats for exact ties → the same byte-lex tie-break).
  *  Unlike the score itself, `k` does not move as the session clock
  *  advances — only a MUTATION of the entry (count++ / lastSeen refresh)
- *  changes it — which is what lets the eviction index (#phraseEvictHeap)
+ *  changes it — which is what lets the eviction index (#bigramEvictHeap)
  *  go stale lazily and re-validate at pop instead of the map paying a
  *  full O(n log n) sort per overflow pass. count ≥ 1 always, so log is
- *  finite. Word entries canNOT use this trick — their evictionScore
- *  nests TWO decays (salience's τ = 20 recency inside the τ = 50 outer
- *  decay), so the clock does not factor out and their victim selection
- *  keeps the snapshot-sort form. */
-function phraseSortKey(p: PhraseEntry): number {
-  return Math.log(p.count) + p.lastSeenOrdinal / 50;
+ *  finite. There is no sticky protection: the bigram map has no
+ *  admission layer (PRD 002 delta R1), so every entry is evictable. */
+function bigramSortKey(e: BigramEntry): number {
+  return Math.log(e.count) + e.lastSeenOrdinal / 50;
 }
 
 /** Successor sort key (PRD §06 h3.9): higher count first, byte-lex
@@ -135,11 +130,11 @@ function successorBefore(a: Successor, b: Successor): boolean {
   return a.next < b.next;
 }
 
-// ── Eviction index (phrase map) ────────────────────────────────────────────
+// ── Eviction index (bigram map) ────────────────────────────────────────────
 
-/** One node of the phrase eviction index: `k` is the entry's log-domain
- *  eviction key (see #phraseSortKey) as of when the node was written,
- *  `key` the phrase key. Nodes go stale when their entry is mutated
+/** One node of the bigram eviction index: `k` is the entry's log-domain
+ *  eviction key (see #bigramSortKey) as of when the node was written,
+ *  `key` the bigram key. Nodes go stale when their entry is mutated
  *  (count/lastSeen move k) or evicted; pops re-validate against the live
  *  entry and re-push corrected nodes, so the heap never needs per-mutation
  *  maintenance and a pass costs O(victims · log n) — never a full-map
@@ -208,31 +203,22 @@ export class CandidateStore {
   // inserts and cleared by the next prefixRange() rebuild.
   // S3 eviction must ALSO set #dirty = true on any key removal.
   #dirty = false;
-  // Phrase layer (PRD §06 M2) — deliberately NOT under #dirty: nothing
-  // about #phrases ever invalidates the WORD prefix index.
-  #phrases = new Map<string, PhraseEntry>();
-  // Phrase admission (P2.M1.T2.S1, PRD §06 h3.7) — candidacy is
-  // orthogonal to counts: a key is a completion candidate once the
-  // repetition path (count ≥ 2) or the first-sight fast path (every
-  // constituent rankGroup 0 / properName, ≤ 5 words) has admitted it.
-  #phraseCandidates = new Set<string>();
+  // Bigram map (PRD §06 h2.38): "first second" → { count, lastSeenOrdinal }.
+  // Deliberately NOT under #dirty: nothing about #bigrams ever invalidates
+  // the WORD prefix index.
+  #bigrams = new Map<string, BigramEntry>();
   // Successor index (P2.M2.T1.S1, PRD §06 h3.9): word → its top-3 most
   // frequent bigram successors, ordered count-desc / byte-lex-asc, never
-  // longer than 3 entries. Maintained INCREMENTALLY inside #upsertPhrase
-  // (one bump per bigram key — no scans, §05 h2.34; nothing runs on the
-  // keystroke path) and cleaned by #evictPhrasesIfOverCap when an evicted
+  // longer than 3 entries. Maintained INCREMENTALLY inside recordBigramRuns
+  // (one bump per bigram window — no scans, §05 h2.34; nothing runs on the
+  // keystroke path) and cleaned by #evictBigramsIfOverCap when an evicted
   // key is a bigram. Read O(1) via topSuccessors().
   #successorIndex = new Map<string, Successor[]>();
-  // Phrase eviction index (see EvictNode): a lazy min-heap over the live
-  // phrase entries ordered by #phraseSortKey. Built on first overflow,
-  // pushed on every phrase CREATE (mutation needs nothing — pops
+  // Bigram eviction index (see EvictNode): a lazy min-heap over the live
+  // bigram entries ordered by #bigramSortKey. Built on first overflow,
+  // pushed on every bigram CREATE (mutation needs nothing — pops
   // re-validate), and rebuilt when stale-node dirt exceeds the live map.
-  #phraseEvictHeap: EvictNode[] | null = null;
-  // Provenance of fast-path admission — the "both paths" half of the
-  // sticky rule and the filter T2.S2's demotion sweep iterates. Also
-  // pins the fast path to FIRST SIGHT: once recorded, a later count-1
-  // upsert (e.g. post-eviction re-record) never re-evaluates.
-  #fastPathAdmitted = new Set<string>();
+  #bigramEvictHeap: EvictNode[] | null = null;
 
   /** Issue the next message ordinal: 1, 2, 3… strictly monotonic, never
    *  reset. The ingest pipeline calls this once per message. */
@@ -437,80 +423,51 @@ export class CandidateStore {
     return counts;
   }
 
-  // ── Phrase layer (P2.M1.T1.S1, PRD §06 M2) ─────────────────────────────
+  // ── Bigram layer (PRD §06 h2.38, delta R1) ──────────────────────
 
-  /** Record consecutive-token n-grams (PRD §06 M2): for each line, upsert
-   *  every bigram (n = 2) and trigram (n = 3) window of ADJACENT admitted
-   *  whole-token keys. Lines arrive pre-split by the ingest pipeline — a
-   *  newline is the only window break, and this method never looks for
-   *  one; it only joins whatever keys a line carries (keys are lowercase
-   *  by the pipeline's contract; they are joined with single spaces and
-   *  used as given). A line shorter than 2 keys forms no windows; empty
-   *  lines are fine and form none. Windows overlap by design: "a b c"
-   *  yields "a b", "b c", and "a b c".
+  /** Record consecutive-token bigrams (PRD §06 h2.38): for each run,
+   *  upsert every ADJACENT pair of admitted whole-token keys. Runs arrive
+   *  pre-split by the ingest pipeline — a newline is the only window
+   *  break, and this method never looks for one; it only joins whatever
+   *  keys a run carries (keys are lowercase by the pipeline's contract;
+   *  they are joined with single spaces and used as given). A run shorter
+   *  than 2 keys forms no windows; empty runs are fine and form none.
+   *  Windows overlap by design: "a b c" yields "a b" and "b c" — and NO
+   *  trigram (the n ≥ 3 layer is a removed design, PRD 002 delta R1).
    *
-   *  Upsert semantics mirror the word store's h2.36 contract: absent →
-   *  create { count: 1, firstSeenOrdinal = lastSeenOrdinal = ordinal,
-   *  sticky: false }; present → count++, lastSeenOrdinal = ordinal
-   *  (firstSeenOrdinal frozen, sticky untouched — P2.M1.T2.S1 sets it).
-   *  The ordinal is supplied by the caller (the pipeline stamps one per
-   *  message); this method never advances the counter. On overflow the
-   *  map trims back to PHRASE_CAP via evictPhrasesIfOverCap() — once per
-   *  call, at the tail, never per upsert. Phrase writes never touch the
-   *  word map or the prefix index. */
-  recordPhraseLines(lines: readonly string[][], ordinal: number): void {
-    for (const line of lines) {
-      for (let i = 0; i < line.length; i++) {
-        if (i + 1 < line.length) {
-          const w1 = line[i];
-          const w2 = line[i + 1];
-          // Bigram window: the constituents are already in hand, so the
-          // successor bump reuses them (no re-slicing the joined key).
-          this.#upsertPhrase(`${w1} ${w2}`, ordinal, w1, w2);
+   *  Upsert semantics: absent → create { count: 1, lastSeenOrdinal };
+   *  present → count++ and lastSeenOrdinal refresh. The ordinal is read
+   *  from currentOrdinal() INSIDE (the pipeline issues one per message
+   *  before the drain) — this method takes no ordinal argument and never
+   *  advances the counter. Every window also bumps the successor index
+   *  (w1 → w2) on create AND merge — THE consumer that keeps P1.M2
+   *  chaining alive. On overflow the map trims toward BIGRAM_CAP via
+   *  #evictBigramsIfOverCap — once per call, at the tail, never per
+   *  upsert. Bigram writes never touch the word map or the prefix index. */
+  recordBigramRuns(runs: readonly string[][]): void {
+    const ordinal = this.currentOrdinal();
+    for (const run of runs) {
+      for (let i = 0; i + 1 < run.length; i++) {
+        const w1 = run[i];
+        const w2 = run[i + 1];
+        const key = `${w1} ${w2}`;
+        const existing = this.#bigrams.get(key);
+        if (existing) {
+          existing.count++;
+          existing.lastSeenOrdinal = ordinal;
+        } else {
+          const entry: BigramEntry = { count: 1, lastSeenOrdinal: ordinal };
+          this.#bigrams.set(key, entry);
+          // Index the newcomer for eviction (no-op until the heap exists —
+          // the first overflow pass builds it wholesale from the live map).
+          if (this.#bigramEvictHeap !== null) {
+            heapPush(this.#bigramEvictHeap, { k: bigramSortKey(entry), key });
+          }
         }
-        if (i + 2 < line.length) {
-          // Trigram window — no successor bump (only bigrams feed the
-          // successor index); the internal space-walk would just no-op.
-          this.#upsertPhrase(`${line[i]} ${line[i + 1]} ${line[i + 2]}`, ordinal);
-        }
-      }
-    }
-    this.#evictPhrasesIfOverCap(); // bounded map (§06 M2) — no-op below cap
-  }
-
-  /** Phrase upsert (h2.36 semantics, phrase side): create on first sight,
-   *  merge otherwise. Unlike word upsert there is no #dirty to maintain —
-   *  phrases are invisible to the prefix index. */
-  #upsertPhrase(key: string, ordinal: number, w1?: string, w2?: string): void {
-    const existing = this.#phrases.get(key);
-    if (!existing) {
-      const entry: PhraseEntry = {
-        key,
-        count: 1,
-        lastSeenOrdinal: ordinal,
-        firstSeenOrdinal: ordinal,
-        sticky: false, // only admission (P2.M1.T2.S1) ever sets this
-      };
-      this.#phrases.set(key, entry);
-      // Index the newcomer for eviction (no-op until the heap exists —
-      // the first overflow pass builds it wholesale from the live map).
-      if (this.#phraseEvictHeap !== null) {
-        heapPush(this.#phraseEvictHeap, { k: phraseSortKey(entry), key });
-      }
-      if (w1 !== undefined && w2 !== undefined) {
         this.#bumpSuccessor(w1, w2); // successor tail (PRD §06 h3.9)
       }
-      this.#admitPhrase(key, entry); // admission tail (PRD §06 h3.7)
-      return;
     }
-    existing.count++;
-    existing.lastSeenOrdinal = ordinal;
-    // firstSeenOrdinal stays frozen at creation; sticky is untouched —
-    // except through admission, immediately below.
-    if (w1 !== undefined && w2 !== undefined) {
-      this.#bumpSuccessor(w1, w2); // successor tail (PRD §06 h3.9)
-    }
-    this.#admitPhrase(key, existing);
+    this.#evictBigramsIfOverCap(); // bounded map (§06 h2.38) — no-op below cap
   }
 
   /** Bump-or-insert w2 in w1's successor array, keeping the array sorted
@@ -557,118 +514,39 @@ export class CandidateStore {
     if (arr.length > 3) arr.length = 3; // drop the sorted tail (see above)
   }
 
-  /** Hybrid phrase admission (P2.M1.T2.S1, PRD §06 h3.7), run at the tail
-   *  of EVERY phrase upsert — never as a scan over the map (§05 h2.34;
-   *  the ingest path stays O(1)-ish per upserted phrase). Decision table
-   *  (count = the entry's post-upsert count):
-   *
-   *    count ≥ 2, fast-path provenance present → candidate + sticky
-   *    count ≥ 2, no provenance                → candidate (repetition)
-   *    count = 1, all-rare key, ≤ 5 words      → candidate + provenance
-   *    count = 1, otherwise                    → nothing
-   *
-   *  The fast path is FIRST-SIGHT ONLY: eligibility is evaluated exactly
-   *  once (count first hitting 1 with provenance absent). A phrase that
-   *  failed it and later recurs is admitted by the repetition path alone
-   *  — never retro-re-evaluated, because constituents' rankGroups drift
-   *  via min-merge and the PRD pins the rule to first sight. sticky is
-   *  set through setPhraseSticky — once true it is never unset (mirrors
-   *  userTyped OR-in semantics). Cost: O(1) set work plus, on the fast
-   *  path only, ≤ 5 word-store lookups (see #firstSightFastPathEligible). */
-  #admitPhrase(key: string, entry: PhraseEntry): void {
-    // Sticky + still a candidate is terminal: admission is the only
-    // production writer, and it sets sticky only together with candidacy,
-    // so re-running the decision table can add nothing. Hot repeated
-    // phrases (the common case in a long session) exit here — visible in
-    // restore profiles as a per-upsert saving. (removePhraseCandidacy can
-    // decouple the two — sticky stays while candidacy drops — and that
-    // state MUST fall through so a recurrence re-admits.)
-    if (entry.sticky && this.#phraseCandidates.has(key)) return;
-    if (entry.count >= 2) {
-      // Repetition path — admits regardless of constituent rarity. When
-      // the fast path had admitted this key earlier, BOTH paths have now
-      // fired → sticky (resists eviction via the victim-pool filter).
-      if (this.#fastPathAdmitted.has(key)) this.setPhraseSticky(key);
-      this.#phraseCandidates.add(key);
-    } else if (
-      !this.#fastPathAdmitted.has(key) && this.#firstSightFastPathEligible(key)
-    ) {
-      // Fast path — first sight of an all-rare key admits immediately.
-      this.#phraseCandidates.add(key);
-      this.#fastPathAdmitted.add(key); // provenance for T2.S2's sweep
-    }
-  }
-
-  /** Fast-path eligibility (PRD §06 h3.7): EVERY constituent word of the
-   *  key must currently be a word-store Candidate with rankGroup 0
-   *  (dictionary-absent, shape-gated) or properName true, and the key
-   *  must be ≤ 5 words. A constituent ABSENT from the word store (never
-   *  admitted, or since evicted) FAILS the path — candidacy must be
-   *  provable, never assumed. Keys arrive lowercase single-space-joined,
-   *  so split(" ") is exact. O(words-in-key) ≤ 5 lookups, no scans. */
-  #firstSightFastPathEligible(key: string): boolean {
-    // Space-walk instead of split(" ") — no per-sight array allocation
-    // (this runs on EVERY first-sighted phrase window).
-    let start = 0;
-    for (let n = 1; ; n++) {
-      // Length bound is defense-in-depth: capture produces ≤ 3-word keys
-      // today (bigrams + trigrams), but admission must stay correct for n.
-      if (n > 5) return false;
-      const sp = key.indexOf(" ", start);
-      const word = sp === -1 ? key.slice(start) : key.slice(start, sp);
-      const c = this.#map.get(word);
-      if (c === undefined || (c.rankGroup !== 0 && !c.properName)) return false;
-      if (sp === -1) return true;
-      start = sp + 1;
-    }
-  }
-
-  /** Phrase-map overflow eviction (PRD §06 M2 inherits §06 h2.37's
-   *  batch amortization) — the word store's evictIfOverCap with two
-   *  substitutions: the victim pool excludes `sticky` (not userTyped)
-   *  entries, and victim ordering uses the phrase eviction key
-   *  (phraseSortKey) instead of score.ts's Candidate-typed
-   *  evictionScore. Victim choice is IDENTICAL to the historical
-   *  score-ascending snapshot sort with a byte-lexicographic key
-   *  tie-break: at one pass, ordering by the log-domain key is exactly
-   *  ordering by the score (see phraseSortKey).
+  /** Bigram-map overflow eviction (PRD §06 h2.38: cap 10,000, "standard
+   *  eviction policy"; evicting a bigram ALSO splices it from the
+   *  successor index via #dropSuccessorFor — the only sanctioned cleanup
+   *  path, since word eviction never touches successors).
    *
    *  COST — the reason this pass exists at all: victim selection pulls
-   *  the #phraseEvictHeap (a lazy min-heap over the live entries) and
+   *  the #bigramEvictHeap (a lazy min-heap over the live entries) and
    *  pops O(victims · log n) nodes, re-validating each against the live
-   *  entry — NOT a full-map snapshot + sort. A saturated 10k phrase map
+   *  entry — NOT a full-map snapshot + sort. A saturated 10k bigram map
    *  therefore pays microseconds per drain instead of a ~10k-entry sort
-   *  per message (the 2026-09 validation probe measured a 2.1 s restore
-   *  for the 1561-message large-100k fixture under the old per-message
-   *  sort; the batch trigger + index brought it under the §05 budget).
+   *  per message.
    *
-   *  Semantics per pass: drop = max(size − PHRASE_CAP,
-   *  PHRASE_EVICT_BATCH) bounded by the map size — post-eviction size is
-   *  ≤ PHRASE_CAP (drop ≥ exact overflow). Sticky entries surfaced by
-   *  the pop are set aside; only when the heap exhausts before `drop`
-   *  can be met from unprotected entries do they evict too, lowest key
-   *  first ("hard cap beats protection"). Stale nodes (entry mutated or
-   *  evicted since the node was written) re-push the corrected key or
-   *  drop out; the heap rebuilds wholesale when stale-node dirt exceeds
-   *  twice the live map. Removals mark nothing dirty: the word prefix
-   *  index is unaffected by phrase eviction. */
-  #evictPhrasesIfOverCap(): void {
-    const size = this.#phrases.size;
-    if (size <= PHRASE_CAP) return;
-    // Batch-rounded victim count: drop ≥ overflow keeps the post-pass
-    // size ≤ PHRASE_CAP; drop ≥ PHRASE_EVICT_BATCH keeps passes ≥ 256
-    // new distinct phrases apart (§06 h2.37's amortized cost).
-    const drop = Math.min(Math.max(size - PHRASE_CAP, PHRASE_EVICT_BATCH), size);
-    let heap = this.#phraseEvictHeap;
-    if (heap === null) heap = this.#rebuildPhraseHeap();
-    let victims = 0;
-    let protectedSeen: PhraseEntry[] | null = null;
-    while (victims < drop && heap.length > 0) {
+   *  Semantics per pass: pop the lowest-#bigramSortKey victims while the
+   *  map is over BIGRAM_CAP, at most BIGRAM_EVICT_BATCH pops per call —
+   *  the drain is spread across recordBigramRuns calls instead of
+   *  stalling one message. No protection filter: the bigram map has no
+   *  admission/sticky layer (PRD 002 delta R1), so every entry is
+   *  evictable. Stale nodes (entry mutated or evicted since the node was
+   *  written) re-push the corrected key or drop out; the heap rebuilds
+   *  wholesale when stale-node dirt exceeds twice the live map. Removals
+   *  mark nothing dirty: the word prefix index is unaffected by bigram
+   *  eviction. */
+  #evictBigramsIfOverCap(): void {
+    if (this.#bigrams.size <= BIGRAM_CAP) return;
+    let heap = this.#bigramEvictHeap;
+    if (heap === null) heap = this.#rebuildBigramHeap();
+    let batch = BIGRAM_EVICT_BATCH;
+    while (this.#bigrams.size > BIGRAM_CAP && batch-- > 0) {
       const node = heapPop(heap);
-      if (node === undefined) break;
-      const entry = this.#phrases.get(node.key);
-      if (entry === undefined) continue; // evicted since — stale node
-      const k = phraseSortKey(entry);
+      if (node === undefined) break; // heap exhausted — defensive only
+      const live = this.#bigrams.get(node.key);
+      if (live === undefined) continue; // evicted since — stale node
+      const k = bigramSortKey(live);
       if (k !== node.k) {
         // Stale: the entry moved (count/lastSeen changed after this node
         // was written). Re-index at its CURRENT key and keep popping —
@@ -676,45 +554,24 @@ export class CandidateStore {
         heapPush(heap, { k, key: node.key });
         continue;
       }
-      if (entry.sticky) {
-        (protectedSeen ??= []).push(entry); // set aside, ascending k
-        continue;
-      }
-      // delete() returns false on a duplicate node for an already-evicted
-      // entry — count the victim only when the map actually shrank.
-      if (this.#phrases.delete(node.key)) {
-        this.#dropSuccessorFor(node.key); // successor cleanup (P2.M2.T1.S1)
-        victims++;
-      }
-    }
-    if (victims < drop && heap.length === 0 && protectedSeen !== null) {
-      // Hard cap beats protection: the unprotected pool could not cover
-      // the batch. protectedSeen holds every live sticky entry in
-      // ascending-k order — the same victims the full-snapshot fallback
-      // of a snapshot sort would pick, lowest first.
-      for (const entry of protectedSeen) {
-        if (victims >= drop) break;
-        if (this.#phrases.delete(entry.key)) {
-          this.#dropSuccessorFor(entry.key);
-          victims++;
-        }
-      }
+      this.#bigrams.delete(node.key);
+      this.#dropSuccessorFor(node.key); // successor splice (PRD §06 h3.9)
     }
     // Reap stale-node dirt: every mutation-before-pop leaves its old node
     // behind. Keeping the index bounded keeps later passes O(victims).
-    if (heap.length > 2 * this.#phrases.size + 64) {
-      this.#rebuildPhraseHeap();
+    if (heap.length > 2 * this.#bigrams.size + 64) {
+      this.#rebuildBigramHeap();
     }
   }
 
-  /** Rebuild the phrase eviction index wholesale from the live map
+  /** Rebuild the bigram eviction index wholesale from the live map
    *  (bottom-up heapify, O(n)); also the lazy constructor for the first
    *  overflow pass. After this, every live entry has exactly one
    *  current node. */
-  #rebuildPhraseHeap(): EvictNode[] {
+  #rebuildBigramHeap(): EvictNode[] {
     const heap: EvictNode[] = [];
-    for (const p of this.#phrases.values()) {
-      heap.push({ k: phraseSortKey(p), key: p.key });
+    for (const [key, e] of this.#bigrams) {
+      heap.push({ k: bigramSortKey(e), key });
     }
     for (let i = heap.length >> 1; i-- > 0; ) {
       // Bottom-up heapify: sift each internal node down.
@@ -732,19 +589,19 @@ export class CandidateStore {
         idx = m;
       }
     }
-    this.#phraseEvictHeap = heap;
+    this.#bigramEvictHeap = heap;
     return heap;
   }
 
-  /** Eviction-side successor cleanup (P2.M2.T1.S1, PRD §06 h3.9): when a
-   *  deleted phrase key is a bigram, its Successor is spliced out of w1's
+  /** Eviction-side successor cleanup (P2.M2.T1.S1, PRD §06 h3.9): when an
+   *  evicted bigram key is deleted, its Successor is spliced out of w1's
    *  array — and w1's map entry dies with the last one. NO backfill: no
    *  4th-best is promoted and nothing is recomputed (a dropped successor
    *  returns only when its bigram recurs; the survivors' counts stay
-   *  correct because they were counted independently). Trigram evictions
-   *  are no-ops. The findIndex miss-guard is load-bearing: a bigram whose
-   *  successor lost the top-3 cap long ago evicts without an entry to
-   *  splice. Unknown word → no-op. */
+   *  correct because they were counted independently). The findIndex
+   *  miss-guard is load-bearing: a bigram whose successor lost the top-3
+   *  cap long ago evicts without an entry to splice. Unknown word →
+   *  no-op. */
   #dropSuccessorFor(key: string): void {
     const sp = key.indexOf(" ");
     if (sp === -1 || sp !== key.lastIndexOf(" ")) return; // bigrams only
@@ -756,126 +613,21 @@ export class CandidateStore {
     if (arr.length === 0) this.#successorIndex.delete(key.slice(0, sp));
   }
 
-  /** Mark one phrase sticky (PRD §06 M2): sticky resists eviction exactly
-   *  like userTyped words. Creation and refresh never set this — P2.M1.T2.S1
-   *  admission is the only writer; it ships now because admission and this
-   *  task's eviction tests both need it. Unknown key → no-op (never creates). */
-  setPhraseSticky(key: string): void {
-    const entry = this.#phrases.get(key);
-    if (entry) entry.sticky = true;
-  }
-
-  // ── Phrase admission (P2.M1.T2.S1, PRD §06 h3.7) ─────────────────────
-
-  /** Is `key` currently a completion candidate (PRD §06 h3.7)? Candidacy
-   *  is orthogonal to counts: removePhraseCandidacy can drop it while
-   *  getPhrase(key).count stays. P2.M1.T3.S1 (query integration) reads
-   *  this. */
-  isPhraseCandidate(key: string): boolean {
-    return this.#phraseCandidates.has(key);
-  }
-
-  /** Defensive snapshot of the candidate phrase keys, in admission order.
-   *  Mutating the returned array never touches the store. Consumed by
-   *  P2.M1.T3.S1 and the /acwords M2 dump. */
-  phraseCandidateKeys(): string[] {
-    return [...this.#phraseCandidates];
-  }
-
-  /** Did the fast path admit this phrase (PRD §06 h3.7)? Provenance for
-   *  T2.S2's demotion sweep — fast-path admits are the ones it re-
-   *  examines — also surfaced for /acwords. False for repetition-only
-   *  phrases and after removePhraseCandidacy (provenance is cleared and
-   *  never re-derived: the fast path is first sight only). */
-  isFastPathPhrase(key: string): boolean {
-    return this.#fastPathAdmitted.has(key);
-  }
-
-  /** Demotion primitive (PRD §06 h3.7): drop candidacy and fast-path
-   *  provenance ONLY. #phrases counts, ordinals, and sticky are untouched
-   *  — once sticky, always sticky (same never-unset semantics as
-   *  userTyped). Called by T2.S2's 40-ordinal demotion sweep; a later
-   *  recurrence re-admits through the repetition path's live count ≥ 2
-   *  check. Unknown key → no-op (never creates anything). */
-  removePhraseCandidacy(key: string): void {
-    this.#phraseCandidates.delete(key);
-    this.#fastPathAdmitted.delete(key);
-  }
-
-  /** 40-ordinal demotion sweep (P2.M1.T2.S2, PRD §06 h3.7): demote every
-   *  fast-path phrase candidate that never reached count ≥ 2 within 40
-   *  SUBSEQUENT message ordinals. A key is demoted when ALL of: it is a
-   *  candidate with fast-path provenance (repetition-confirmed candidates
-   *  are never demoted), its entry count < 2 and not sticky (belt-and-
-   *  braces: sticky implies count ≥ 2), and
-   *  currentOrdinal() − firstSeenOrdinal ≥ 40 (firstSeen 1, now 41 →
-   *  demoted; now 40 → still on probation — "40 subsequent ordinals",
-   *  not "more than 40"). Demotion itself is removePhraseCandidacy:
-   *  candidacy + provenance drop, counts/ordinals/sticky stay, so a later
-   *  recurrence re-admits through the repetition path (provenance is gone,
-   *  the fast path is first-sight only — never sticky again).
-   *
-   *  O(candidates): iterates phraseCandidateKeys() — a snapshot COPY, so
-   *  removing entries mid-loop is safe — never the #phrases counts map
-   *  (tens of thousands of counted n-grams vs a small candidate set).
-   *  Per key: two O(1) set lookups + one getPhrase lookup. Wired by the
-   *  ingest pipeline at the tail of each flush drain (once per flush, not
-   *  per message); a second consecutive call finds nothing left to demote.
-   *  @returns number of phrases demoted (for stats/tests). */
-  sweepPhraseDemotions(): number {
-    const now = this.currentOrdinal(); // one "now" for the whole pass
-    let demoted = 0;
-    for (const key of this.phraseCandidateKeys()) {
-      // Snapshot copy — safe to remove while iterating.
-      if (!this.isFastPathPhrase(key)) continue; // repetition-only: keep
-      const entry = this.getPhrase(key); // O(1) map lookup
-      if (entry === undefined) continue; // defensive; shouldn't happen
-      if (entry.sticky || entry.count >= 2) continue; // confirmed: keep
-      if (now - entry.firstSeenOrdinal >= 40) {
-        this.removePhraseCandidacy(key); // keeps counts/ordinals/sticky
-        demoted++;
-      }
-    }
-    return demoted;
-  }
-
-  /** Exact phrase-key lookup ("word word" joined lowercase). Returns the
-   *  LIVE entry — treat as read-only (same contract as get()). */
-  getPhrase(key: string): PhraseEntry | undefined {
-    return this.#phrases.get(key);
-  }
-
   /** Top bigram successors of `word` (PRD §06 h3.9), best first: ordered
    *  count-descending with byte-lex ascending ties, at most 3 entries,
-   *  built incrementally at INGEST inside #upsertPhrase — so this is a
+   *  built incrementally at INGEST inside recordBigramRuns — so this is a
    *  pure O(1) read for the keystroke path (the chained completion
    *  machine, P2.M2.T2.S1, calls it per keystroke). Returns the LIVE
-   *  array — treat as read-only (same contract as get()/getPhrase()); an
-   *  unseen word gets the shared NO_SUCCESSORS constant, so a miss
-   *  allocates nothing. */
+   *  array — treat as read-only (same contract as get()); an unseen word
+   *  gets the shared NO_SUCCESSORS constant, so a miss allocates
+   *  nothing. */
   topSuccessors(word: string): readonly Successor[] {
     return this.#successorIndex.get(word) ?? NO_SUCCESSORS;
   }
 
-  /** Number of stored phrases (one per joined key). */
-  get phraseSize(): number {
-    return this.#phrases.size;
-  }
-
-  /** Defensive snapshot of all phrase entries — shallow copies, so later
-   *  records never mutate a previously-taken snapshot. Test/inspection
-   *  surface for eviction and /acwords. */
-  phraseEntries(): PhraseEntry[] {
-    return [...this.#phrases.values()].map((p) => ({ ...p }));
-  }
-
-  /** Live iteration over the phrase map's entries (Map values iterator:
-   *  the yielded objects are the stored entries themselves, so mutations
-   *  made after this call — including entries recorded mid-iteration — are
-   *  visible). P2.M1.T2.S1 iterates for admission; P2.M2.T1.S1 reads
-   *  bigram counts; /acwords (M2) dumps. Callers that need a stable view
-   *  must copy (phraseEntries()). */
-  iteratePhrases(): IterableIterator<PhraseEntry> {
-    return this.#phrases.values();
+  /** Number of stored bigrams (one per "first second" key). /acwords and
+   *  test observability (PRD §06 h2.38). */
+  get bigramSize(): number {
+    return this.#bigrams.size;
   }
 }

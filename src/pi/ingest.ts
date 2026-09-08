@@ -127,12 +127,6 @@ export interface IngestPipelineOptions {
    *  across). Empty lines produce empty arrays; a message whose lines
    *  admit nothing still calls with its (possibly empty-array) lines. */
   onAdmittedTokens?: (lines: string[][]) => void;
-  /** M2 demotion-sweep hook (P2.M1.T2.S2, PRD §06 h3.7): called ONCE at
-   *  the tail of every flush drain — after the queue empties, regardless
-   *  of how many messages it drained (demotion is not latency-sensitive).
-   *  Wired to CandidateStore.sweepPhraseDemotions and gated exactly like
-   *  onAdmittedTokens, so phrases-disabled builds never sweep. */
-  onSweepPhrases?: () => void;
 }
 
 /**
@@ -150,9 +144,7 @@ export interface IngestPipelineOptions {
  * session_shutdown handler calls dispose() to drop the debounce timer and
  * any queued-but-unprocessed text; restore replay (P1.M3.T2.S3) calls
  * flush/processText directly; /acwords (P1.M3.T4.S1) reads getStats;
- * n-grams (P2.M1.T1.S1) supply onAdmittedTokens (per-line keys); the
- * 40-ordinal demotion sweep (P2.M1.T2.S2) supplies onSweepPhrases (once
- * per drain).
+ * n-grams (P2.M1.T1.S1) supply onAdmittedTokens (per-line keys).
  */
 export class IngestPipeline {
   #store: CandidateStore;
@@ -161,7 +153,6 @@ export class IngestPipeline {
   #chunkBytes: number;
   #yieldFn: YieldFn;
   #onAdmittedTokens?: (lines: string[][]) => void;
-  #onSweepPhrases?: () => void;
   /** Optional disable gate (BUG-004) — see IngestPipelineOptions. */
   #isDisabled?: () => boolean;
   /** FIFO queue; entries hold nothing but { text, fromUser } and are
@@ -185,7 +176,6 @@ export class IngestPipeline {
     this.#chunkBytes = options.chunkBytes ?? 65_536;
     this.#yieldFn = options.yieldFn ?? defaultYield;
     this.#onAdmittedTokens = options.onAdmittedTokens;
-    this.#onSweepPhrases = options.onSweepPhrases;
     this.#isDisabled = options.isDisabled;
   }
 
@@ -221,21 +211,6 @@ export class IngestPipeline {
     this.#pending.length = 0;
   }
 
-  /** Run the M2 40-ordinal phrase demotion sweep ONCE now (BUG-006,
-   *  P1.M3.T2.S1): the same #onSweepPhrases hook #drainQueue's finally
-   *  block fires, with the same error posture — a throwing callback is
-   *  swallowed and never wedges anything. Public so restoreFromHistory
-   *  can run the sweep at the tail of a restore replay, which calls
-   *  processText directly and therefore never enters #drainQueue.
-   *  No-op when onSweepPhrases is unset (phrases-disabled builds). */
-  sweepPhrases(): void {
-    try {
-      this.#onSweepPhrases?.();
-    } catch {
-      // defensive: sweep failure never blocks anything (matches #drainQueue)
-    }
-  }
-
   /** Fire the debounce immediately and await the full drain (PRD §05;
    *  for tests and P1.M3.T2.S3 restore replay). Cancels any pending
    *  timer; messages arriving later start their own fresh debounce. */
@@ -266,18 +241,6 @@ export class IngestPipeline {
       }
     } finally {
       this.#drain = null;
-      // One demotion sweep per flush (P2.M1.T2.S2, PRD §06 h3.7) — in the
-      // finally so every flush path (timer fire, flush(), restore drain)
-      // sweeps exactly once, even for N messages. O(candidates) and pure
-      // over store state, but swallowed defensively to match this loop's
-      // error posture: a throwing callback must never wedge the queue.
-      // dispose()-cancelled queues never start a drain, so this never
-      // fires for them.
-      try {
-        this.#onSweepPhrases?.();
-      } catch {
-        // defensive: sweep failure never blocks the next flush
-      }
     }
   }
 
@@ -473,14 +436,11 @@ function safeEntries(sessionManager: RestoreSessionManager): SessionEntry[] {
  * which flips DURING the replay (the first lookup triggers the failed
  * load); never pass the flag by value.
  *
- * Demotion tail (BUG-006, P1.M3.T2.S1): after the replay loop completes
- * normally, exactly one sweepPhrases() runs (the sweep #drainQueue fires
- * per live flush). An aborted replay (shouldAbort, P1.M3.T1.S2) skips
- * the tail sweep entirely. An empty history also "completes normally" —
- * its tail sweep is a harmless no-op on an empty store.
+ * The replay is fire-and-forget (…void…): session_start does not await
+ * it; failures inside the loop are swallowed per entry.
  */
 export function restoreFromHistory(
-  pipeline: Pick<IngestPipeline, "processText" | "sweepPhrases">,
+  pipeline: Pick<IngestPipeline, "processText">,
   sessionManager: RestoreSessionManager,
   shouldAbort?: () => boolean,
 ): void {
@@ -499,10 +459,8 @@ export function restoreFromHistory(
   }
 
   void (async () => {
-    let aborted = false;
     for (const entry of ordered) {
       if (shouldAbort?.()) {
-        aborted = true; // BUG-006: an aborted replay never sweeps
         return; // BUG-004: dict failed → stop replay cold
       }
       if (entry.type !== "message") continue;
@@ -516,15 +474,5 @@ export function restoreFromHistory(
         continue;
       }
     }
-    // BUG-006 (P1.M3.T2.S1): restore replays bypass #drainQueue, so the
-    // once-per-flush demotion sweep never fires for them. Run ONE sweep
-    // at the tail of a completed replay — skipped when aborted, because
-    // an aborted replay (dictionary died mid-replay, P1.M3.T1.S2) may
-    // have populated only part of the store and must not demote phrases
-    // whose "40 subsequent ordinals" never got a chance to accrue. Not
-    // wrapped in try/catch: sweepPhrases() itself swallows (same posture
-    // as #drainQueue's finally block), so the fire-and-forget contract
-    // holds.
-    if (!aborted) pipeline.sweepPhrases();
   })();
 }

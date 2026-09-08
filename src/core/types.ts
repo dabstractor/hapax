@@ -55,27 +55,12 @@ export interface Sighting {
   parentKey?: string;
 }
 
-/** A multi-word phrase (bigram/trigram) tracked by the session phrase
- *  map. One entry per single-space-joined lowercase key. PRD §06 M2
- *  verbatim. Captured by CandidateStore.recordPhraseLines (P2.M1.T1.S1);
- *  admission (P2.M1.T2.S1) and the successor index (P2.M2.T1.S1) read it. */
-export interface PhraseEntry {
-  /** lowercase words joined by single spaces, e.g. "renewable energy laboratory" */
-  key: string;
-  /** occurrences of this exact word sequence this session */
-  count: number;
-  /** message ordinal at last occurrence */
-  lastSeenOrdinal: number;
-  /** message ordinal at first occurrence — frozen at creation */
-  firstSeenOrdinal: number;
-  /** set only by admission (P2.M1.T2.S1); resists eviction like userTyped */
-  sticky: boolean;
-}
+
 
 /** One of a word's most frequent bigram successors (PRD §06 h3.9): an
  *  element of the top-3-per-word index CandidateStore maintains
- *  incrementally at phrase ingest (P2.M2.T1.S1) and the chained-completion
- *  machine (P2.M2.T2.S1) reads per keystroke. */
+ *  incrementally at bigram ingest (recordBigramRuns) and the
+ *  chained-completion machine (P2.M2.T2.S1) reads per keystroke. */
 export interface Successor {
   /** the word that followed `word` in a bigram */
   next: string;

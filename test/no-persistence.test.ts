@@ -193,9 +193,6 @@ describe("M1 DoD: no persistence", () => {
           await real(text, fromUser);
           if (++done === total) resolveReplay();
         },
-        // BUG-006 (P1.M3.T2.S1) widened the Pick; the tail sweep is out of
-        // scope here — no-op keeps this suite's replay behavior identical.
-        sweepPhrases: () => {},
       },
       asSessionManager(entries) as unknown as RestoreSessionManager,
     );

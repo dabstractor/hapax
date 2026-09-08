@@ -30,7 +30,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { loadDictionary } from "../src/core/dictionary.js";
 import { rankMatches } from "../src/core/query.js";
-import { EVICT_BATCH, PHRASE_CAP, PHRASE_EVICT_BATCH, STORE_CAP } from "../src/core/store.js";
+import { EVICT_BATCH, STORE_CAP } from "../src/core/store.js";
 import type { Dictionary, RankedMatch } from "../src/core/types.js";
 import { IngestPipeline } from "../src/pi/ingest.js";
 import type { AgentMessage } from "../src/pi/ingest.js";
@@ -267,20 +267,19 @@ const RESTORE_FIXTURE = join(import.meta.dirname, "fixtures/sessions/large-100k.
 // The gate therefore budgets 600ms: ~1.5× that floor, while any
 // reappearance of per-drain victim sorting (measured 2,152ms pre-fix)
 // trips it by 3.5×.
-describe("perf gate e — DEFAULT-config restore (phrase hooks ON), 100k-token fixture", () => {
-  it("1561-message large-100k replay with onAdmittedTokens/onSweepPhrases completes under 600 ms (phrases-on restore gate)", async () => {
+describe("perf gate e — DEFAULT-config restore (bigram capture ON), 100k-token fixture", () => {
+  it("1561-message large-100k replay with onAdmittedTokens completes under 600 ms (bigrams-on restore gate)", async () => {
     const entries = readFileSync(RESTORE_FIXTURE, "utf8")
       .split("\n")
       .filter(Boolean)
       .map((l) => JSON.parse(l) as { type: string; message?: AgentMessage });
     const store = makeStore(0);
     // Wired exactly like src/pi/index.ts's session_start under the default
-    // config: phrase capture per message + the 40-ordinal demotion sweep.
+    // config: bigram capture per message.
     const pipeline = new IngestPipeline({
       store,
       dictionary: dict,
-      onAdmittedTokens: (lines) => store.recordPhraseLines(lines, store.currentOrdinal()),
-      onSweepPhrases: () => store.sweepPhraseDemotions(),
+      onAdmittedTokens: (lines) => store.recordBigramRuns(lines),
     });
 
     const t0 = performance.now();
@@ -291,13 +290,13 @@ describe("perf gate e — DEFAULT-config restore (phrase hooks ON), 100k-token f
     const dt = performance.now() - t0;
 
     console.log(
-      `[gate e] large-100k phrases-ON restore=${dt.toFixed(1)}ms ` +
-        `words=${store.size} phrases=${store.phraseSize} (cap 10,000) ` +
+      `[gate e] large-100k bigrams-ON restore=${dt.toFixed(1)}ms ` +
+        `words=${store.size} bigrams=${store.bigramSize} (cap 10,000) ` +
         `(budget <600ms, see bound note; per-drain-sort regression ≈ 2,150ms)`,
     );
     expect(dt).toBeLessThan(600);
     expect(store.size).toBeLessThanOrEqual(STORE_CAP); // hard cap held
-    expect(store.phraseSize).toBeLessThanOrEqual(PHRASE_CAP);
+    expect(store.bigramSize).toBeLessThanOrEqual(10_000);
   });
 });
 

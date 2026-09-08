@@ -164,28 +164,21 @@ export default function hapax(pi: ExtensionAPI): void {
       // covering the message drain AND restoreFromHistory replay (both
       // funnel through processText).
       isDisabled: () => disabled,
-      // M2 phrase capture (P2.M1.T1.S1), live only when enabled (PRD §08):
-      // per-line admitted whole-token keys → phrase n-gram upserts. The
-      // message's ordinal was already issued by processText (nextOrdinal
-      // before the first slice), so currentOrdinal() inside this tail
-      // callback IS that ordinal.
+      // Bigram capture (PRD §06 h2.38), live only when enabled (PRD §08):
+      // per-line admitted whole-token keys → bigram upserts. The store
+      // reads currentOrdinal() itself — the message's ordinal was already
+      // issued by processText (nextOrdinal before the first slice).
       //
-      // Successor capture rides the SAME gate (verified P2.M2.T3.S1,
-      // PRD §06 h3.9): CandidateStore builds its word → top-3 successor
-      // index inside recordPhraseLines' upsert path (#bumpSuccessorFor)
+      // Successor capture rides the SAME gate (PRD §06 h3.9): the store
+      // builds its word → top-3 successor index inside recordBigramRuns
       // and nowhere else, so `enablePhrases: false` — which leaves this
-      // hook unwired — yields zero phrases AND zero successors. No
+      // hook unwired — yields zero bigrams AND zero successors. No
       // separate gate is needed; before_agent_start's chain?.reset() is
       // already no-op-safe when the layer is disabled (idle machine).
+      // (P1.M3.T1.S2 re-points this gate to `enableChaining`.)
       ...(config.enablePhrases
         ? {
-            onAdmittedTokens: (lines) =>
-              sessionStore.recordPhraseLines(lines, sessionStore.currentOrdinal()),
-            // M2 demotion sweep (P2.M1.T2.S2, PRD §06 h3.7): once per flush
-            // drain, stale fast-path candidates are demoted (counts kept
-            // for re-promotion). Same gate as capture — phrases-disabled
-            // builds never sweep.
-            onSweepPhrases: () => sessionStore.sweepPhraseDemotions(),
+            onAdmittedTokens: (lines) => sessionStore.recordBigramRuns(lines),
           }
         : {}),
     });

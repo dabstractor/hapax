@@ -398,17 +398,17 @@ describe("session_start — restore gating", () => {
   });
 });
 
-// --- session_start: phrase wiring (P2.M1.T1.S1) -------------------------------
+// --- session_start: bigram wiring (enablePhrases gate) ------------------------
 
-describe("session_start — phrase wiring (enablePhrases)", () => {
+describe("session_start — bigram wiring (enablePhrases)", () => {
   afterEach(() => {
     vi.restoreAllMocks(); // scope the CandidateStore.prototype spy
   });
 
-  it("enablePhrases true (default) wires the hook — phrases land in the store", async () => {
+  it("enablePhrases true (default) wires the hook — bigrams land in the store", async () => {
     useDict(); // alpha/beta/gamma are dict-absent → group 0 → admitted
     const { handlers, ctx } = wired();
-    const spy = vi.spyOn(CandidateStore.prototype, "recordPhraseLines");
+    const spy = vi.spyOn(CandidateStore.prototype, "recordBigramRuns");
     startSession(handlers.get("session_start")!, ctx, "new");
 
     await endMessage(
@@ -418,20 +418,19 @@ describe("session_start — phrase wiring (enablePhrases)", () => {
     );
     // Filter to THIS session's message: the prototype spy is shared by
     // every store instance, and an earlier test's fire-and-forget restore
-    // drain can land its own recordPhraseLines call inside this window.
+    // drain can land its own recordBigramRuns call inside this window.
     await vi.waitFor(() => {
       expect(spy.mock.calls.some(([lines]) => lines.flat().includes("alpha"))).toBe(true);
     });
     const call = spy.mock.calls.find(([lines]) => lines.flat().includes("alpha"))!;
     expect(call[0]).toEqual([["alpha", "beta", "gamma"]]);
-    expect(call[1]).toBe(1); // this message's ordinal (fresh store)
   });
 
-  it("enablePhrases false leaves the hook unwired — recordPhraseLines never fires", async () => {
+  it("enablePhrases false leaves the hook unwired — recordBigramRuns never fires", async () => {
     useDict();
     writeConfig({ enablePhrases: false });
     const { handlers, ctx } = wired();
-    const spy = vi.spyOn(CandidateStore.prototype, "recordPhraseLines");
+    const spy = vi.spyOn(CandidateStore.prototype, "recordBigramRuns");
     startSession(handlers.get("session_start")!, ctx, "new");
 
     await endMessage(
@@ -441,7 +440,7 @@ describe("session_start — phrase wiring (enablePhrases)", () => {
     );
     await settle(); // let the debounce fire and the drain finish
     // enablePhrases false → the hook is never wired: this session's
-    // message never reaches recordPhraseLines (any spied call would be
+    // message never reaches recordBigramRuns (any spied call would be
     // bleed from another test's store — filter on this message's keys).
     expect(spy.mock.calls.some(([lines]) => lines.flat().includes("alpha"))).toBe(false);
   });
