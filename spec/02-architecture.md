@@ -47,7 +47,7 @@ hapax/
 │   │   ├── segment.ts        # word segmentation + normalization
 │   │   ├── shapeGate.ts      # shape/entropy/secret rejection
 │   │   ├── score.ts          # admission decision + salience formula
-│   │   ├── store.ts          # candidate store, eviction, (M2: n-grams)
+│   │   ├── store.ts          # candidate store, eviction, (M2: successor index)
 │   │   ├── query.ts          # prefix search + ranking (pure store queries)
 │   │   └── types.ts          # shared core types
 │   └── pi/                   # pi extension adapter

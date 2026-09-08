@@ -35,8 +35,8 @@ the trigger char, default `#`).
 
 ## Goals (M2)
 
-6. Multi-word phrase candidates (n=2,3) admitted by repetition or all-rare
-   first sight.
+6. One word per completion, always — no multi-word candidates, ever. The
+   only phrase behavior is successor chaining (goal 7).
 7. Chained completion: accepting a word arms its most-likely successor for
    zero-additional-typing Tab completion.
 

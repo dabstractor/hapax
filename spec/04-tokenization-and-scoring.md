@@ -24,11 +24,18 @@ Rules:
 2. **Hexish tokens:** 6–40 hex chars containing at least one letter `[a-f]`.
    These are commit-hash-shaped and deliberately captured; the shape gate
    decides their fate (long ones rejected as noise, see below).
-3. **Skip CJK and all non-ASCII runs.** If a codepoint ≥ 0x3000 opens a run,
-   skip to the next ASCII word boundary. CJK is a documented non-goal.
+3. **Skip CJK and all non-ASCII runs — and never resume mid-word.** A word
+   candidate must be a run of `[A-Za-z0-9_]` bounded on BOTH sides by
+   non-letter characters (any Unicode letter counts as a letter). A
+   non-ASCII letter adjacent to an ASCII run disqualifies the whole run:
+   `Þórhildur` yields NOTHING (not `rhildur`), `ΩbsidianMirror` yields
+   NOTHING (not `bsidianMirror`). Never slice a non-ASCII letter out of a
+   word and complete the ASCII remainder. CJK word segmentation remains a
+   documented non-goal.
 4. **Punctuation/whitespace terminate tokens.** No hyphen or apostrophe joins
    (`state-of-the-art` segments into three words; multi-word terms are M2
-   phrase territory).
+   successor-index territory — chained one word at a time, never a single
+   multi-word insertion).
 
 ### camelCase / snake_case splitting
 

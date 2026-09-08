@@ -45,7 +45,7 @@ autocomplete menu via `ctx.ui.addAutocompleteProvider()`.
 | Store lifecycle | Per-session, in-memory, survives compaction, no persistence. Rebuild on resume from history (~30–50 ms background for 200k tokens) |
 | Trigger | Configurable trigger char (default `#`, 1st-char lookup); threshold-matching at 2 chars (configurable 1–3), fires after any word start |
 | Popup | Display-debounced ~100 ms; synchronous search every keystroke; hysteresis against flicker |
-| Phrases & chaining | v2 (milestone M2): session n-grams, hybrid admission (repeat ≥2 OR all-rare first sight), decay on no re-sighting, successor index for chained Tab completion |
+| Phrases & chaining | v2 (M2): one word per completion, ALWAYS. There are no multi-word menu items. "Phrase support" = successor index + chained Tab completion: after a word is accepted, its most-likely successor is the top result with zero additional typed chars. Bigrams form only between raw-text-adjacent admitted words (nothing but whitespace between, same line); any other intervening character or word breaks the window |
 | Language | English table v1; CJK runs skipped (known limitation); per-language tables possible later via format versioning |
 | Secrets | Shape/entropy gate rejects key-shaped strings (sk-, ghp_, long hex, high digit+symbol entropy). Default-on, no config |
 | Telemetry | None |
@@ -55,5 +55,6 @@ autocomplete menu via `ctx.ui.addAutocompleteProvider()`.
 - **M1 (v1):** dictionary build + packed loader, ingestion pipeline, candidate
   store, trigger char + threshold matching, autocomplete provider with debounce
   and hysteresis. Fully usable tool.
-- **M2 (v2):** phrase candidates + n-gram admission + successor-index chained
-  completion. Specced fully in 06/07 but implemented only after M1 acceptance.
+- **M2 (v2):** bigram successor index + chained Tab completion — one word per
+  Tab, zero typed chars to see the next word. No phrase menu items, no
+  multi-word insertion, ever. Specced in 06/07; implemented after M1 acceptance.

@@ -83,10 +83,16 @@ State machine, armed only via Tab acceptance of a whole-word candidate:
 ```
 idle ──Tab accepts word W──► armed(W)
 armed(W):
-  - next word start (any char) → offer top successor from successor index
-    (lookup W → top-3; filtered live by typed fragment; threshold = 1 char
-    during chain, per user rule "first char triggers lookup")
-  - Tab with a highlighted successor → insert it, transition armed(next)
+  - word start (cursor at the empty next word, ZERO typed chars) → offer
+    the top successor from the successor index immediately (lookup W →
+    top-3, ranked by count). No trigger char, no threshold, no typed
+    fragment needed — the successor IS the top result before the user
+    types anything. This is the entire meaning of "phrase completion".
+  - typed chars filter the live successor list (prefix,
+    case-insensitive, as usual); threshold stays 0 for the duration of
+    the chain
+  - Tab with a highlighted successor → insert it (ONE word),
+    transition armed(next)
   - Any non-Tab key that disqualifies (space, escape, punctuation) → idle
   - Typing continues to filter normally (chain never blocks typing;
     it only feeds the suggestion set)
@@ -100,8 +106,10 @@ armed(W):
 
 ## Menu item shape
 
-`AutocompleteItem`: `value` = the string to insert (candidate display text),
-`label` = same, `description` = optional short provenance (e.g. `session ×12`
-or `phrase`) — keep minimal; do not clutter.
+`AutocompleteItem`: `value` = the string to insert — **always exactly one
+word** (candidate display casing). Multi-word items are forbidden
+(invariant; see 06). `label` = same, `description` = optional short
+provenance (e.g. `session ×12` or `chain`) — keep minimal; do not clutter.
 
-Max 8 items per result set, ordered per 04 ranking, phrase suppression per 06.
+Max 8 items per result set, ordered per 04 ranking. Every item is a single
+word, including during chains (06, 07).

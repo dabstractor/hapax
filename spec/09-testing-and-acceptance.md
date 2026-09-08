@@ -79,7 +79,7 @@ Benchmarks run with a synthetic dictionary fixture; numbers asserted loosely
 ## Tuning protocol
 
 The only tuning surfaces: admission bands (220/120), salience weights
-(2.0/3.0/1.5/0.8/1.0), phrase multipliers (M2). Protocol: change one constant,
+(2.0/3.0/1.5/0.8/1.0), no phrase multipliers exist (M2 successor index has none). Protocol: change one constant,
 run the acceptance suite, A/B against a fixed 3-session corpus fixture
 (`test/fixtures/sessions/`) checking precision@8 by hand-labeled expected
 completions. No telemetry exists; tuning is fixture-driven by design.
@@ -92,8 +92,11 @@ no persistence files written anywhere (assert store dir untouched), `pi
 
 ## Definition of done — M2
 
-M1 done plus: phrase admission paths (repetition + fast-path + 40-message
-decay), constituent suppression, successor-index chaining state machine,
-chain resets on `before_agent_start`, and integration item 7: accept
-`National` → chain offers `Renewable` → Tab → chain offers `Energy`
-→ Tab → `Laboratory`, zero additional typed characters.
+M1 done plus: successor-index chaining state machine with ZERO-typed-char
+successor offers, live successor filtering, chain resets on
+`before_agent_start`, the one-word invariant (no multi-word item is ever
+offered — asserted in tests), and raw-text-adjacency window breaks:
+commas, quotes/brackets/backticks, digits, non-word characters, intervening
+words (stopword bridging forbidden), newlines. Integration item 7: accept
+`National` → with zero additional typed chars `Renewable` is the top result
+→ Tab → `Energy` → Tab → `Laboratory`.

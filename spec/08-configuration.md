@@ -20,7 +20,10 @@ defaults, continue running. Missing files are normal.
                               // trigger mode entirely
   "threshold": 2,            // chars before threshold matching: 1 | 2 | 3
   "maxSuggestions": 8,       // 1–20
-  "enablePhrases": true,     // M2 flag; ignored (inert) in M1 builds
+  "enableChaining": true,    // M2 flag; gates the successor-index chain
+                              // layer only. "enablePhrases" is accepted as a
+                              // deprecated alias for this key. Word
+                              // completion is unaffected either way.
   "debug": false             // enables /acwords command + store dump
 }
 ```
@@ -41,5 +44,5 @@ Validation: clamp/repair invalid values to defaults (log when repaired).
 
 Read-only inspection for development: dumps top-50 candidates by salience,
 store size, rank-group histogram, shape-gate rejection counts, and (M2)
-top-10 phrases + successor index sample. Output via `ctx.ui.notify` or the
+a successor-index sample. Output via `ctx.ui.notify` or the
 widget API; never logs message bodies (store holds words + counters only).

@@ -54,54 +54,46 @@ ageFactor = exp(-(currentOrdinal - lastSeenOrdinal) / 50)
 - Never evict `userTyped` candidates unless the cap is exceeded by
   `userTyped` alone.
 
-## M2: phrases
+## M2: successor index (chained completion)
 
-### N-gram capture
+There are **no phrase candidates**. A completion item is always exactly one
+word, under all circumstances. "Phrase support" means only this: after a
+word is accepted, its most-likely successor is offered as the top
+suggestion with **zero** additional typed characters (see 07, chained
+completion). No multi-word string is ever a menu item, a `value`, or an
+insertion.
 
-During ingestion, for each message, record bigrams and trigrams of
-**consecutive admitted whole-token candidates** (post shape gate + admission;
-sub-words excluded) — across sentence boundaries? No: within a line only
-(newline breaks the window). Key = lowercase words joined by single spaces.
+### Bigram capture (raw-text adjacency, strictly)
 
-```ts
-interface PhraseEntry {
-  key: string            // "renewable energy laboratory"
-  count: number
-  lastSeenOrdinal: number
-  firstSeenOrdinal: number
-  sticky: boolean        // admitted via fast path AND repeated
-}
-```
+During ingestion, record bigrams of admitted whole-token candidates
+(sub-words excluded) that are **adjacent in the raw text**: the two words
+are separated by nothing but plain whitespace (spaces/tabs) on the same
+line. Key = lowercase `first second`.
 
-Memory: `Map<string, PhraseEntry>`; expect tens of thousands of bigrams in a
-long session — cap at 10,000 phrases with the same eviction policy.
+The window breaks — no bigram forms — when ANYTHING other than plain
+whitespace appears between the two words:
 
-### Phrase admission (hybrid, settled)
+- **Clause and punctuation:** `,` `;` `:` `.` `!` `?` `—` `–` `…` `|` —
+  `ZorpWibbleEngine, quuxblat` never chains.
+- **Quotes and brackets:** `` ` `` `"` `'` `(` `)` `[` `]` `{` `}` `<` `>` —
+  backtick-quoted identifiers separated by even a space do not chain
+  (`` `A` `B` `` has two backticks between the words). Words entering a
+  quote or leaving one do not chain across the boundary.
+- **Digits, hexish, and any non-word character:** `/` `\` `=` `+` `&` `%` `#`
+  `*` `@` `-` `~` `^` — a digit run or hexish token between two words breaks
+  the window; `v2 release` does not chain `v2`→`release`.
+- **Any other word, common or rare:** an intervening word — even a
+  rank-rejected common word like `the` or `of` — breaks the window.
+  Bridging over dropped common words is FORBIDDEN. `United States of
+  America` yields only `united states` and `america`; the stopword-bridge
+  tradeoff is accepted for predictability (bugs like
+  `ZorpWibbleEngine, the quuxblat` → `zorpwibbleengine quuxblat` are the
+  reason).
+- **Newline:** the window never crosses a line break (unchanged).
 
-An n-gram becomes a completion candidate when:
-
-- **Repetition path:** `count >= 2`, OR
-- **Fast path (first sight):** every constituent word is rank group 0
-  (dictionary-absent, shape-gated) or properName, AND the n-gram length
-  in words is ≤ 5.
-
-Fast-path phrases that fail to reach `count >= 2` within **40 subsequent
-message ordinals** are demoted (removed from phrase candidates, kept in counts
-in case they recur).
-
-`sticky = true` when both paths fire; sticky phrases resist eviction
-(same rule as userTyped).
-
-### Constituent suppression (ranking rule)
-
-When a phrase candidate matches, suppress single-word candidates that are a
-prefix word of the phrase in the same result set if the phrase outranks them
-(offering both `renewable` and `renewable energy laboratory` wastes two of
-eight slots — keep only the phrase when phrase salience ≥ word salience).
-
-Phrase salience = sum of constituent word saliences × 1.2 (phrases are more
-specific targets, deserve the multiplier) + `2.0 * log2(1 + count)` if
-repetition-path.
+No trigrams. No `PhraseEntry` map, no phrase admission/sticky/demotion
+lifecycle, no constituent suppression — those designs are removed. The one
+M2 structure is the successor index:
 
 ### Successor index (for chained completion)
 
@@ -109,8 +101,10 @@ repetition-path.
 Map<string, Array<{ next: string, count: number }>>  // top 3 per word
 ```
 
-Built from the same bigram counts: `word → top-3 most frequent successors`.
-Updated at ingest; trivial size.
+Built from the bigram counts: `word → top-3 most frequent successors`,
+updated at ingest; trivial size. Cap the bigram map at 10,000 keys with the
+standard eviction policy; evicting a bigram also splices it from the
+successor index.
 
 Query use is defined in 07 (chaining). This is the M2 structure; M1 ships
 without it.
