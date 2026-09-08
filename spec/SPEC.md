@@ -15,9 +15,12 @@ autocomplete menu via `ctx.ui.addAutocompleteProvider()`.
 1. **Never hijack typing.** No key is ever captured, consumed, or altered except
    Tab while a suggestion is selected. The user's typing experience is unchanged;
    the menu is strictly take-it-or-leave.
-2. **Tab is never delayed by UI.** The top suggestion is computed synchronously
-   on every keystroke; the popup may be debounced, but Tab always resolves the
-   current top item immediately.
+2. **Tab is never delayed by UI — and Tab only ever completes.** The top
+   suggestion is computed synchronously on every keystroke; the popup may be
+   debounced, but a single Tab keypress always resolves the current top or
+   selected item immediately. Tab never opens, toggles, or summons the
+   menu; the menu opens automatically on the 2nd char of a matching word, on
+   the 1st char after the trigger char, or at the zero-char chain offer.
 3. **The popup never flickers and never appears with zero candidates.**
 4. **Everything stays in RAM.** No persistence, no telemetry, no network. The
    candidate store is per-session and dies at `session_shutdown`.

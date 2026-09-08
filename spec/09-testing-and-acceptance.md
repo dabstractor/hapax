@@ -44,6 +44,14 @@
 - Zero candidates → delegate/empty, never a menu.
 - Debounce: two rapid set updates → only one swap at +100 ms; Tab mid-debounce
   resolves the live (undebounced) top item.
+- Tab-only-completes: Tab with a live set completes the selected (or top)
+  item and never opens/toggles a menu; the menu appears automatically on
+  the 2nd char of a matching word and on the 1st char after the trigger
+  char, with no manual open gesture of any kind; completion is exactly one
+  keypress. Includes the forced path: `getSuggestions` with
+  `force: true` + live fragment MUST return exactly one item (the live
+  top / chain successor) so pi-tui's single-item fast path applies it —
+  assert Tab-before-paint completes rather than opening the menu.
 - Hysteresis: narrowing keystroke must not emit close+reopen (assert via
   recorded provider emission sequence).
 - Delegation: no fragment → `current.getSuggestions` called with unchanged
