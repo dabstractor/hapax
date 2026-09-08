@@ -769,3 +769,74 @@ describe("replayed-store arming end-to-end (real ingest pipeline, zephyr-chain f
     expect(chain.state()).toEqual({ word: "acme" }); // inert, never consulted
   });
 });
+
+describe("chain machine — armed branch word-start guard (BUG-005)", () => {
+  // Fixture per the bugfix item contract: two successors of "alphaone",
+  // all three words menu-eligible (trigger-mode fall-through needs them).
+  const seedAlphaoneSuccessors = (s: CandidateStore): void => {
+    s.recordBigramRuns([["alphaone", "betaword"]]);
+    s.recordBigramRuns([["alphaone", "deltaword"]]);
+    put(s, "alphaone", 3);
+    put(s, "betaword", 3);
+    put(s, "deltaword", 3);
+  };
+
+  it("armed chain resets on the trigger char: '#b' answers in trigger mode at prefix '#b' and leaves the chain idle", async () => {
+    const current = makeCurrent();
+    const store = new CandidateStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alphaone", "al", seedAlphaoneSuccessors);
+
+    const lines = ["x alphaone #b"];
+    const r = await suggest(inner, lines, 0, lines[0]!.length);
+    // Trigger mode consumed the '#': the prefix is the RAW typed text
+    // '#b' (never the bare fragment 'b' — pi-tui deletes prefix.length
+    // chars blindly, so a chain answer at 'b' would strand the '#').
+    expect(r?.prefix).toBe("#b");
+    expect(chain.state()).toBeNull(); // disqualify → idle (PRD §07)
+    // Normal-path items (word provenance), never chain-provenance ones.
+    const items = r?.items ?? [];
+    expect(items.every((i) => i.description !== "chain")).toBe(true);
+    expect(items.map((i) => i.value)).toContain("betaword"); // matches 'b'
+  });
+
+  it("armed chain still filters successors at a word start ('x alphaone be')", async () => {
+    const current = makeCurrent();
+    const store = new CandidateStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alphaone", "al", seedAlphaoneSuccessors);
+
+    const lines = ["x alphaone be"];
+    const r = await suggest(inner, lines, 0, lines[0]!.length);
+    expect(r?.prefix).toBe("be"); // raw fragment — the armed branch owns it
+    expect(chain.state()).toEqual({ word: "alphaone" }); // still armed
+    expect(r?.items.map((i) => i.value)).toEqual(["betaword"]); // deltaword filtered
+  });
+
+  it("zero-typed-char offer unchanged after the guard (regression)", async () => {
+    const current = makeCurrent();
+    const store = new CandidateStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alphaone", "al", seedAlphaoneSuccessors);
+
+    const lines = ["x alphaone "];
+    const r = await suggest(inner, lines, 0, lines[0]!.length);
+    expect(r?.prefix).toBe(""); // the (a) path — untouched by the guard
+    expect(r?.items.map((i) => i.value)).toEqual(["betaword", "deltaword"]); // unfiltered, count order
+    expect(chain.state()).toEqual({ word: "alphaone" }); // stays armed
+  });
+
+  it("punctuation glued before a fragment also resets (state machine consistency)", async () => {
+    const current = makeCurrent();
+    const store = new CandidateStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alphaone", "al", seedAlphaoneSuccessors);
+
+    const lines = ["x alphaone!be"]; // 'be' glued to '!' — not a word start
+    const r = await suggest(inner, lines, 0, lines[0]!.length);
+    expect(chain.state()).toBeNull(); // disqualify → idle
+    // The normal path answers: threshold mode at the bare fragment 'be'.
+    expect(r?.prefix).toBe("be");
+    expect((r?.items ?? []).every((i) => i.description !== "chain")).toBe(true);
+  });
+});

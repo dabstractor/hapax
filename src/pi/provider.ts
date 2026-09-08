@@ -310,9 +310,17 @@ export function createHapaxProvider(
       //       after the user separates the accepted word from the next
       //       ("Tab alpha, type space"): the PRD's "zero typed
       //       characters" means zero chars of the NEXT word.
-      //   (b) TYPED FRAGMENT: any trailing [A-Za-z][A-Za-z0-9_]* filters
-      //       the successor set live; typing never disarms while the
-      //       fragment still matches a successor.
+      //   (b) TYPED FRAGMENT: a trailing [A-Za-z][A-Za-z0-9_]* AT A WORD
+      //       START (line start or right after a space/tab) filters the
+      //       successor set live; typing never disarms while the fragment
+      //       still matches a successor. A fragment GLUED to the trigger
+      //       char or other punctuation ("#b", "!be") is NOT a chain
+      //       fragment (BUG-005): pi-tui's applyCompletion deletes exactly
+      //       prefix.length chars blindly, so answering at prefix "b" for
+      //       buffer "#b" would strand the "#" — glued fragments
+      //       disqualify instead, and trigger mode wins at prefix "#b"
+      //       (PRD §07: trigger-char match has priority; any
+      //       disqualifying non-Tab key → idle).
       //   (c) DISQUALIFICATION: punctuation, word-less non-start input,
       //       zero matching successors, or an empty successor index all
       //       chain.reset() and FALL THROUGH to the normal path on this
@@ -409,18 +417,32 @@ export function createHapaxProvider(
         // fragment regex, so this only produces a menu for genuine
         // fragments where `armed` is still current.
         const frag = before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0];
+        // BUG-005 word-start guard: a fragment glued to the trigger char
+        // ("#b") or any punctuation ("!be") is NOT a chain fragment —
+        // pi-tui's applyCompletion deletes exactly prefix.length chars
+        // blindly, so answering at prefix "b" for buffer "#b" would
+        // strand the "#" in the buffer. Require the fragment to sit at a
+        // WORD START (line start or right after a space/tab); otherwise
+        // disqualify exactly like the zero-successors case: reset + fall
+        // through so the normal path (extractMatchState) answers on this
+        // SAME keystroke — trigger mode wins at prefix "#b".
+        const fragAt = frag === undefined ? -1 : before.length - frag.length;
+        const fragAtWordStart =
+          frag !== undefined &&
+          (fragAt === 0 || /[ \t]/.test(before[fragAt - 1] ?? ""));
         const succ =
-          frag === undefined
+          frag === undefined || !fragAtWordStart
             ? []
             : store
                 .topSuccessors(armed.word)
                 .filter((s) => s.next.startsWith(frag.toLowerCase()))
                 .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
-        if (frag === undefined || succ.length === 0) {
-          // (c) Disqualify: punctuation, word-less non-start input, or
-          // zero matching successors → idle. Never return an empty hapax
-          // set — the normal path (extractMatchState → rankMatches) or
-          // pi's stock delegate answers on this SAME keystroke.
+        if (frag === undefined || !fragAtWordStart || succ.length === 0) {
+          // (c) Disqualify: punctuation, word-less non-start input, a
+          // fragment not at a word start (BUG-005), or zero matching
+          // successors → idle. Never return an empty hapax set — the
+          // normal path (extractMatchState → rankMatches) or pi's stock
+          // delegate answers on this SAME keystroke.
           chain.reset();
         } else {
           const r = publishChain(succ, frag); // prefix = the raw typed fragment
