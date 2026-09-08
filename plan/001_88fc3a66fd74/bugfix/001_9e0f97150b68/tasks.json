@@ -328,7 +328,7 @@
               "type": "Task",
               "id": "P1.M5.T1",
               "title": "Adversarial probe regression suite (e2e)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Reproduce the bug-hunt probe suites as permanent end-to-end tests against the real modules and artifacts — the reality-check layer the scripted acceptance lacked.",
               "subtasks": [
                 {
@@ -357,7 +357,7 @@
                   "type": "Subtask",
                   "id": "P1.M5.T1.S2",
                   "title": "Ingest-path probes: realistic secrets, bad-dict restore, demotion cadence",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1",
