@@ -4,26 +4,38 @@
  * the PRD §09 order (salience desc → shorter key → byte-lex) verified
  * with deliberate ties, the default limit 8 plus explicit/defensive
  * limits, the description "session x<count>" item contract, empty
- * results, the M2 suppression seam, recency re-ranking after the ordinal
- * advances, and an informal perf sanity (20k store; formal gate is
- * P1.M4.T1.S2).
+ * results, recency re-ranking after the ordinal advances, an informal
+ * perf sanity (20k store; formal gate is P1.M4.T1.S2), and the R1
+ * ONE-WORD INVARIANT (PRD §07 h2.44): every returned display is a single
+ * word, proven end-to-end through the REAL ingest pipeline (rankMatches
+ * is words-only — `{ limit }` is its entire option surface; the former
+ * caller-side filter seam was removed with the multi-word layer).
  *
  * Stores are built by upserting fabricated Sightings — the store IS the
  * input fixture (same style as store.test.ts); keys are arbitrary
  * lowercase. Expected orders are hand-computed where they document the
  * math and cross-checked against compareCandidates (the single source of
- * truth) as a brute-force oracle.
+ * truth) as a brute-force oracle. The one-word invariant suite is the
+ * deliberate exception: it feeds a REAL IngestPipeline, because its
+ * claim is that no pipeline stage can ever produce a multi-word display.
  */
 
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { CandidateStore } from "../src/core/store.js";
+import { loadDictionary } from "../src/core/dictionary.js";
 import { compareCandidates, salience } from "../src/core/score.js";
 import {
   compareRankedMatches,
   DEFAULT_LIMIT,
   rankMatches,
 } from "../src/core/query.js";
-import type { RankedMatch, Sighting } from "../src/core/types.js";
+import { IngestPipeline } from "../src/pi/ingest.js";
+import type { Sighting } from "../src/core/types.js";
+import { buildDictBinary, writeDictFile } from "./helpers/dict-writer.js";
+import { assertWordsOnly } from "./helpers/query-invariants.js";
 
 /** Fresh group-2 sighting of "hapax" at ordinal 1; override any field. */
 const sighting = (over: Partial<Sighting> = {}): Sighting => ({
@@ -259,52 +271,6 @@ describe("rankMatches — limits (PRD §04 h2.26: top 8)", () => {
   });
 });
 
-describe("rankMatches — suppress hook (M2 seam, P2.M1.T3.S1)", () => {
-  it("omitted by default → nothing suppressed", () => {
-    const s = new CandidateStore();
-    put(s, "alpha");
-    put(s, "alpine");
-    expect(rankMatches(s, "al")).toHaveLength(2);
-  });
-
-  it("suppress removes a candidate BEFORE ranking (the survivor ranks first)", () => {
-    const s = new CandidateStore();
-    put(s, "bigshot", 9); // would rank first
-    put(s, "underdog", 1);
-    const out = rankMatches(s, "", { suppress: (c) => c.key === "bigshot" });
-    expect(out.map((m) => m.key)).toEqual(["underdog"]);
-  });
-
-  it("the predicate sees every Candidate in the prefix range", () => {
-    const s = new CandidateStore();
-    put(s, "alpha");
-    put(s, "alpine");
-    put(s, "beta"); // outside the range
-    const seen: string[] = [];
-    rankMatches(s, "al", { suppress: (c) => (seen.push(c.key), false) });
-    expect(seen.sort()).toEqual(["alpha", "alpine"]); // byte order
-  });
-
-  it("suppressing everything → []", () => {
-    const s = new CandidateStore();
-    put(s, "alpha");
-    expect(rankMatches(s, "al", { suppress: () => true })).toEqual([]);
-  });
-
-  it("limit still applies after suppression", () => {
-    const s = new CandidateStore();
-    put(s, "k00", 4);
-    put(s, "k01", 3);
-    put(s, "k02", 2);
-    put(s, "k03", 1);
-    const out = rankMatches(s, "k", {
-      limit: 1,
-      suppress: (c) => c.sessionCount > 2,
-    });
-    expect(out.map((m) => m.key)).toEqual(["k02"]); // k00/k01 suppressed
-  });
-});
-
 describe("rankMatches — ordinal interplay (recency re-ranking)", () => {
   it("after nextOrdinal advances + a fresh sighting, recency flips the order", () => {
     const s = new CandidateStore();
@@ -324,6 +290,71 @@ describe("rankMatches — ordinal interplay (recency re-ranking)", () => {
     const now = s.nextOrdinal();
     const m = rankMatches(s, "old")[0]!;
     expect(m.salience).toBe(salience(s.get("oldnews")!, now));
+  });
+});
+
+describe("rankMatches — one-word invariant (PRD §07 h2.44, R1)", () => {
+  // The invariant claims NO pipeline stage can produce a multi-word
+  // display — so the store here is populated through the REAL ingest
+  // path (IngestPipeline.processText: segment → shape gate → admission
+  // bands → store), never store.upsert. A SYNTHETIC dictionary
+  // (buildDictBinary) keeps the suite independent of the shipped
+  // artifact's calibration — that is a different gate's concern
+  // (calibration.test.ts). The repeated bigrams ("lwlock guard",
+  // "zendesk ticket") give the store's successor index ingest material
+  // — harmless for ranking (chaining is provider-side) but exactly the
+  // prose shape the P1.M2.T1.S2 chain tests build on with the same
+  // assertWordsOnly helper.
+  let dir: string | undefined;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  it("every result of every queried prefix has a single-word display", async () => {
+    dir = mkdtempSync(join(tmpdir(), "hapax-q-"));
+    // Low quants (10–30) → group 1 (rare-but-attested) under any sane
+    // band constants; the prose's other words miss the dict entirely →
+    // group 0 (rare-by-default). Both admit — which is the point: the
+    // invariant must hold for the whole menu, not a hand-picked word.
+    const dictPath = writeDictFile(join(dir, "d.bin"), [
+      { word: "lwlock", quant: 10 },
+      { word: "zendesk", quant: 10 },
+      { word: "guard", quant: 20 },
+      { word: "ticket", quant: 20 },
+      { word: "check", quant: 30 },
+    ]);
+    const store = new CandidateStore();
+    const pipeline = new IngestPipeline({
+      store,
+      dictionary: loadDictionary(dictPath),
+    });
+    await pipeline.processText(
+      "Please check the lwlock guard before the zendesk ticket closes.",
+      false,
+    );
+    await pipeline.processText(
+      "The lwlock guard failed again; file a zendesk ticket.",
+      true,
+    );
+    expect(store.size, "real ingest must populate the store").toBeGreaterThan(0);
+
+    for (const p of ["", "l", "lw", "z", "t", "g"]) {
+      const matches = rankMatches(store, p);
+      expect(matches.length, `prefix "${p}" must be populated`).toBeGreaterThan(0);
+      assertWordsOnly(matches, `prefix "${p}"`);
+      for (const m of matches) {
+        // The item contract survives the real path too: provenance is
+        // still the session-count string, casing still the stored one.
+        expect(m.description, `prefix "${p}"`).toMatch(/^session x\d+$/);
+      }
+    }
+
+    // Spot-check the fixture words are actually reachable (guards against
+    // a silently empty ingest that would vacuously pass the loop above —
+    // belt-and-suspenders with the store.size check):
+    expect(rankMatches(store, "lw").map((m) => m.key)).toContain("lwlock");
+    expect(rankMatches(store, "zen").map((m) => m.key)).toContain("zendesk");
   });
 });
 

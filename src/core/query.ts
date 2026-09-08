@@ -1,12 +1,15 @@
 /**
  * Query — stage 5 (final stage) of the segment → shapeGate → score →
- * store → query pipeline (PRD §06): synchronous query-time ranking.
- * Prefix-search the store's prefix index, rank by salience, return the
- * top N as RankedMatch items. Runs on EVERY keystroke (the provider,
- * P1.M3.T3.S2, calls this in getSuggestions) and must complete in
- * < 1 ms on a 20k-candidate store (PRD §02 h3.1) — pure computation,
- * no allocation-heavy work: one prefixRange call, one key slice, one
- * get per candidate, one sort of the (typically small) range.
+ * store → query pipeline (PRD §04 h2.26 + §07 h2.44): synchronous
+ * WORDS-ONLY query-time ranking. Prefix-search the store's prefix index,
+ * rank by salience, return the top N as RankedMatch items — every item's
+ * `display` is exactly one word (the one-word invariant: no multi-word
+ * candidates, ever; the only successor behavior is provider-side
+ * chaining). Runs on EVERY keystroke (the provider, P1.M3.T3.S2, calls
+ * this in getSuggestions) and must complete in < 1 ms on a
+ * 20k-candidate store (PRD §02 h3.1) — pure computation, no
+ * allocation-heavy work: one prefixRange call, one key slice, one get
+ * per candidate, one sort of the (typically small) range.
  *
  * Order is compareCandidates's exactly (PRD §04 h2.26): salience desc →
  * shorter key → byte-lex on the lowercase key — so the menu never shows
@@ -20,11 +23,12 @@
  * imports from pi packages (src/core architecture invariant, see
  * types.ts header); zero new dependencies.
  *
- * PHRASES (PRD 002 delta R1): the phrase layer is a REMOVED design —
- * rankMatches is word-only. The only surviving phrase-adjacent behavior
- * is the store's successor index (topSuccessors), which the chain
- * machine (P1.M2.T1.S1) consumes directly; it plays no part in ranking
- * here.
+ * R1 (PRD 002 delta): the former multi-word candidate layer and its
+ * caller-side filter seam were removed together — rankMatches accepts
+ * only `{ limit }` and returns single words only. Successor chaining
+ * (P1.M2.T1.S1, consumed from the provider via the store's successor
+ * index) is the only M2-era query behavior, and it never flows through
+ * this module: future filtering belongs in the provider, not here.
  *
  * INDEX ORDERING INVARIANT (why prefixRange-then-snapshot is the only
  * safe public enumeration path): store.prefixRange(lower) returns
@@ -37,15 +41,11 @@
  * [start, end). Never cache keys or snapshots across rankMatches calls —
  * eviction dirties the index between keystrokes. (A future store
  * accessor like keyAt(i) would be cleaner; out of scope here.)
- *
- * opts.suppress (the former M2 extension seam, anticipated by this
- * module's M1 doc) remains a caller-supplied filter over WORD candidates
- * — it takes a Candidate. Default: nothing suppressed.
  */
 
 import { salience } from "./score.js";
 import type { CandidateStore } from "./store.js";
-import type { Candidate, RankedMatch } from "./types.js";
+import type { RankedMatch } from "./types.js";
 
 /** Max results per query — menu height (PRD §04 h2.26: top 8). Baked,
  *  not config (§08): named constant, no magic 8 inline. */
@@ -56,10 +56,6 @@ export interface RankOptions {
   /** Max results; default 8 (DEFAULT_LIMIT — maxSuggestions / menu
    *  height, PRD §04). limit ≤ 0 → [] (defensive against caller bugs). */
   limit?: number;
-  /** Caller-supplied filter over WORD candidates (the former M2
-   *  extension seam): return true to suppress a word before ranking.
-   *  Default: nothing suppressed. */
-  suppress?: (c: Candidate) => boolean;
 }
 
 /** Total order over the result list — score.ts's
@@ -82,8 +78,8 @@ export function compareRankedMatches(a: RankedMatch, b: RankedMatch): number {
 
 /**
  * Rank the store's candidates whose lowercase key starts with `prefix`
- * into the top-N result (word-only — the phrase layer is a removed
- * design, PRD 002 delta R1).
+ * into the top-N result (words-only — the one-word invariant of
+ * PRD §04 h2.26 + §07 h2.44: every returned display is a single word).
  *
  * Accepts any prefix casing — it is lowercased BEFORE prefixRange, since
  * prefixRange deliberately throws RangeError on non-lowercase input
@@ -95,7 +91,7 @@ export function compareRankedMatches(a: RankedMatch, b: RankedMatch): number {
  *
  * @param store the session candidate store (accepted, never constructed)
  * @param prefix the user's fragment so far, any casing
- * @param opts limit + optional word-only suppress hook
+ * @param opts `{ limit }` only (default 8)
  * @returns the ranked top-N; [] when nothing matches (provider delegates)
  */
 export function rankMatches(
@@ -115,7 +111,7 @@ export function rankMatches(
   const matches: RankedMatch[] = [];
   for (const k of keys) {
     const c = store.get(k); // undefined if evicted since the rebuild — skip
-    if (!c || (opts.suppress && opts.suppress(c))) continue; // word-only seam
+    if (!c) continue;
     matches.push({
       key: c.key,
       display: c.display, // insertion casing exactly as stored (h2.27)
