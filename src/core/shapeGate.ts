@@ -409,7 +409,7 @@ function hasHighEntropySecretRun(display: string): boolean {
  *  masked-out tail residue that could still tokenize into a candidate
  *  (probe-validated: a 40-char ghp_ core leaked its last 4 chars). Rules
  *  are prefix-anchored, so the only cost is over-masking — accepted, per
- *  the bare-40 catch-all rationale below.
+ *  the bare-run (BARE_RUN_MIN = 32) catch-all rationale below.
  *  5. Slack tokens — xox[baprs]-{10–13}-{10–13} plus hyphenated trailing
  *     segments; the `(?:-[a-zA-Z0-9]+)*` tail is REQUIRED: the 24-char
  *     secret follows a THIRD hyphen, which a plain [a-zA-Z0-9]* trailing
@@ -424,11 +424,36 @@ function hasHighEntropySecretRun(display: string): boolean {
  *  8. JWT strict — ey…≥17.ey…≥17.sig≥10 (optionally =-padded)
  *  9. JWT loose three-segment — eyJ… for headers the strict second-`ey`
  *     shape misses; empty third segment allowed so a two-dot fragment masks
- * 10. AWS secret bare run — ANY run of 40+ [0-9a-zA-Z/+] chars, greedy
- *     catch-all, LAST (open-ended so over-long runs mask fully). Over-
+ * 10. AWS secret bare run — ANY run of ≥ BARE_RUN_MIN (32) [0-9a-zA-Z/+]
+ *     chars, greedy catch-all, LAST (open-ended so over-long runs mask
+ *     fully). The floor sits at 32: safely below the 38-char classic AWS
+ *     secret access key (the BUG-003 h3.2 leak — its slash-free form
+ *     slipped under the old bare-40 floor and its camelCase fragments
+ *     reached expandCandidates) and safely above anything prose-shaped
+ *     (longest English words ~28–30; URLs break runs on ':'/'.'). Over-
  *     masking is accepted: such runs are never legitimate completion
  *     vocabulary (fixture-vocabulary FP test pins this).
  */
+/** Min length of the raw-text bare alnum run the greedy catch-all (rule
+ *  10) masks. 32 sits safely BELOW the 38-char classic AWS secret access
+ *  key (the BUG-003 h3.2 leak class: at the old floor of 40 the slash-free
+ *  form slipped past and its camelCase sub-word fragments survived every
+ *  token-level gate) and safely ABOVE anything prose-shaped — the longest
+ *  unbroken English words are ~28–30 chars, and URLs break runs on
+ *  ':'/'.'/'?' anyway. 32+ pure-hex runs are private-key-shaped by intent
+ *  (the token-level pure-hex rule rejects ≥ 20 at the gate; masking here
+ *  only prevents candidate generation). Baked per PRD §08 — no config
+ *  surface. */
+const BARE_RUN_MIN = 32;
+/** The catch-all run regex, precompiled ONCE at module scope — a regex
+ *  literal cannot embed the constant. String.replace resets /g lastIndex,
+ *  so the module-scope singleton preserves the no-shared-mutable-state
+ *  and precompiled-regex perf profile. */
+const BARE_ALNUM_RUN_RE = new RegExp(
+  `[0-9a-zA-Z/+]{${BARE_RUN_MIN},}`,
+  "g",
+);
+
 const SECRET_WINDOW_RES: readonly RegExp[] = [
   /(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16,}/g,
   /ghp_[A-Za-z0-9]{36,}/g,
@@ -439,7 +464,7 @@ const SECRET_WINDOW_RES: readonly RegExp[] = [
   /sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}/g,
   /ey[a-zA-Z0-9]{17,}\.ey[a-zA-Z0-9/_-]{17,}\.(?:[a-zA-Z0-9/_-]{10,}={0,2})?/g,
   /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g,
-  /[0-9a-zA-Z/+]{40,}/g, // AWS secret bare run — greedy catch-all, LAST
+  BARE_ALNUM_RUN_RE, // AWS secret bare run — greedy catch-all, LAST; floor BARE_RUN_MIN = 32 (38-char AWS secret class)
 ];
 
 /** Literal necessary-condition anchors for SECRET_WINDOW_RES (index-aligned):
@@ -447,7 +472,7 @@ const SECRET_WINDOW_RES: readonly RegExp[] = [
  *  when `segment.indexOf(anchor)` misses for all of a rule's anchors the
  *  regex pass is provably a no-op and is skipped. This is a pure fast path
  *  (same maskings, same claim order); rules with no usable literal (the
- *  bare 40-char alnum catch-all, index 9) always run. Anchors are
+ *  bare alnum catch-all, BARE_RUN_MIN = 32, index 9) always run. Anchors are
  *  case-sensitive exactly like the regexes themselves. Without the
  *  prefilter, ten full-string regex scans per segment dominated the ingest
  *  profile (2026-09 Issue 4: ~15 ms of an ~175 ms 800 KB ingest); with it,

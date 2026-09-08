@@ -26,7 +26,15 @@ import { loadDictionary } from "../src/core/dictionary.js";
 import { rankMatches } from "../src/core/query.js";
 import { maskSecrets } from "../src/core/shapeGate.js";
 import { CandidateStore } from "../src/core/store.js";
-import { IngestPipeline } from "../src/pi/ingest.js";
+import {
+  extractText,
+  IngestPipeline,
+  type AgentMessage,
+} from "../src/pi/ingest.js";
+import {
+  messageEntriesOf,
+  parseSessionFixture,
+} from "./helpers/session-fixture.js";
 
 // --- BUG-003 probe keys (bug report + deterministic built formats) ----------
 
@@ -178,8 +186,9 @@ describe("maskSecrets — ingest pipeline (BUG-003 end-to-end)", () => {
     const { pipeline, store } = makePipeline();
     await pipeline.processText("zendesk lwlock NREL f3a9c2e zendesk", true);
 
-    // All four admit (dictionary-absent → group 0); the bare-40-char
-    // catch-all did NOT eat any of them.
+    // All four admit (dictionary-absent → group 0); the bare-run catch-all
+    // (BARE_RUN_MIN = 32) did NOT eat any of them — every fixture word is
+    // far below the floor.
     expect(storedKeys(store)).toEqual([
       "f3a9c2e",
       "lwlock",
@@ -192,5 +201,72 @@ describe("maskSecrets — ingest pipeline (BUG-003 end-to-end)", () => {
       rankMatches(store, "nr").map((m) => m.display),
     ).toContain("NREL");
     expect(rankMatches(store, "f3a9").map((m) => m.key)).toContain("f3a9c2e");
+  });
+});
+
+describe("bare-run mask floor 32 (BUG-003 h3.2)", () => {
+  /** The 38-char slash-free form of the classic AWS secret access key —
+   *  the exact BUG-003 h3.2 leak shape (the /-bearing 40-char variant was
+   *  already caught; this one slipped under the old bare-40 floor). */
+  const AWS_SECRET_38 = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY";
+
+  it("fully masks the 38-char slash-free AWS secret in a sentence (length preserved)", () => {
+    expect(AWS_SECRET_38.length).toBe(38); // the leak class this floor targets
+    const out = maskSecrets(`password ${AWS_SECRET_38} trailing`);
+    expect(out.length).toBe(`password ${AWS_SECRET_38} trailing`.length); // same geometry
+    expect(out.startsWith("password ")).toBe(true); // context untouched
+    expect(out.endsWith(" trailing")).toBe(true);
+    expect(out.replace(/ /g, "")).toBe("passwordtrailing"); // key span → spaces only
+  });
+
+  it("pipeline: the 38-char key leaks zero candidates; 'cy' queries nothing (inverted repro)", async () => {
+    const { pipeline, store } = makePipeline();
+    await pipeline.processText(
+      `password ${AWS_SECRET_38} trailing turbine`,
+      true,
+    );
+
+    const keys = storedKeys(store);
+    // No candidate key draws bytes from the masked key (pre-fix the
+    // camelCase split admitted jalr/femik7/mden/cyexamplekey fragments).
+    expect(
+      keys.some((k) => /jalr|femik|mden|cyexample|wjalrxu/.test(k)),
+    ).toBe(false);
+    expect(rankMatches(store, "cy")).toEqual([]); // THE bug-report repro
+    expect(rankMatches(store, "wjal")).toEqual([]);
+    // Positive control: "turbine" (dictionary q=26) still admits — the
+    // sentence was ingested, only the key was blanked.
+    expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbine");
+  });
+
+  it("31-char mixed-alnum run passes through unmasked (boundary below the floor)", () => {
+    const run31 = "a1B2".repeat(7) + "a1B"; // mixed case + digits, exactly 31
+    expect(run31.length).toBe(31);
+    expect(maskSecrets(`x ${run31} y`)).toBe(`x ${run31} y`); // byte-identical
+  });
+
+  it("32-char mixed-alnum run IS masked (the new floor)", () => {
+    const run32 = "a1B2".repeat(8); // mixed case + digits, exactly 32
+    expect(run32.length).toBe(32);
+    expect(maskSecrets(`x ${run32} y`)).toBe(`x ${" ".repeat(32)} y`);
+  });
+
+  it("prose fixture replay: masking is a no-op on every text, so zero candidates are lost", async () => {
+    const entries = parseSessionFixture("test/fixtures/sessions/prose.jsonl");
+    const texts = messageEntriesOf(entries)
+      .map((e) => extractText(e.message as unknown as AgentMessage))
+      .filter((t): t is string => t !== null);
+    expect(texts.length).toBeGreaterThan(0);
+    // Masking-layer identity: no prose text contains a ≥ 32-char unbroken
+    // [0-9a-zA-Z/+] run (longest English words ~28–30; URLs break on
+    // ':'/'.')  — so the lowered floor cannot lose a single legitimate
+    // candidate relative to unmasked ingestion.
+    for (const t of texts) expect(maskSecrets(t)).toBe(t);
+    // End-to-end half: the real pipeline still builds a live store from
+    // the fixture, and nothing store-sized slipped through the mask.
+    const { pipeline, store } = makePipeline();
+    for (const t of texts) await pipeline.processText(t, true);
+    expect(store.size).toBeGreaterThan(0);
+    for (const k of storedKeys(store)) expect(k.length).toBeLessThan(32);
   });
 });

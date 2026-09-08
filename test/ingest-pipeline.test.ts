@@ -268,34 +268,38 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
   it("routes each gate-reject reason to its own stats bucket", async () => {
     const h = makePipeline();
     // tooLong is only reachable via subwords: tokenize caps whole tokens at
-    // 64 chars, but a camelCase sub-word over 32 hits the gate's cap. The
-    // "quartzT…" whole token and its "quartz" sub pass (high entropy, no
-    // runs); the 33-char "T…" sub rejects on length before any other rule.
-    // The whole token is 39 chars — deliberately UNDER maskSecrets' bare
-    // 40-char catch-all (BUG-003 layer 1 blanks ≥40 alnum runs before the
-    // gate), so it still reaches the gate to exercise this bucket.
+    // 64 chars, but a camelCase sub-word over 32 hits the gate's cap — and
+    // a >32-char sub needs a >32-char alnum segment. The 39-char whole
+    // token below was DELIBERATELY under the old bare-40 catch-all so it
+    // reached the gate ("quartz" sub passed, 33-char "T…" sub → tooLong);
+    // BUG-003 h3.2 lowered the catch-all to BARE_RUN_MIN = 32, so
+    // maskSecrets now blanks it BEFORE segmentation — a >32-char alnum
+    // segment can no longer reach the gate at all. tooLong is therefore
+    // pipeline-unreachable (pinned 0 here); its gate-level coverage lives
+    // in test/shapeGate.test.ts.
     h.pipeline.onMessageEnd(
       userMsg(
         "abc " + // 3 chars → tooShort
           "aabbaabb " + // entropy 1.0 < 1.5 → lowEntropy
           "rhythmjs " + // 8-consonant run (y is not a vowel) → consonantRun
           "aaaabcdee " + // 4×'a' run, entropy 2.1 → unigramRun
-          "quartzTabecidofuabecidofuabecidofuaheki", // 33-char sub → tooLong
+          "quartzTabecidofuabecidofuabecidofuaheki", // 39 alnum chars → masked, zero drafts
       ),
     );
     await drainNow(h);
     expect(h.pipeline.getStats().rejectedByGate).toEqual({
       tooShort: 1,
-      tooLong: 1,
+      tooLong: 0, // masked pre-segmentation (BARE_RUN_MIN = 32) — see above
       lowEntropy: 1,
       unigramRun: 1,
       secret: 0,
       consonantRun: 1,
     });
-    // wordsSeen counts only gate-passed drafts: the "quartzT…" whole token
-    // and its "quartz" sub (the four rejects above never count).
-    expect(h.pipeline.getStats().wordsSeen).toBe(2);
-    expect(h.store.size).toBe(2);
+    // wordsSeen counts only gate-passed drafts: the four reachable rejects
+    // above never count, and the 39-char token is masked away entirely
+    // (pre-change it contributed the "quartzT…" whole + "quartz" sub).
+    expect(h.pipeline.getStats().wordsSeen).toBe(0);
+    expect(h.store.size).toBe(0);
   });
 
   it("handler purity: returns undefined and never mutates a frozen message", async () => {
