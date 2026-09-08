@@ -86,10 +86,11 @@ export const EVICT_BATCH = 256;
  *  10,000 keys"). Baked, not config (PRD §08 h2.47). The word store's
  *  cap is INDEPENDENT — bigram eviction never evicts words. */
 const BIGRAM_CAP = 10_000;
-/** Bigram eviction batch: each recordBigramRuns tail pass pops at most
- *  this many victims, so a saturated map drains gradually across calls
- *  instead of stalling one message (the §06 h2.37 "batches of 256"
- *  amortization, batch-bounded form). */
+/** Bigram eviction batch: each eviction ROUND pops at most this many
+ *  victims, pacing heap work; rounds repeat within one recordBigramRuns
+ *  call until the map is within BIGRAM_CAP (same-call cap guarantee,
+ *  BUG-006 fix — the batch is the pacing unit, not a cap on total work;
+ *  the §06 h2.37 "batches of 256" amortization is preserved per round). */
 const BIGRAM_EVICT_BATCH = 256;
 
 /** One bigram's counted state (PRD §06 h2.38): "first second" → this.
@@ -441,9 +442,10 @@ export class CandidateStore {
    *  before the drain) — this method takes no ordinal argument and never
    *  advances the counter. Every window also bumps the successor index
    *  (w1 → w2) on create AND merge — THE consumer that keeps P1.M2
-   *  chaining alive. On overflow the map trims toward BIGRAM_CAP via
-   *  #evictBigramsIfOverCap — once per call, at the tail, never per
-   *  upsert. Bigram writes never touch the word map or the prefix index. */
+   *  chaining alive. On overflow the map drains to BIGRAM_CAP within
+   *  this call via #evictBigramsIfOverCap — once per call, at the tail,
+   *  never per upsert (BUG-006: the cap holds even for a single huge
+   *  message). Bigram writes never touch the word map or the prefix index. */
   recordBigramRuns(runs: readonly string[][]): void {
     const ordinal = this.currentOrdinal();
     for (const run of runs) {
@@ -467,7 +469,7 @@ export class CandidateStore {
         this.#bumpSuccessor(w1, w2); // successor tail (PRD §06 h3.9)
       }
     }
-    this.#evictBigramsIfOverCap(); // bounded map (§06 h2.38) — no-op below cap
+    this.#evictBigramsIfOverCap(); // drains to BIGRAM_CAP within this call (§06 h2.38)
   }
 
   /** Bump-or-insert w2 in w1's successor array, keeping the array sorted
@@ -526,10 +528,10 @@ export class CandidateStore {
    *  therefore pays microseconds per drain instead of a ~10k-entry sort
    *  per message.
    *
-   *  Semantics per pass: pop the lowest-#bigramSortKey victims while the
-   *  map is over BIGRAM_CAP, at most BIGRAM_EVICT_BATCH pops per call —
-   *  the drain is spread across recordBigramRuns calls instead of
-   *  stalling one message. No protection filter: the bigram map has no
+   *  Semantics: rounds of at most BIGRAM_EVICT_BATCH pops repeat until
+   *  the map is within BIGRAM_CAP, within the single recordBigramRuns
+   *  call — the batch is the pacing unit, not a cap on total work
+   *  (BUG-006). No protection filter: the bigram map has no
    *  admission/sticky layer (PRD 002 delta R1), so every entry is
    *  evictable. Stale nodes (entry mutated or evicted since the node was
    *  written) re-push the corrected key or drop out; the heap rebuilds
@@ -540,23 +542,38 @@ export class CandidateStore {
     if (this.#bigrams.size <= BIGRAM_CAP) return;
     let heap = this.#bigramEvictHeap;
     if (heap === null) heap = this.#rebuildBigramHeap();
-    let batch = BIGRAM_EVICT_BATCH;
-    while (this.#bigrams.size > BIGRAM_CAP && batch-- > 0) {
-      const node = heapPop(heap);
-      if (node === undefined) break; // heap exhausted — defensive only
-      const live = this.#bigrams.get(node.key);
-      if (live === undefined) continue; // evicted since — stale node
-      const k = bigramSortKey(live);
-      if (k !== node.k) {
-        // Stale: the entry moved (count/lastSeen changed after this node
-        // was written). Re-index at its CURRENT key and keep popping —
-        // the true lowest-k victims cannot be decided from a stale node.
-        heapPush(heap, { k, key: node.key });
-        continue;
+    // BUG-006 (P1.M3.T2.S1): the cap is a SAME-CALL guarantee. Each round
+    // pops at most BIGRAM_EVICT_BATCH victims — the batch stays the pacing
+    // unit (heap pops amortized, stale nodes re-validated in bounded
+    // chunks) — but rounds repeat until the map is within BIGRAM_CAP.
+    //
+    // Termination: every pop either deletes one live entry, drops a stale
+    // node, or re-pushes a stale node CORRECTED to its live entry's
+    // current key. A node can be stale at most once per mutation of its
+    // entry, and this pass's only map mutation is deletion — so stale
+    // re-pushes are finite (bounded by pre-pass dirt), after which every
+    // round strictly deletes until size ≤ BIGRAM_CAP. The heap cannot run
+    // dry first: re-pushes keep every live entry covered by exactly its
+    // most recent node, so the defensive break below is unreachable.
+    do {
+      let batch = BIGRAM_EVICT_BATCH; // reset per round — the pacing unit
+      while (this.#bigrams.size > BIGRAM_CAP && batch-- > 0) {
+        const node = heapPop(heap);
+        if (node === undefined) break; // heap exhausted — defensive only
+        const live = this.#bigrams.get(node.key);
+        if (live === undefined) continue; // evicted since — stale node
+        const k = bigramSortKey(live);
+        if (k !== node.k) {
+          // Stale: the entry moved (count/lastSeen changed after this node
+          // was written). Re-index at its CURRENT key and keep popping —
+          // the true lowest-k victims cannot be decided from a stale node.
+          heapPush(heap, { k, key: node.key });
+          continue;
+        }
+        this.#bigrams.delete(node.key);
+        this.#dropSuccessorFor(node.key); // successor splice (PRD §06 h3.9)
       }
-      this.#bigrams.delete(node.key);
-      this.#dropSuccessorFor(node.key); // successor splice (PRD §06 h3.9)
-    }
+    } while (this.#bigrams.size > BIGRAM_CAP);
     // Reap stale-node dirt: every mutation-before-pop leaves its old node
     // behind. Keeping the index bounded keeps later passes O(victims).
     if (heap.length > 2 * this.#bigrams.size + 64) {

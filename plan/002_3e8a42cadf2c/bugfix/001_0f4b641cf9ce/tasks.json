@@ -229,7 +229,7 @@
           "type": "Milestone",
           "id": "P1.M3",
           "title": "Segmentation and store hardening (BUG-004, BUG-006)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Close the two minor spec deviations: astral-plane letters immediately before an ASCII run must disqualify the whole run per §04 rule 3, and the bigram map must never sit above its 10,000-key hard cap after any single message.",
           "tasks": [
             {
@@ -260,14 +260,14 @@
               "type": "Task",
               "id": "P1.M3.T2",
               "title": "Drain the bigram map to within cap in the same recordBigramRuns call (BUG-006)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "#evictBigramsIfOverCap pops at most BIGRAM_EVICT_BATCH=256 victims per recordBigramRuns call (once per message), so one message with >10,256 distinct bigrams leaves the map over the documented 10,000-key hard cap indefinitely.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T2.S1",
                   "title": "Loop the batched eviction until the map is within BIGRAM_CAP",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — src/core/store.ts: BIGRAM_CAP=10_000 (:59, not exported), BIGRAM_EVICT_BATCH=256 (:66); recordBigramRuns (:452) upserts pairs then calls #evictBigramsIfOverCap() once; that method early-returns when within cap and evicts `while (over cap && batch-- > 0)` using the lazy min-heap #bigramEvictHeap (bigramSortKey = log(count) + lastSeenOrdinal/50, byte-lex tiebreak), re-pushing stale nodes, calling #dropSuccessorFor per evicted key, wholesale heap rebuild when heap.length > 2*size+64. Measured: one 11,000-bigram message left bigramSize at 10,714.\n2. INPUT: recordBigramRuns(runs: readonly string[][]) and #evictBigramsIfOverCap() internals in src/core/store.ts; bigramSize getter; test/bigrams.test.ts cap-test conventions.\n3. LOGIC: Implement PRD §Minor Issue 3 (h3.5) recommendation (code fix, not spec documentation): wrap the 256-pop batch in a do/while (or equivalent) so #evictBigramsIfOverCap returns only when this.#bigrams.size <= BIGRAM_CAP — keep the inner batch constant for heap pacing and stale-node hygiene. TDD in test/bigrams.test.ts: build text of 11,000 distinct rare-pair lines ('v<i>a v<i>b'), one processText through the real pipeline, assert store.bigramSize <= 10_000 IMMEDIATELY (no further messages); assert eviction still uses the standard policy (lowest bigramSortKey first — reuse existing assertions); perf sanity: ingest-time budget for the 11k case stays far under the 3x perf-gate ceiling. Mock: none.\n4. OUTPUT: Cap-guaranteeing eviction in src/core/store.ts consumed by P1.M4.T1.S1 regression.\n5. DOCS: [Mode A] Update the recordBigramRuns/#evictBigramsIfOverCap JSDoc to state the same-call cap guarantee (replacing any batch-bounded wording).",
@@ -293,14 +293,14 @@
               "type": "Task",
               "id": "P1.M4.T1",
               "title": "Full-suite regression and acceptance re-verification",
-              "status": "Researching",
+              "status": "Ready",
               "description": "Run the complete verification gauntlet over the combined changeset and repair any fallout, proving all six fixes coexist: npm test (vitest --run), npm run check (tsc --noEmit), and the §09 acceptance items touched by this bugfix (5 secrets, 6 path/slash/@ stock parity, 7 NREL chaining) with re-measured evidence.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M4.T1.S1",
                   "title": "Run npm test + npm run check; fix cross-fix fallout; re-measure acceptance evidence",
-                  "status": "Researching",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S2",
