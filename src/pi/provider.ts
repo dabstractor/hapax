@@ -528,6 +528,18 @@ export interface DisplayProviderOptions {
  *      "natio" → "discuss NatNational"). In that case the fresh set
  *      paints immediately instead of being parked as pending.
  *
+ *      EXCEPTION (BUG-002) — typing invalidates the anchor too: when the
+ *      fresh result's prefix differs from the displayed set's, the buffer
+ *      moved the anchor (a character typed or deleted), and re-serving
+ *      the displayed set would hand pi its OLD prefix. The same verbatim
+ *      deletion math then destroys typed text ("ze" paints, "zep" typed
+ *      inside the window, Tab on the stale "ze" prefix → "zZendesk",
+ *      the PRD's "zzendesk" corruption). The fresh set paints
+ *      immediately, exactly as for acceptance. Suppression therefore
+ *      only ever re-serves a displayed set whose prefix EQUALS the fresh
+ *      prefix — i.e. same-buffer re-queries (store-driven membership
+ *      changes), never keystrokes that moved the anchor.
+ *
  * Narrowing needs no special case: rule 4 always returns a non-empty set
  * once open, so pi never observes zero-then-nonzero — no close+reopen
  * (rule 3's invariant falls out of "always non-empty"). applyCompletion,
@@ -672,9 +684,36 @@ export function createDisplayProvider(
         return { items: copyOf(displayedItems), prefix: displayedPrefix };
       }
 
-      // 4d. Suppression window: keep what's on screen; remember the new set
-      // (superseding any earlier pending) and schedule its promotion. pi
-      // pulls the promoted set on a later getSuggestions call.
+      // 4d-exception (BUG-002). Prefix-anchor invalidation: the fresh
+      // result's prefix differs from the displayed set's, so the buffer
+      // changed in a way that moved the anchor (narrowing typed a char,
+      // backspace, etc.). Re-serving the displayed set would hand pi its
+      // old prefix; pi's applyCompletion replaces prefix.length characters
+      // before the cursor VERBATIM with no re-verification at Tab time
+      // (pi-tui autocomplete.js applyCompletion: blind
+      // line.slice(0, cursorCol - prefix.length) splice), so a stale
+      // anchor destroys typed text ("zep" typed inside the window + Tab
+      // on the stale "ze" prefix → "zZendesk", the PRD's "zzendesk"
+      // corruption).
+      // HARD INVARIANT: this provider NEVER returns a prefix that is not
+      // the exact suffix of the current line at the cursor. Paint the
+      // fresh set immediately. Suppression may only re-serve a displayed
+      // set whose prefix still equals the fresh prefix (suffix-matches
+      // the buffer — the isHapax check in steps 2–3 guarantees fresh
+      // prefixes are computed from the CURRENT buffer). Do NOT
+      // re-validate against the buffer here: fresh results are
+      // buffer-derived by construction; refusing to re-serve stale ones
+      // is the whole fix.
+      if (result.prefix !== displayedPrefix) {
+        paint(items, result.prefix);
+        return { items: copyOf(displayedItems), prefix: displayedPrefix };
+      }
+
+      // 4d. Suppression window (identical-prefix set changes only — a
+      // moved anchor never reaches this branch, see the 4d-exception):
+      // keep what's on screen; remember the new set (superseding any
+      // earlier pending) and schedule its promotion. pi pulls the
+      // promoted set on a later getSuggestions call.
       pendingSig = sig;
       pendingItems = items;
       pendingPrefix = result.prefix;

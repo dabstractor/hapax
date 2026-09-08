@@ -14,16 +14,29 @@
  * (vitest 4 fakes Date.now with real-epoch start; setSystemTime(0) makes
  * absolute-time assertions readable). Emissions are recorded as value
  * lists (or "<delegate>") and asserted as whole sequences.
+ *
+ * BUG-002 (P1.M4.T1.S1): suppression may only re-serve a displayed set
+ * whose prefix EQUALS the fresh prefix (hard invariant — never return a
+ * prefix that is not the exact suffix of the line at the cursor; pi-tui
+ * deletes prefix.length chars verbatim at Tab). Keystrokes that move the
+ * anchor (cross-prefix narrowing) therefore paint immediately; the
+ * suppression-window tests below use identical-prefix store mutations
+ * (ingest changes membership mid-window) to exercise the debounce.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
+import type {
+  AutocompleteItem,
+  AutocompleteProvider,
+  AutocompleteSuggestions,
+} from "@earendil-works/pi-tui";
 import { CandidateStore } from "../src/core/store.js";
 import type { Sighting } from "../src/core/types.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
 import type { LiveResult } from "../src/pi/provider.js";
 import { createDisplayProvider, createHapaxProvider } from "../src/pi/provider.js";
+import { editorApplyCompletion, prefixIsAnchorSafe } from "./helpers/editor-sim.js";
 
 /** Fresh group-2 sighting at ordinal 1; override any field. */
 const sighting = (over: Partial<Sighting> = {}): Sighting => ({
@@ -70,6 +83,17 @@ const cfg = (over: Partial<HapaxConfig> = {}): HapaxConfig => ({
   ...over,
 });
 
+/** BUG-002 repro store — exactly zendesk (display "Zendesk") ×3 + zephyr ×1.
+ *  'z' alone stays below the 2-char threshold; 'ze' paints both; 'zep'
+ *  live-narrows to zephyr. Ordering via rankMatches: Zendesk (8.70) >
+ *  zephyr (6.70). */
+const reproStore = (): CandidateStore => {
+  const s = new CandidateStore();
+  put(s, "zendesk", 3, 9, { display: "Zendesk" });
+  put(s, "zephyr", 1, 9);
+  return s;
+};
+
 /** Fresh { signal } per call. */
 const opts = (): { signal: AbortSignal } => ({ signal: new AbortController().signal });
 
@@ -101,10 +125,12 @@ const ZE = ["Zendesk", "ZendeskAgent", "zephyr"]; // fragment "ze"
 const ZEND = ["Zendesk", "ZendeskAgent"]; // fragment "zend"
 const ZENDESKA = ["ZendeskAgent"]; // fragment "zendeska" — strict subset of ZEND
 
-/** Harness: S2 base + S3 wrapper + emission log; emit types a trigger query. */
-const harness = (debounceMs?: number) => {
+/** Harness: S2 base + S3 wrapper + emission log; emit types a trigger query.
+ *  The underlying store is returned so tests can mutate membership
+ *  mid-window (identical-prefix suppression scenarios, BUG-002). */
+const harness = (debounceMs?: number, store: CandidateStore = zeStore()) => {
   const current = mockCurrent();
-  const base = createHapaxProvider(zeStore(), cfg(), current);
+  const base = createHapaxProvider(store, cfg(), current);
   const wrapper = createDisplayProvider(
     base,
     debounceMs === undefined ? {} : { debounceMs },
@@ -120,7 +146,7 @@ const harness = (debounceMs?: number) => {
     emissions.push(e);
     return e;
   };
-  return { current, base, wrapper, emissions, emit };
+  return { current, base, wrapper, emissions, emit, store };
 };
 
 beforeEach(() => {
@@ -143,24 +169,25 @@ describe("first paint", () => {
 });
 
 describe("suppression window", () => {
-  it("differing set at +50ms → displayed set held; __hapaxLive already fresh (Tab ungated); swap lands after the window", async () => {
+  it("cross-prefix narrowing at +50ms → paints immediately (anchor-safe, BUG-002); __hapaxLive stays fresh", async () => {
     const { base, emissions, emit } = harness();
 
-    await emit("ze"); // paints at t=0
+    await emit("ze"); // paints at t=0, prefix "#ze"
     vi.advanceTimersByTime(50);
 
-    expect(await emit("zend")).toEqual(ZE); // suppressed → old set held
-    // Tab contract: the live cache reflects the NEWEST query despite suppression.
+    // Typing moved the anchor ("#ze" → "#zend"): re-serving the old set
+    // would hand pi the stale "#ze" prefix, and Tab would delete the wrong
+    // characters (BUG-002). The fresh set paints at once instead.
+    expect(await emit("zend")).toEqual(ZEND);
+    // Tab contract: the live cache reflects the NEWEST query regardless.
     expect(base.__hapaxLive()!.prefix).toBe("#zend");
     expect(base.__hapaxLive()!.matches.map((m) => m.key)).toEqual([
       "zendesk",
       "zendeskagent",
     ]);
 
-    vi.advanceTimersByTime(60); // t=110 ≥ lastPaintAt(0) + 100
-    expect(await emit("zend")).toEqual(ZEND); // window elapsed → painted now
-    expect(vi.getTimerCount()).toBe(0); // immediate paint cleared the stale timer
-    expect(emissions).toEqual([ZE, ZE, ZEND]);
+    expect(emissions).toEqual([ZE, ZEND]);
+    expect(vi.getTimerCount()).toBe(0); // immediate paint, no swap left armed
   });
 
   it("differing set at exactly +100ms → painted immediately (boundary is inclusive)", async () => {
@@ -174,25 +201,35 @@ describe("suppression window", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("identical set refreshes the window — a later differing set stays suppressed", async () => {
-    const { emissions, emit } = harness();
+  it("identical set refreshes the window — a later identical-prefix membership change stays suppressed", async () => {
+    const { store, emissions, emit } = harness();
 
     await emit("ze"); // t=0, lastPaintAt=0
     vi.advanceTimersByTime(60);
     await emit("ze"); // identical sig → repaint, lastPaintAt=60
     vi.advanceTimersByTime(50); // t=110: 110−0 would paint, 110−60 must not
 
-    expect(await emit("zend")).toEqual(ZE); // suppressed by the REFRESHED window
+    // Ingest changes membership mid-window WITHOUT moving the anchor:
+    // same fragment "ze" (same prefix "#ze"), different set → still
+    // suppressed by the REFRESHED window.
+    put(store, "zesty", 2, 9, { display: "Zesty" });
+    expect(await emit("ze")).toEqual(ZE); // suppressed — Zesty not shown yet
 
-    vi.advanceTimersByTime(50); // t=160: 160−60 ≥ 100
-    expect(await emit("zend")).toEqual(ZEND);
-    expect(emissions).toEqual([ZE, ZE, ZE, ZEND]);
+    vi.advanceTimersByTime(60); // t=170: 170−60 ≥ 100 → pending promoted
+    // zeStore membership: Zendesk 9.35 > ZendeskAgent 8.70 > Zesty 7.87 > zephyr 6.70
+    expect(await emit("ze")).toEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]);
+    expect(emissions).toEqual([
+      ZE,
+      ZE,
+      ZE,
+      ["Zendesk", "ZendeskAgent", "Zesty", "zephyr"],
+    ]);
   });
 });
 
 describe("rapid Tab-Tab integrity (acceptance invalidates the anchor)", () => {
   it("applyCompletion since the last paint → the next qualifying result paints immediately, never the stale set", async () => {
-    const { base, wrapper, emissions, emit } = harness();
+    const { base, store, wrapper, emissions, emit } = harness();
 
     await emit("ze"); // t=0 → ZE painted
     vi.advanceTimersByTime(50);
@@ -213,43 +250,51 @@ describe("rapid Tab-Tab integrity (acceptance invalidates the anchor)", () => {
     expect(await emit("zend")).toEqual(ZEND);
     expect(emissions).toEqual([ZE, ZEND]);
 
-    // Normal debounce resumes after the fresh paint.
+    // Normal debounce resumes after the fresh paint — for IDENTICAL-PREFIX
+    // set changes (ingest membership), the only kind suppression may hold
+    // (cross-prefix narrowing paints immediately, BUG-002).
+    put(store, "zendzest", 2, 9, { display: "ZendZest" }); // enters "zend" queries
     vi.advanceTimersByTime(30); // t=80 < lastPaintAt(50) + 100
-    expect(await emit("zendeska")).toEqual(ZEND); // suppressed again
+    expect(await emit("zend")).toEqual(ZEND); // suppressed again — same prefix "#zend"
     expect(emissions).toEqual([ZE, ZEND, ZEND]);
   });
 });
 
 describe("superseded pending", () => {
-  it("superseding keystroke replaces the pending set — only the newest set is ever painted", async () => {
-    const { emissions, emit } = harness();
+  it("superseding identical-prefix membership change replaces the pending set — only the newest set is ever painted", async () => {
+    const { store, emissions, emit } = harness();
 
     await emit("ze"); // t=0 → ZE painted
     vi.advanceTimersByTime(50);
-    await emit("zend"); // t=50 → suppressed, pending=ZEND, timer → t=150
+    put(store, "zesty", 2, 9, { display: "Zesty" });
+    await emit("ze"); // t=50 → same prefix, new set → suppressed, pending=[Ze,Zesty,zephyr]
     vi.advanceTimersByTime(20);
-    await emit("zendeska"); // t=70 → suppressed, pending=ZENDESKA, timer → t=170
+    put(store, "zeta", 2, 9, { display: "Zeta" });
+    await emit("ze"); // t=70 → pending superseded by the newest membership
 
-    vi.advanceTimersByTime(100); // t=170: timer promotes ZENDESKA
-    expect(await emit("zendeska")).toEqual(ZENDESKA); // sig === displayed → held set
+    vi.advanceTimersByTime(100); // t=170: timer promotes the newest membership
+    // zeStore ordering: Zendesk 9.35 > ZendeskAgent 8.70 > Zesty/Zeta 7.87
+    // (tie → byte-lex "zeta" < "zesty") > zephyr 6.70.
+    const newest = ["Zendesk", "ZendeskAgent", "Zeta", "Zesty", "zephyr"];
+    expect(await emit("ze")).toEqual(newest); // sig === displayed → held
 
-    expect(emissions).toEqual([ZE, ZE, ZE, ZENDESKA]); // ZEND never painted
-    expect(emissions).not.toContainEqual(ZEND);
+    expect(emissions).toEqual([ZE, ZE, ZE, newest]);
+    expect(emissions).not.toContainEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]); // set1 never painted
   });
 });
 
 describe("narrowing — no close+reopen", () => {
-  it("narrowing zend→zendeska holds the old set — no <delegate> between non-empty paints", async () => {
+  it("narrowing zend→zendeska paints the fresh set immediately (anchor-safe) — still no <delegate> between paints", async () => {
     const { emissions, emit } = harness();
 
     await emit("zend"); // t=0 → [Zendesk, ZendeskAgent]
-    expect(await emit("zendeska")).toEqual(ZEND); // narrowed set suppressed → old held
+    // Cross-prefix narrowing paints immediately (BUG-002 anchor safety):
+    // holding the old set would re-serve the stale "#zend" prefix.
+    expect(await emit("zendeska")).toEqual(ZENDESKA);
 
-    vi.advanceTimersByTime(100); // pending promotion
-    expect(await emit("zendeska")).toEqual(ZENDESKA); // narrowed set lands
-
-    // No zero/delegate emission ever squeezed between non-empty paints.
-    expect(emissions).toEqual([ZEND, ZEND, ZENDESKA]);
+    // Still no zero/delegate emission squeezed between non-empty paints —
+    // the never-close invariant is untouched by the anchor fix.
+    expect(emissions).toEqual([ZEND, ZENDESKA]);
     expect(emissions).not.toContain("<delegate>");
   });
 });
@@ -345,20 +390,135 @@ describe("pass-through members", () => {
 });
 
 describe("dispose", () => {
-  it("suppressed swap then dispose() → timer count 0; advancing time never promotes the pending set", async () => {
-    const { wrapper, emissions, emit } = harness();
+  it("suppressed identical-prefix swap then dispose() → timer count 0; advancing time never promotes the pending set", async () => {
+    const { store, wrapper, emissions, emit } = harness();
 
     await emit("ze"); // t=0 → ZE painted
     vi.advanceTimersByTime(50);
-    await emit("zend"); // suppressed → pending=ZEND, timer armed
+    put(store, "zesty", 2, 9, { display: "Zesty" }); // membership change, same prefix
+    await emit("ze"); // suppressed → pending=[Ze,Zesty,zephyr], timer armed
     expect(vi.getTimerCount()).toBe(1);
 
     wrapper.dispose();
     expect(vi.getTimerCount()).toBe(0);
 
     vi.advanceTimersByTime(500); // the swap would have fired at t=150
-    expect(await emit("ze")).toEqual(ZE); // ZE again — ZEND never surfaces
-    expect(emissions).toEqual([ZE, ZE, ZE]);
-    expect(emissions).not.toContainEqual(ZEND);
+    expect(vi.getTimerCount()).toBe(0); // cancelled, not deferred
+    // A post-dispose query behaves like a fresh stack — pi is pull-based,
+    // so the pending swap can only ever surface through a query, and the
+    // timer that would have auto-promoted it is gone.
+    expect(await emit("zend")).toEqual(ZEND);
+    expect(emissions).toEqual([ZE, ZE, ZEND]);
+    expect(emissions).not.toContainEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]);
+  });
+});
+
+describe("prefix-anchor invalidation (BUG-002)", () => {
+  /** Threshold-mode typing (the PRD repro: plain chars, no '#' trigger):
+   *  each query sees the WHOLE current line, exactly as pi's editor passes
+   *  it back. Below the 2-char threshold extractMatchState returns null →
+   *  the stack delegates. */
+  const type = async (
+    wrapper: ReturnType<typeof createDisplayProvider>,
+    line: string,
+  ): Promise<AutocompleteSuggestions | null> =>
+    wrapper.getSuggestions([line], 0, line.length, opts());
+
+  it("repro: 'ze' paints {Zendesk,zephyr}; 'zep' inside the window returns prefix 'zep', never 'ze'; Tab never corrupts", async () => {
+    const current = mockCurrent();
+    const base = createHapaxProvider(reproStore(), cfg(), current);
+    const wrapper = createDisplayProvider(base);
+
+    // 'z' — below threshold → null match state → full-stack delegate.
+    expect(await type(wrapper, "z")).toBeNull();
+
+    // 'e' — buffer "ze": first qualifying query → immediate paint of both.
+    const ze = await type(wrapper, "ze");
+    expect(ze!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(ze!.prefix).toBe("ze");
+
+    // 'p' typed 50 ms later, inside the suppression window: the fresh
+    // result narrows to zephyr @prefix "zep". The old code re-served the
+    // displayed set with the STALE "ze" prefix here — the exact
+    // "zzendesk" corruption anchor.
+    vi.advanceTimersByTime(50);
+    const zep = await type(wrapper, "zep");
+    expect(zep!.items.map((i) => i.value)).toEqual(["zephyr"]);
+    expect(zep!.prefix).toBe("zep"); // NEVER "ze"
+    expect(prefixIsAnchorSafe("zep", 3, zep!.prefix)).toBe(true);
+
+    // Tab-apply through pi-tui's REAL deletion math: blind
+    // prefix.length splice. Anchor-safe prefix + matching buffer →
+    // correct completion, no duplicated text.
+    const completed = editorApplyCompletion("zep", 3, zep!.items[0]!.value, zep!.prefix);
+    expect(completed).toBe("zephyr");
+    expect(completed).not.toContain("zzendesk");
+    expect(completed).not.toContain("zZendesk");
+  });
+
+  it("Tab after a pause: immediate paint cleared any pending swap; the anchor stays suffix-safe with no further keystroke", async () => {
+    const current = mockCurrent();
+    const base = createHapaxProvider(reproStore(), cfg(), current);
+    const wrapper = createDisplayProvider(base);
+
+    await type(wrapper, "ze"); // paints {Zendesk, zephyr} @"ze" at t=0
+    vi.advanceTimersByTime(50);
+    const zep = await type(wrapper, "zep"); // immediate paint @"zep" (anchor moved)
+    expect(zep!.prefix).toBe("zep");
+
+    // Pause past the debounce: an immediate paint superseded every timer —
+    // nothing pending, nothing that could re-introduce a stale anchor.
+    vi.advanceTimersByTime(150);
+    expect(vi.getTimerCount()).toBe(0);
+
+    // Tab with NO further keystroke: pi applies the last returned
+    // suggestions. Their prefix is the fresh "zep" — exactly the buffer's
+    // suffix — so the splice replaces only the fragment.
+    const completed = editorApplyCompletion("zep", 3, zep!.items[0]!.value, zep!.prefix);
+    expect(completed).toBe("zephyr");
+  });
+
+  it("Tab after a promoted identical-prefix pending: last response's prefix still matches the unchanged buffer", async () => {
+    const store = reproStore();
+    const current = mockCurrent();
+    const base = createHapaxProvider(store, cfg(), current);
+    const wrapper = createDisplayProvider(base);
+
+    const firstPaint = await type(wrapper, "ze"); // paints @"ze"
+    void firstPaint;
+    vi.advanceTimersByTime(50);
+    put(store, "zesty", 2, 9, { display: "Zesty" }); // membership change only
+    const held = await type(wrapper, "ze"); // identical prefix → suppressed
+    expect(held!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(held!.prefix).toBe("ze"); // anchor-safe: buffer still "ze"
+
+    vi.advanceTimersByTime(100); // pending swap promotes internally
+    // Tab with NO further keystroke: pi applies the last RESPONSE (the
+    // held set). Its prefix matches the unchanged buffer — safe splice.
+    const completed = editorApplyCompletion("ze", 2, held!.items[0]!.value, held!.prefix);
+    expect(completed).toBe("Zendesk");
+  });
+
+  it("suppression preserved: identical prefix + differing set (ingest membership) → displayed set held, swap lands later", async () => {
+    const store = reproStore();
+    const current = mockCurrent();
+    const base = createHapaxProvider(store, cfg(), current);
+    const wrapper = createDisplayProvider(base);
+
+    await type(wrapper, "ze"); // t=0 → {Zendesk, zephyr}@"ze"
+    vi.advanceTimersByTime(50);
+    put(store, "zesty", 2, 9, { display: "Zesty" }); // ingest mid-window
+
+    // Prefix identical ("ze"), set differs → suppression must hold (the
+    // 4d branch below the anchor exception is untouched).
+    const held = await type(wrapper, "ze");
+    expect(held!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(held!.prefix).toBe("ze");
+    expect(vi.getTimerCount()).toBe(1); // swap armed
+
+    vi.advanceTimersByTime(100); // t=150 ≥ 50+100 → promote
+    const landed = await type(wrapper, "ze");
+    expect(landed!.items.map((i) => i.value)).toEqual(["Zendesk", "Zesty", "zephyr"]);
+    expect(landed!.prefix).toBe("ze");
   });
 });

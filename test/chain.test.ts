@@ -393,16 +393,20 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
       expect(first?.items.map((i) => i.value)).toEqual(["beta", "bravo"]);
       expect(first?.prefix).toBe("b");
 
-      // t=50: inside the suppression window → old set stays on screen.
+      // t=50: typing moved the anchor ("b" → "be"), so the display layer
+      // paints the narrowed armed set IMMEDIATELY (BUG-002 anchor safety:
+      // re-serving the old set would hand pi the stale "b" prefix, and
+      // Tab's blind prefix.length splice would corrupt the line).
       vi.advanceTimersByTime(50);
-      const suppressed = await suggest(provider, ["alpha be"], 0, 9);
-      expect(suppressed?.items.map((i) => i.value)).toEqual(["beta", "bravo"]);
-
-      // t=110 ≥ lastPaint(0) + 100 → the narrowed armed set paints.
-      vi.advanceTimersByTime(60);
       const painted = await suggest(provider, ["alpha be"], 0, 9);
       expect(painted?.items.map((i) => i.value)).toEqual(["beta"]);
       expect(painted?.prefix).toBe("be");
+
+      // Identical re-query: same set + same prefix → idempotent repaint.
+      vi.advanceTimersByTime(60);
+      const repainted = await suggest(provider, ["alpha be"], 0, 9);
+      expect(repainted?.items.map((i) => i.value)).toEqual(["beta"]);
+      expect(repainted?.prefix).toBe("be");
     } finally {
       vi.useRealTimers();
     }
