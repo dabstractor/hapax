@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
-import { extractMatchState } from "../src/pi/provider.js";
+import { classifyStockContext, extractMatchState } from "../src/pi/provider.js";
 
 /** Fresh config per call — never mutate DEFAULT_CONFIG. */
 const cfg = (over: Partial<HapaxConfig> = {}): HapaxConfig => ({
@@ -294,5 +294,71 @@ describe("purity contract (S3 debounce / S4 acceptance depend on it)", () => {
       fragment: "ze",
       prefix: "#ze",
     });
+  });
+});
+
+describe("classifyStockContext — stock pi contexts (BUG-001)", () => {
+  it("'/re' line 0 → 'slash'", () => {
+    expect(classifyStockContext(["/re"], 0, 3)).toBe("slash");
+  });
+
+  it("indented '  /re' line 0 → 'slash' (trimStart mirrors editor.js)", () => {
+    expect(classifyStockContext(["  /re"], 0, 5)).toBe("slash");
+  });
+
+  it("'/model arg re' → null (space kills slash)", () => {
+    expect(classifyStockContext(["/model arg re"], 0, 13)).toBe(null);
+  });
+
+  it("'@jo' → 'mention'", () => {
+    expect(classifyStockContext(["@jo"], 0, 3)).toBe("mention");
+  });
+
+  it("'foo @jo' mid-line → 'mention'", () => {
+    expect(classifyStockContext(["foo @jo"], 0, 7)).toBe("mention");
+  });
+
+  it("'x@jo' glued @ → null (not word start)", () => {
+    expect(classifyStockContext(["x@jo"], 0, 4)).toBe(null);
+  });
+
+  it("'\"src/roun' → 'quoted-path' (unclosed quote)", () => {
+    expect(classifyStockContext(["\"src/roun"], 0, 9)).toBe("quoted-path");
+  });
+
+  it("'src/roun' → 'path'", () => {
+    expect(classifyStockContext(["src/roun"], 0, 8)).toBe("path");
+  });
+
+  it("'renewable en' plain prose → null", () => {
+    expect(classifyStockContext(["renewable en"], 0, 12)).toBe(null);
+  });
+
+  it("'#frag' at word start → null (trigger is hapax's)", () => {
+    expect(classifyStockContext(["#frag"], 0, 5)).toBe(null);
+  });
+
+  it("out-of-range line → null", () => {
+    expect(classifyStockContext(["x"], 5, 0)).toBe(null);
+  });
+
+  it("out-of-range col → null", () => {
+    expect(classifyStockContext(["x"], 0, 9)).toBe(null);
+  });
+
+  it("'word' line 1 with slash content on line 0 → null (line-local)", () => {
+    expect(classifyStockContext(["/re", "word"], 1, 4)).toBe(null);
+  });
+
+  it("repeated calls with identical input return identical results (pure)", () => {
+    const first = classifyStockContext(["src/roun"], 0, 8);
+    const second = classifyStockContext(["src/roun"], 0, 8);
+    expect(first).toBe(second);
+  });
+
+  it("the inputs are never mutated — lines array stays untouched", () => {
+    const lines = ["src/roun"];
+    classifyStockContext(lines, 0, 8);
+    expect(lines).toEqual(["src/roun"]);
   });
 });

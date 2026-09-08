@@ -31,6 +31,14 @@
  * rule 1) and maps RankedMatch[] to pi's AutocompleteSuggestions,
  * delegating untouched on abort / null match state / zero candidates so
  * pi's built-in path/slash completion is never hijacked.
+ *
+ * classifyStockContext (below; BUG-001 fix part 1) is the stock-side
+ * mirror of that decision: a pure, synchronous, line-local,
+ * CONFIG-INDEPENDENT classifier that detects when the cursor sits in a
+ * context pi's built-in completion owns (slash command, @-mention,
+ * quoted path, unquoted path), mirroring pi-tui editor.js exactly. A
+ * non-null StockContext means hapax MUST delegate; S2 (P1.M1.T1.S2)
+ * wires it into getSuggestions ahead of extractMatchState.
  */
 
 import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
@@ -92,6 +100,57 @@ export function extractMatchState(
 
   // DELEGATE: neither mode matched — S2 must return
   // current.getSuggestions(...) unchanged.
+  return null;
+}
+
+/** A cursor context owned by pi's built-in completion. Non-null means
+ *  hapax MUST delegate (getSuggestions passes through to `current`). */
+export type StockContext = "slash" | "mention" | "quoted-path" | "path";
+
+/**
+ * Classify whether the cursor sits in a stock pi completion context
+ * (BUG-001 fix, part 1). Pure, synchronous, line-local (only the text
+ * before the cursor on the cursor's line is inspected) and
+ * config-independent — stock contexts belong to pi, not to hapax's
+ * HapaxConfig. Priority: slash → mention → quoted-path → path; null
+ * means the context is hapax's (or nobody's). Mirrors pi-tui's
+ * editor.js semantics exactly (§09 integration item 6: "path/slash/@
+ * behaviors identical to stock pi"). Out-of-range line/col return
+ * null defensively, same convention as extractMatchState.
+ */
+export function classifyStockContext(
+  lines: string[],
+  cursorLine: number,
+  cursorCol: number,
+): StockContext | null {
+  if (cursorLine < 0 || cursorLine >= lines.length) return null;
+  const text = lines[cursorLine];
+  if (cursorCol < 0 || cursorCol > text.length) return null;
+  const before = text.slice(0, cursorCol);
+  const trimmed = before.trimStart();
+
+  // slash — mirrors pi-tui editor.js isInSlashCommandContext (:1775:
+  // line 0 only, leading whitespace allowed via trimStart) PLUS
+  // handleTabCompletion's no-space guard (:1812): once a space is
+  // typed, args/word fragments are no longer the command name. Both
+  // clauses are required or delegation diverges from stock.
+  if (cursorLine === 0 && trimmed.startsWith("/") && !trimmed.includes(" ")) {
+    return "slash";
+  }
+  // mention — trailing identifier fragment immediately after '@' at a
+  // word start (line start or after whitespace/tab).
+  if (/(?:^|[ \t])@[A-Za-z][A-Za-z0-9_-]*$/.test(before)) return "mention";
+  // quoted-path — an unclosed '"' on the cursor line (odd count).
+  // Stock applyCompletion treats '"' and '@"' prefixes specially.
+  if ((before.match(/"/g) ?? []).length % 2 === 1) return "quoted-path";
+  // path — a '/' earlier in `before` whose tail (the cursor-adjacent
+  // fragment) is whitespace-free ("src/roun" → "roun" after '/').
+  // Prose URLs ("https://…/roun") also classify as path — accepted:
+  // stock file completion is consulted for them too.
+  const lastSlash = before.lastIndexOf("/");
+  if (lastSlash !== -1 && !/\s/.test(before.slice(lastSlash + 1))) {
+    return "path";
+  }
   return null;
 }
 
