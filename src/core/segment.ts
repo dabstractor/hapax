@@ -92,16 +92,31 @@ const ASCII_LETTER_RE = /[A-Za-z]/;
  * disqualifies the whole candidate run (rule 3, R2). ASCII letters are
  * excluded: a maximal-class base match cannot abut one, EXCEPT at the 64-char
  * cap split ("zz…z" × 70 → 64 + 6), where both segments must keep their
- * historical behavior. `undefined` (string edge) → false. Limitation: an
- * astral letter (surrogate pair) immediately BEFORE a match is seen via
- * codePointAt() as its lone low surrogate, which is not \p{L}, so such runs
- * slip through; the AFTER side is code-point-correct because codePointAt() at
- * a high surrogate returns the full pair. Accepted v1 trade-off.
+ * historical behavior. `undefined` (string edge) → false. The BEFORE side
+ * resolves astral (surrogate-pair) letters code-point-correctly via
+ * `isUniLetterBefore`; the AFTER side needs no help because codePointAt() at
+ * a high surrogate already returns the full pair.
  */
 function isUniLetter(cp: number | undefined): boolean {
   if (cp === undefined) return false;
   const ch = String.fromCodePoint(cp);
   return UNI_LETTER_RE.test(ch) && !ASCII_LETTER_RE.test(ch);
+}
+
+/**
+ * Rule 3 before-side check, code-point-correct: when the code unit at
+ * index-1 is a low surrogate (0xDC00–0xDFFF), the guard position holds
+ * the SECOND half of an astral letter — back up one more unit so
+ * codePointAt() resolves the full surrogate pair (codePointAt at a HIGH
+ * surrogate already returns the pair; that is why the after-side checks
+ * never needed this). String edges resolve to undefined/NaN → false.
+ */
+function isUniLetterBefore(text: string, index: number): boolean {
+  const cu = text.charCodeAt(index - 1); // NaN at index 0 → falls through
+  if (cu >= 0xdc00 && cu <= 0xdfff) {
+    return isUniLetter(text.codePointAt(index - 2));
+  }
+  return isUniLetter(text.codePointAt(index - 1));
 }
 
 /** Internal token with span + liveness for dedupe/merge bookkeeping. */
@@ -143,7 +158,7 @@ export function tokenize(text: string): RawToken[] {
       // initial hexish overlaps must not resurrect it. The merge drops dead
       // tokens, so nothing is emitted.
       const dead =
-        isUniLetter(text.codePointAt(m.index - 1)) ||
+        isUniLetterBefore(text, m.index) ||
         isUniLetter(text.codePointAt(m.index + m[0].length));
       bases.push({
         raw: m[0],
@@ -173,10 +188,7 @@ export function tokenize(text: string): RawToken[] {
     // is not pushed. Advancing k here is safe: bases passed over either end
     // before `start` or lie fully inside this span, so no later match can
     // interact with them.
-    if (
-      isUniLetter(text.codePointAt(start - 1)) ||
-      isUniLetter(text.codePointAt(end))
-    ) {
+    if (isUniLetterBefore(text, start) || isUniLetter(text.codePointAt(end))) {
       while (k < bases.length && bases[k].start < end) {
         if (bases[k].end <= end) bases[k].dead = true;
         k++;

@@ -229,21 +229,21 @@
           "type": "Milestone",
           "id": "P1.M3",
           "title": "Segmentation and store hardening (BUG-004, BUG-006)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Close the two minor spec deviations: astral-plane letters immediately before an ASCII run must disqualify the whole run per §04 rule 3, and the bigram map must never sit above its 10,000-key hard cap after any single message.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M3.T1",
               "title": "Code-point-correct Unicode boundary guard in tokenize (BUG-004)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "isUniLetter reads codePointAt one code unit at a time, so an astral (surrogate-pair) letter immediately BEFORE a match is seen as its lone low surrogate and the run slips through: tokenize('𝔘sword') -> ['sword'] while §04 rule 3 requires nothing.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T1.S1",
                   "title": "Fix the before-side boundary check to step by full code points at both guard sites",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — isUniLetter (src/core/segment.ts:78-83) takes a code point; guard sites at :130-131 (base pass) and :152-155 (hexish pass) call isUniLetter(text.codePointAt(m.index - 1)). For an astral letter before a match, codePointAt at that offset returns the lone LOW surrogate (0xDC00-0xDFFF), which is not \\p{L}. The AFTER side is already correct (codePointAt at a high surrogate returns the full pair). The function's own JSDoc documents this as an 'Accepted v1 trade-off' — the PRD demotes it to a spec deviation.\n2. INPUT: tokenize(text) in src/core/segment.ts; UNI_LETTER_RE (/\\p{L}/u) and ASCII_LETTER_RE constants; RawToken output shape.\n3. LOGIC: Implement PRD §Minor Issue 1 (h3.3): add a helper (e.g. isUniLetterBefore(text, index)) that, when the code unit at index-1 is a low surrogate, backs up one more unit and tests the combined code point; use it at BOTH before-side guard sites (base and hexish passes); keep the after-side logic unchanged. TDD in test/segment.test.ts: tokenize('𝔘sword') -> []; tokenize('sword𝔘') -> [] (regression, already passing); 'ΩbsidianMirror' -> []; 'Þórhildur' -> []; BMP 'é' adjacency both sides still disqualifies; an astral letter between two ASCII runs kills both; hexish variant with astral prefix. Remove the 'Accepted v1 trade-off' JSDoc limitation note. Mock: none (pure function).\n4. OUTPUT: Correct tokenize() in src/core/segment.ts; consumed by P1.M4.T1.S1 regression and the final docs task (README known-limitations sweep).\n5. DOCS: [Mode A] Replace the isUniLetter/tokenize JSDoc trade-off note with the code-point-correct behavior description (the README 'Known limitations' mention is swept by P1.M4.T2.S1).",
@@ -260,14 +260,14 @@
               "type": "Task",
               "id": "P1.M3.T2",
               "title": "Drain the bigram map to within cap in the same recordBigramRuns call (BUG-006)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "#evictBigramsIfOverCap pops at most BIGRAM_EVICT_BATCH=256 victims per recordBigramRuns call (once per message), so one message with >10,256 distinct bigrams leaves the map over the documented 10,000-key hard cap indefinitely.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T2.S1",
                   "title": "Loop the batched eviction until the map is within BIGRAM_CAP",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — src/core/store.ts: BIGRAM_CAP=10_000 (:59, not exported), BIGRAM_EVICT_BATCH=256 (:66); recordBigramRuns (:452) upserts pairs then calls #evictBigramsIfOverCap() once; that method early-returns when within cap and evicts `while (over cap && batch-- > 0)` using the lazy min-heap #bigramEvictHeap (bigramSortKey = log(count) + lastSeenOrdinal/50, byte-lex tiebreak), re-pushing stale nodes, calling #dropSuccessorFor per evicted key, wholesale heap rebuild when heap.length > 2*size+64. Measured: one 11,000-bigram message left bigramSize at 10,714.\n2. INPUT: recordBigramRuns(runs: readonly string[][]) and #evictBigramsIfOverCap() internals in src/core/store.ts; bigramSize getter; test/bigrams.test.ts cap-test conventions.\n3. LOGIC: Implement PRD §Minor Issue 3 (h3.5) recommendation (code fix, not spec documentation): wrap the 256-pop batch in a do/while (or equivalent) so #evictBigramsIfOverCap returns only when this.#bigrams.size <= BIGRAM_CAP — keep the inner batch constant for heap pacing and stale-node hygiene. TDD in test/bigrams.test.ts: build text of 11,000 distinct rare-pair lines ('v<i>a v<i>b'), one processText through the real pipeline, assert store.bigramSize <= 10_000 IMMEDIATELY (no further messages); assert eviction still uses the standard policy (lowest bigramSortKey first — reuse existing assertions); perf sanity: ingest-time budget for the 11k case stays far under the 3x perf-gate ceiling. Mock: none.\n4. OUTPUT: Cap-guaranteeing eviction in src/core/store.ts consumed by P1.M4.T1.S1 regression.\n5. DOCS: [Mode A] Update the recordBigramRuns/#evictBigramsIfOverCap JSDoc to state the same-call cap guarantee (replacing any batch-bounded wording).",
@@ -293,14 +293,14 @@
               "type": "Task",
               "id": "P1.M4.T1",
               "title": "Full-suite regression and acceptance re-verification",
-              "status": "Planned",
+              "status": "Researching",
               "description": "Run the complete verification gauntlet over the combined changeset and repair any fallout, proving all six fixes coexist: npm test (vitest --run), npm run check (tsc --noEmit), and the §09 acceptance items touched by this bugfix (5 secrets, 6 path/slash/@ stock parity, 7 NREL chaining) with re-measured evidence.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M4.T1.S1",
                   "title": "Run npm test + npm run check; fix cross-fix fallout; re-measure acceptance evidence",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S2",

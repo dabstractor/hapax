@@ -162,6 +162,45 @@ describe("tokenize — CJK and non-ASCII (PRD §04 rule 3)", () => {
   });
 });
 
+describe("astral before-side boundary guard (BUG-004)", () => {
+  // 𝔘 = U+1D518 (mathematical Fraktur U) — ONE code point, TWO UTF-16
+  // units. codePointAt() over its trailing (low) surrogate returns the
+  // lone surrogate, which is not \p{L}; the before-side guard must back
+  // up one extra code unit to resolve the full pair. The after side was
+  // always correct (codePointAt at a HIGH surrogate returns the pair).
+  it("an astral letter immediately BEFORE a run disqualifies it (the bug)", () => {
+    expect(raws(tokenize("𝔘sword"))).toEqual([]);
+  });
+
+  it("an astral letter immediately AFTER a run disqualifies it (pin the correct side)", () => {
+    expect(raws(tokenize("sword𝔘"))).toEqual([]);
+  });
+
+  it("BMP letters on either side stay disqualified (pin)", () => {
+    expect(raws(tokenize("ΩbsidianMirror"))).toEqual([]);
+    expect(raws(tokenize("Þórhildur"))).toEqual([]);
+    expect(raws(tokenize("éabc"))).toEqual([]);
+    expect(raws(tokenize("abcé"))).toEqual([]);
+  });
+
+  it("an astral letter between two runs kills both", () => {
+    expect(raws(tokenize("aa𝔘bb"))).toEqual([]);
+  });
+
+  it("hexish span with an astral prefix yields nothing AND leaks no base tail", () => {
+    expect(tokenize("𝔘0f3a9c2")).toEqual([]);
+    expect(raws(tokenize("𝔘0f3a9c2"))).not.toContain("f3a9c2");
+  });
+
+  it("hexish span with an astral suffix stays disqualified (pin)", () => {
+    expect(tokenize("0f3a9c2𝔘")).toEqual([]);
+  });
+
+  it("non-adjacent astral letters do not affect runs (offsets stay UTF-16-correct)", () => {
+    expect(raws(tokenize("𝔘 sword"))).toEqual(["sword"]);
+  });
+});
+
 describe("tokenize — ordering and bounds invariants", () => {
   it("interleaves hexish tokens in textual position (document order)", () => {
     expect(strip(tokenize("aa 0f3a9c2 bb"))).toEqual([
