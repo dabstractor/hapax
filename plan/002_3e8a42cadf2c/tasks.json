@@ -283,7 +283,7 @@
           "type": "Milestone",
           "id": "P1.M3",
           "title": "Config surface & debug command (R5)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Rename the gating key to enableChaining (enablePhrases accepted as a deprecated alias, enableChaining wins), re-point every gate read, and make /acwords successor-only with a standalone successor-index sample.",
           "tasks": [
             {
@@ -334,14 +334,14 @@
               "type": "Task",
               "id": "P1.M3.T2",
               "title": "/acwords successor-only dump (R5)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Drop the phrase section entirely (landed in M1) and add a standalone successor-index sample; keep store size, top-50 by salience, rank-group histogram, gate rejection counts.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T2.S1",
                   "title": "debug.ts successor-index sample section + debug.test.ts update",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S3",

@@ -188,6 +188,95 @@ describe("acwords dump (PRD §08)", () => {
     expect(emptyDump).toContain(`size: 0 / ${STORE_CAP}`);
     expect(topRows(emptyDump)).toHaveLength(0);
   });
+
+  describe("successor index sample (PRD §08 h2.48, P1.M3.T2.S1)", () => {
+    /** The full successor-sample section (header + rows), cut at the
+     *  blank line that follows it (or EOF — it is the last section). */
+    function successorSection(dump: string): string[] {
+      const lines = dump.split("\n");
+      const start = lines.indexOf("successor index sample");
+      if (start === -1) return [];
+      const rest = lines.slice(start + 1);
+      const end = rest.findIndex((l) => l.trim() === "");
+      return [lines[start]!, ...rest.slice(0, end === -1 ? undefined : end)];
+    }
+
+    it("renders 'word → next ×N' rows for high-salience words with successors", () => {
+      const store = new CandidateStore();
+      const ord = store.nextOrdinal(); // one recency for all → byte-lex ties
+      see(store, "national", "national", { ordinal: ord });
+      see(store, "zendesk", "zendesk", { ordinal: ord });
+      see(store, "lonely", "lonely", { ordinal: ord }); // no successors
+      // Direct runs (successors.test.ts store-direct style): the store
+      // takes the admitted lowercase keys on faith. Counts 4 vs 1 and
+      // 2 vs nothing make the top-3 order (count-desc) unambiguous.
+      store.recordBigramRuns([
+        ["national", "renewable"],
+        ["national", "renewable"],
+        ["national", "renewable"],
+        ["national", "renewable"],
+      ]);
+      store.recordBigramRuns([["national", "license"]]);
+      store.recordBigramRuns([
+        ["zendesk", "suite"],
+        ["zendesk", "suite"],
+      ]);
+
+      // "lonely" is filtered out entirely — no "(no successors)" noise.
+      expect(successorSection(formatAcwordsDump(store, fakeStats))).toEqual([
+        "successor index sample",
+        "  national → renewable ×4, license ×1",
+        "  zendesk → suite ×2",
+      ]);
+    });
+
+    it("renders exactly one (none) line for an empty index — no throw", () => {
+      // Empty store: nothing sampled.
+      const empty = new CandidateStore();
+      expect(successorSection(formatAcwordsDump(empty, fakeStats))).toEqual([
+        "successor index sample",
+        "  (none)",
+      ]);
+
+      // Words stored but the index never fed — the enableChaining:false
+      // wiring (P1.M3.T1.S2 never calls recordBigramRuns). Same rendering.
+      const store = new CandidateStore();
+      const ord = store.nextOrdinal();
+      see(store, "quiet", "quiet", { ordinal: ord });
+      see(store, "words", "words", { ordinal: ord });
+      expect(successorSection(formatAcwordsDump(store, fakeStats))).toEqual([
+        "successor index sample",
+        "  (none)",
+      ]);
+    });
+
+    it("no phrase section anywhere in the dump (PRD 002 delta R1 holds)", () => {
+      const store = new CandidateStore();
+      const ord = store.nextOrdinal();
+      see(store, "national", "national", { ordinal: ord });
+      store.recordBigramRuns([["national", "renewable"]]);
+      const dump = formatAcwordsDump(store, fakeStats);
+      // Simplest total guard: the phrase layer is deleted — no section
+      // marker, key, or label may ever reappear in the dump text.
+      expect(dump.toLowerCase()).not.toContain("phrase");
+    });
+
+    it("sample caps at 10 rows even when more words have successors", () => {
+      const store = new CandidateStore();
+      const ord = store.nextOrdinal(); // all ties → pure byte order
+      for (let i = 0; i < 12; i++) {
+        const key = `s${String(i).padStart(2, "0")}`;
+        see(store, key, key, { ordinal: ord });
+        store.recordBigramRuns([[key, `next${String(i).padStart(2, "0")}`]]);
+      }
+      const section = successorSection(formatAcwordsDump(store, fakeStats));
+      expect(section).toHaveLength(11); // header + SUCCESSOR_SAMPLE_N rows
+      expect(section[1]).toContain("s00");
+      expect(section[10]).toContain("s09"); // first 10 in salience order
+      expect(section.some((l) => l.includes("s10"))).toBe(false);
+      expect(section.some((l) => l.includes("s11"))).toBe(false);
+    });
+  });
 });
 
 /** True when some top row mentions the given text. */
