@@ -10,7 +10,9 @@ menu.
 
 **Status: M2 (v2) — complete, verified 2026-09-07; P1 stabilization sweep
 (adversarial-probe regression fixes) verified 2026-09-07; documentation
-swept to the successor-chaining design (R6) 2026-09-08.** The M1
+swept to the successor-chaining design (R6) 2026-09-08 and to the
+bugfix-001 fixes (stock-context delegation, proper-noun relief, secret
+hardening, Unicode boundaries, bigram-cap drain) 2026-09-08.** The M1
 definition-of-done gauntlet — every gate, command, and measured number — is
 recorded in [`docs/M1-DoD.md`](docs/M1-DoD.md), together with its "M2
 Definition of Done" post-delta re-verification (zero-typed-char chain
@@ -27,6 +29,21 @@ scripted zero-typing chain proof is the item-7 section of
 - **Threshold matching from N typed characters**, anywhere a word starts
   (default 2, configurable 1–3) — no position gating, no special mode
   (`src/pi/provider.ts`).
+- **Stock contexts are never preempted** — slash-command lines (`/re`),
+  `@` mentions, and fragments inside quoted paths delegate verbatim to
+  pi's own completion (`classifyStockContext` in `src/pi/provider.ts`,
+  priority slash → mention → quoted-path → path): hapax answers nothing
+  there, and Tab in those contexts behaves exactly as stock pi — it
+  never opens the hapax menu (`test/provider-match.test.ts`).
+- **Proper-noun relief in the commonness gate** — a Capitalized word in
+  the mid-frequency band admits as a proper-noun candidate even where the
+  dictionary marks it common (relief ceiling 95,
+  `PROPER_NOUN_ADMIT_CEILING` in `src/core/score.ts`); lowercase common
+  words still reject, so ordinary prose never opens a menu. Visible
+  consequence: `National`-class proper nouns complete and chain — the
+  NREL walk at zero typed chars is integration item 7 (PASS,
+  `docs/M1-DoD.md`; chain-after-restore probe in
+  `test/adversarial-typing.test.ts`).
 - **Session salience ranking** — recency, repetition, and a sticky
   user-typed boost decide what reaches the menu and in what order
   (`src/core/score.ts`).
@@ -38,25 +55,37 @@ scripted zero-typing chain proof is the item-7 section of
   `IngestPipeline.#admitSegment`) blanks structured keys in the segment
   before tokenization: AWS access/secret keys, Slack `xoxb-…`, GitHub
   `ghp_`/`github_pat_`, Google `AIza…`, OpenAI `sk-…`/`sk-proj-…`, and
-  dotted JWTs. Layer 2 (token-level residue rules) catches fragments that
-  reach the gate anyway: known key prefixes, base64url runs ≥ 16 (mixed
-  case + digits), and charset-relative entropy floors on long base64/hex
-  runs. Masked keys yield zero candidates; ordinary prose passes through
-  byte-identical. Pinned by `test/mask-secrets.test.ts` and the
-  realistic-key probes in `test/adversarial-ingest.test.ts`.
+  dotted JWTs; a bare run of ≥ 32 key-material characters (mixed
+  alphanumeric, `+`, and `/` — the 38-char AWS-style secret class) is
+  masked whole via the `BARE_RUN_MIN = 32` catch-all. Layer 2
+  (token-level residue rules)
+  catches fragments that reach the gate anyway: known key prefixes,
+  base64url runs ≥ 16 (mixed case + digits), and charset-relative entropy
+  floors on long base64/hex runs. Whole-token secret rejection also
+  propagates to the token's camelCase/snake_case sub-word fragments
+  (ingest memo poisoning — poisoned drafts skip admission), so
+  `CYEXAMPLEKEY`-style fragments never store. Masked keys yield zero
+  candidates; ordinary prose passes through byte-identical. Pinned by
+  `test/mask-secrets.test.ts` and the synthetic-token paste battery
+  (npm/glpat/sk_live/Bearer shapes) in `test/adversarial-ingest.test.ts`
+  (integration item 5, PASS in `docs/M1-DoD.md`).
 - **Zero persistence, zero telemetry, zero network** — everything lives in
   RAM and dies at `session_shutdown` (`src/pi/index.ts`).
 - **Chained Tab completion — zero additional typing, one word per Tab**
   (`src/pi/provider.ts`) — a top-3 successor index is built at ingest from
   strict-adjacency bigrams captured from raw text (`recordBigramRuns`,
-  `src/core/store.ts`). Accepting a word via Tab arms its most-likely
+  `src/core/store.ts`; the 10,000-key bigram cap drains to ≤ cap within
+  the same `recordBigramRuns` call — looped 256-batch eviction — so no
+  transient overshoot survives a message). Accepting a word via Tab arms its most-likely
   successor: at the next word start the successor is already the top
   result with ZERO typed characters — Tab inserts ONE word and re-arms, so
   `Acme` → `Zephyr` → `Noria` → `Inverter` walks with nothing
   typed between accepts. Inserted chain words use the candidate's display
   casing (most-recent-casing-wins), exactly like word completions. Typed characters filter the live successor list
   normally. Chaining resets on `before_agent_start` (each new user turn)
-  and on disqualifying input, and arms normally in resumed sessions —
+  and on disqualifying input — including the trigger char, which resets
+  the chain to idle and honors trigger mode with the `#frag` prefix —
+  and arms normally in resumed sessions —
   chain-after-restore probe in `test/adversarial-typing.test.ts` (machine:
   `test/chain.test.ts`; gating: `test/chaining-gating.test.ts`; index:
   `test/successors.test.ts`).
@@ -100,13 +129,17 @@ Accepting a word arms its most-likely successor (`src/pi/provider.ts`):
 at the very next word start the armed successor is offered as the top
 result with nothing typed, each Tab inserts one word and re-arms, and
 typed characters filter the live successor list normally. The chain resets
-on `before_agent_start` (each new user turn) and on disqualifying input,
-and arms normally in resumed sessions — the walk above is reachable after
-a history replay (regression-pinned in `test/adversarial-typing.test.ts`).
+on `before_agent_start` (each new user turn) and on disqualifying input —
+typing the trigger char mid-chain resets to idle and honors trigger mode
+with the `#frag` prefix — and arms normally in resumed sessions: the walk
+above is reachable after a history replay (regression-pinned in
+`test/adversarial-typing.test.ts`).
 
 Ordinary prose: typing is identical to stock pi — no key is captured, no
 menu appears for common words, and Tab with no selection inserts a literal
-Tab. The menu is strictly take-it-or-leave.
+Tab. Stock contexts are never preempted: slash-command lines (`/re`),
+`@` mentions, and fragments inside quoted paths complete exactly as they
+do in stock pi. The menu is strictly take-it-or-leave.
 
 ## Architecture
 
@@ -114,10 +147,13 @@ Two layers:
 
 - `src/core/` — pure, agent-agnostic computation: `dictionary` (packed
   binary loader), `segment` (word segmentation + camelCase/snake_case
-  splitting), `shapeGate` (noise/secret rejection), `score` (admission +
+  splitting; word-boundary guards step by full code points — a non-ASCII,
+  including astral-plane, letter adjacent to an ASCII run disqualifies
+  the run), `shapeGate` (noise/secret rejection), `score` (admission +
   salience), `store` (per-session word candidates, 20k cap, plus the
   top-3 successor index fed by strict-adjacency bigrams captured from raw
-  text at ingest), `query` (prefix search + ranking). No
+  text at ingest — the 10,000-key bigram cap drains to ≤ cap within the
+  same ingest call), `query` (prefix search + ranking). No
   pi imports.
 - `src/pi/` — the pi adapter: `index` (extension factory + lifecycle),
   `ingest` (message handling), `provider` (autocomplete integration),
