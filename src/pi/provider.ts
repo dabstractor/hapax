@@ -291,7 +291,8 @@ export function createHapaxProvider(
           // are registered under chain markers so applyCompletion can
           // distinguish "successor accepted → armed(next)" from "word
           // candidate accepted → armed(word)" (plain key) and "phrase
-          // accepted → never arm" (key contains a space).
+          // accepted → arm its LAST word" (space-joined key, BUG-005
+          // part 2).
           const items = succ.map((s) => ({
             value: s.next,
             label: s.next,
@@ -354,6 +355,24 @@ export function createHapaxProvider(
       // enablePhrases gate (P2.M2.T3.S1): with the flag false nothing
       // ever arms — the chain layer is inert and the provider behaves
       // exactly as M1 word-only. Delegation itself is unconditional.
+      //
+      // liveKeyByValue keys come in exactly THREE shapes (BUG-005 part
+      // 2), checked in this order:
+      //   1. CHAIN_KEY_PREFIX + next — a chain successor was accepted;
+      //      re-arm at it (armed(next)).
+      //   2. a single token — a whole-word candidate; arm its
+      //      lowercase form.
+      //   3. a single-space-joined lowercase phrase (query.ts builds
+      //      phrase keys exactly that way) — arm the phrase's LAST
+      //      word. chain.arm(W) primes topSuccessors(W), the
+      //      NEXT-word continuation (§07 h2.43), so last-word arming
+      //      continues PAST the accepted text ('national renewable
+      //      energy' → successors of 'energy', e.g. 'laboratory');
+      //      arming the FIRST word would re-offer words already typed
+      //      into the buffer. Deliberate deviation from the bug-hunt's
+      //      first-word recommendation — rationale documented in
+      //      plan/001_88fc3a66fd74/bugfix/001_9e0f97150b68/architecture/
+      //      system_context.md (BUG-005), pinned by test/chain.test.ts.
       if (config.enablePhrases) {
         const key = liveKeyByValue.get(item.value);
         if (key !== undefined) {
@@ -365,8 +384,15 @@ export function createHapaxProvider(
             // keys are space-joined. The successor index is lowercase
             // (h2.27) — arm the lowercase form so topSuccessors() finds it.
             chain.arm(item.value.toLowerCase());
+          } else {
+            // Phrase candidate (space-joined key): arm at the phrase's
+            // LAST word — see the key-shape note above. Phrase keys
+            // arrive lowercase + single-space-joined (query.ts), so the
+            // split token is already a successor-index key: no case
+            // folding, no normalization (PRD §08: no config surface).
+            const words = key.split(" ");
+            chain.arm(words[words.length - 1]);
           }
-          // else: phrase key (space) → never arms.
         }
         // Not in the map (path completion / stale value) → never arms.
       }
@@ -404,7 +430,9 @@ export type ChainState = { word: string } | null;
  * The Tab-armed successor-chaining state holder (PRD §07 h2.43). Two
  * states and five armed rules:
  *
- *   idle ──Tab accepts a hapax whole-word candidate W──► armed(W)
+ *   idle ──Tab accepts a hapax candidate W──► armed(W)
+ *         (W = a whole word, a chain successor, or a phrase's LAST
+ *         word — BUG-005 part 2; never a path-completion value)
  *   armed(W):
  *     - next word start (fragment ≥ 1 char) → offer W's top successors
  *       (store.topSuccessors) filtered live by the fragment, at chain
@@ -420,8 +448,9 @@ export type ChainState = { word: string } | null;
  * INVARIANTS (PRD §01 invariant 1): the machine feeds the suggestion
  * set ONLY — it never blocks or captures typing, never swallows a
  * keystroke, never throws. Arming happens exclusively through hapax's
- * own applyCompletion side-effect (a hapax whole-word item was
- * accepted); path-completion and phrase items never arm. All timing and
+ * own applyCompletion side-effect (a hapax item was accepted: whole
+ * word, chain successor, or phrase's last word — BUG-005 part 2);
+ * path-completion and out-of-map values never arm. All timing and
  * display composition stay in S3 — armed sets publish through the same
  * lastLive seam as normal results, so the 100ms debounce composes
  * unchanged.
@@ -429,10 +458,12 @@ export type ChainState = { word: string } | null;
 export interface ChainMachine {
   /** Current armed word, or null when idle. */
   state(): ChainState;
-  /** Arm on acceptance of a whole-word hapax item (or a chain
-   *  successor). Also records a ONE-SHOT pending word so the first
-   *  getSuggestions after the accept can offer the armed word's
-   *  successors with zero typed characters (P2.M2.T3.S1). */
+  /** Arm on acceptance of a hapax item: a whole word (lowercased), a
+   *  chain successor, or a phrase's LAST word (BUG-005 part 2 —
+   *  next-word continuation past the accepted text). Also records a
+   *  ONE-SHOT pending word so the first getSuggestions after the
+   *  accept can offer the armed word's successors with zero typed
+   *  characters (P2.M2.T3.S1). */
   arm(word: string): void;
   /** Take the pending word (P2.M2.T3.S1): returns it and clears it —
    *  one-shot, so only the FIRST armed query after an arm sees it.

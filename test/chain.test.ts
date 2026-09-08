@@ -4,8 +4,9 @@
  *
  *   inner = createHapaxProvider(store, config, current, chain)
  *
- * Covers every armed rule of h2.43: arming ONLY from hapax whole-word
- * items (never path completion, never phrases), successor-only menus at
+ * Covers every armed rule of h2.43: arming from hapax items — whole
+ * words, chain successors, and (BUG-005 part 2) phrase items at their
+ * LAST word; never path completion or out-of-map values — successor-only menus at
  * chain threshold 1 (NOT config.threshold), live fragment filtering,
  * Tab accept → armed(next) with verbatim delegation, word-less /
  * zero-match disarm falling through to the normal path on the SAME
@@ -38,16 +39,29 @@ import type {
   AutocompleteProvider,
   AutocompleteSuggestions,
 } from "@earendil-works/pi-tui";
+import { loadDictionary } from "../src/core/dictionary.js";
 import { CandidateStore } from "../src/core/store.js";
 import type { Sighting } from "../src/core/types.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
+import {
+  extractText,
+  IngestPipeline,
+  restoreFromHistory,
+  type AgentMessage,
+  type RestoreSessionManager,
+} from "../src/pi/ingest.js";
+import { resolveDictPath } from "../src/pi/paths.js";
 import {
   createChainMachine,
   createDisplayProvider,
   createHapaxProvider,
   extractMatchState,
 } from "../src/pi/provider.js";
+import {
+  asSessionManager,
+  parseSessionFixture,
+} from "./helpers/session-fixture.js";
 
 // ── fixtures (provider.test.ts style) ───────────────────────────────────────
 
@@ -216,21 +230,26 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     expect(chain.state()).toBeNull();
   });
 
-  it("(3) accepting a phrase item (space-joined key) never arms", async () => {
+  it("(3) accepting a phrase item arms the chain at its LAST word (BUG-005 part 2)", async () => {
     const current = makeCurrent();
     const store = seedStore(); // "theta kappa" admitted (count 2)
     const { chain, inner } = makeStack(store, current);
 
     // The admitted phrase ranks ABOVE its first-word constituent, and
-    // the BUG-005 exemption keeps the bare word co-presented below it
-    // (theta carries a successor tail). The PHRASE item itself is what
-    // this case accepts — a space-joined key must never arm (h2.43).
+    // the BUG-005 exemption keeps the bare word co-presented below it.
+    // The PHRASE item itself is what this case accepts.
     const menu = await suggest(inner, ["thet"], 0, 4);
     expect(menu?.items.map((i) => i.value)).toEqual(["theta kappa", "theta"]);
     expect(inner.__hapaxKey("theta kappa")).toBe("theta kappa"); // space
 
     inner.applyCompletion(["thet"], 0, 4, item("theta kappa"), "thet");
-    expect(chain.state()).toBeNull(); // phrase → no chain
+    // LAST word, not first: arm(W) primes topSuccessors(W) = the
+    // NEXT-word continuation (§07 h2.43), so 'theta kappa' arms
+    // 'kappa' — continuing past the accepted text. Arming the FIRST
+    // word would re-offer words already typed into the buffer
+    // (deliberate deviation from the bug-hunt recommendation; see the
+    // intercept's key-shape note and system_context.md BUG-005).
+    expect(chain.state()).toEqual({ word: "kappa" });
   });
 
   it("(4) armed + 1-char fragment → successor-only menu at threshold 1, count-desc order", async () => {
@@ -419,5 +438,232 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ── NREL phrase-arming harness (BUG-005 part 2) ─────────────────────────
+// Mirrors acceptance.test.ts's item-7 helpers (makeNrelPipeline /
+// replayNrel / editingCurrent): the REAL ingest pipeline with the phrase
+// hook wired exactly like src/pi/index.ts, the SHIPPED dictionary, and a
+// pi-shaped editing current provider so ONE buffer flows through accepts
+// like the editor would. Local copies on purpose — this fix touches only
+// src/pi/provider.ts + this file (PRP scope), and small test-plumbing
+// duplication across suites matches the repo's fixture-generator
+// discipline (cf. test/helpers/dict-writer.ts vs tools/build-dict.mjs).
+
+const FIXTURES = "test/fixtures/sessions";
+
+/** Pipeline wired like src/pi/index.ts's session_start: the phrase hook
+ *  (and with it the successor index) exists ONLY under enablePhrases. */
+function makeNrelPipeline(enablePhrases: boolean): { store: CandidateStore; pipeline: IngestPipeline } {
+  const store = new CandidateStore();
+  const pipeline = new IngestPipeline({
+    store,
+    dictionary: loadDictionary(resolveDictPath()),
+    ...(enablePhrases
+      ? {
+          onAdmittedTokens: (lines: string[][]) =>
+            store.recordPhraseLines(lines, store.currentOrdinal()),
+        }
+      : {}),
+  });
+  return { store, pipeline };
+}
+
+/** Replay pre-parsed fixture entries through restoreFromHistory on the
+ *  GIVEN pipeline (same completion-tracking wrapper as acceptance). */
+async function replayNrel(
+  pipeline: IngestPipeline,
+  entries: ReturnType<typeof parseSessionFixture>,
+): Promise<void> {
+  const total = entries.filter(
+    (e) => e.message !== undefined && extractText(e.message as unknown as AgentMessage) !== null,
+  ).length;
+  const real = pipeline.processText.bind(pipeline);
+  let done = 0;
+  let resolve!: () => void;
+  const finished = new Promise<void>((r) => {
+    resolve = r;
+  });
+  restoreFromHistory(
+    {
+      processText: async (text, fromUser) => {
+        await real(text, fromUser);
+        if (++done === total) resolve();
+      },
+      // BUG-006 (P1.M3.T2.S1): no-op sweep — replay never sweeps phrases.
+      sweepPhrases: () => {},
+    },
+    asSessionManager(entries) as unknown as RestoreSessionManager,
+  );
+  await finished;
+}
+
+/** Editing-harness mock (acceptance item-7 pattern): pi-shaped current
+ *  provider whose applyCompletion performs pi-tui's insertion (replace
+ *  `prefix` before the cursor with item.value) on ONE persistent buffer. */
+function editingCurrent() {
+  const state = { lines: ["natio"], cursorLine: 0, cursorCol: 5 };
+  return {
+    state,
+    getSuggestions: vi.fn(
+      async (lines: string[], cursorLine: number, cursorCol: number, options: { signal: AbortSignal }) => null,
+    ),
+    applyCompletion: vi.fn(
+      (lines: string[], cursorLine: number, cursorCol: number, accepted: AutocompleteItem, prefix: string) => {
+        const line = lines[cursorLine] ?? "";
+        const before = line.slice(0, cursorCol - prefix.length);
+        const after = line.slice(cursorCol);
+        const newLines = [...lines];
+        newLines[cursorLine] = before + accepted.value + after;
+        state.lines = newLines;
+        state.cursorLine = cursorLine;
+        state.cursorCol = before.length + accepted.value.length;
+        return { lines: newLines, cursorLine, cursorCol: state.cursorCol };
+      },
+    ),
+  };
+}
+
+describe("phrase acceptance arms the chain (BUG-005 part 2)", () => {
+  it("full nrel replay → accepting 'National Renewable Energy' arms 'energy' → chain offers 'laboratory' → accepting it re-arms", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const { store, pipeline } = makeNrelPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(store, cfg(), current, chain);
+
+    // FULL replay — the /resume scenario: phrases admitted, successor
+    // index complete, the exempt bare word co-presented (S1).
+    await replayNrel(pipeline, entries);
+
+    // Live menu for "natio": phrases first, the exempt bare word below.
+    const menu = await suggest(provider, ["natio"], 0, 5);
+    expect(menu?.items.map((i) => i.value)).toEqual([
+      "National Renewable Energy",
+      "National Renewable",
+      "National",
+    ]);
+    const phraseItem = menu!.items[0]!;
+    expect(provider.__hapaxKey("National Renewable Energy")).toBe(
+      "national renewable energy", // space-joined lowercase key — shape 3
+    );
+
+    // Tab accepts the PHRASE item → the intercept arms the LAST word:
+    // 'energy', continuing PAST the accepted text (never 'national',
+    // which would re-offer already-typed words — the documented
+    // deviation, bugfix/001_9e0f97150b68 system_context.md BUG-005).
+    const ret = provider.applyCompletion(["natio"], 0, 5, phraseItem, "natio");
+    expect(chain.state()).toEqual({ word: "energy" });
+
+    // Delegation stayed verbatim: the editing harness did the insertion
+    // and its return passed straight through.
+    expect(current.state.lines).toEqual(["National Renewable Energy"]);
+    expect(current.state.cursorCol).toBe("National Renewable Energy".length);
+    expect(ret).toEqual({
+      lines: current.state.lines,
+      cursorLine: 0,
+      cursorCol: current.state.cursorCol,
+    });
+
+    // ZERO typed characters: the pending offer answers from
+    // topSuccessors('energy') at prefix "" — the exact dead-end the
+    // adversarial audit found, inverted (Level 4 proof).
+    expect(store.topSuccessors("energy")).toEqual([{ next: "laboratory", count: 4 }]);
+    const offer = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
+    expect(offer?.prefix).toBe("");
+    expect(offer?.items).toEqual([
+      { value: " laboratory", label: "laboratory", description: "chain" },
+    ]);
+    expect(provider.__hapaxLive()?.prefix).toBe("");
+
+    // Tab accepts the chain item → armed(laboratory): the existing
+    // re-arm semantics riding the new phrase route; insertion lands.
+    provider.applyCompletion(
+      current.state.lines,
+      0,
+      current.state.cursorCol,
+      offer!.items[0]!,
+      offer!.prefix,
+    );
+    expect(chain.state()).toEqual({ word: "laboratory" });
+    expect(current.state.lines).toEqual(["National Renewable Energy laboratory"]);
+
+    // The chain keeps flowing: laboratory's own successors are offered
+    // (count-desc; ties in index order).
+    const offer2 = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
+    expect(offer2?.prefix).toBe("");
+    expect(offer2?.items.map((i) => i.label)).toEqual(["archive", "asks", "citation"]);
+  });
+
+  it("enablePhrases=false: accepting the same phrase item never arms (whole intercept gated)", async () => {
+    // Pipeline WITH the phrase hook — the store and menu carry the exact
+    // full-replay phrase items — but the PROVIDER runs flag-off: the gate
+    // short-circuits the entire intercept, so neither arming route fires.
+    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const { store, pipeline } = makeNrelPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(store, cfg({ enablePhrases: false }), current, chain);
+
+    await replayNrel(pipeline, entries);
+
+    const menu = await suggest(provider, ["natio"], 0, 5);
+    expect(menu?.items.map((i) => i.value)).toContain("National Renewable Energy");
+
+    provider.applyCompletion(["natio"], 0, 5, menu!.items[0]!, "natio");
+    expect(chain.state()).toBeNull(); // phrase route gated — nothing armed
+    // Delegation is unconditional: the insertion still happened.
+    expect(current.state.lines).toEqual(["National Renewable Energy"]);
+
+    // No chain items on the next query either (the armed branch cannot
+    // run): whatever answers — normal threshold menu or delegation —
+    // carries no chain provenance, and the machine stays idle.
+    const after = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
+    expect((after?.items ?? []).filter((i) => i.description === "chain")).toEqual([]);
+    expect(chain.state()).toBeNull();
+  });
+
+  it("bare-word route (S1's exemption) still arms end-to-end: 'National' → renewable → energy", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
+    const { store, pipeline } = makeNrelPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(store, cfg(), current, chain);
+
+    await replayNrel(pipeline, entries);
+
+    // The exempt bare word sits BELOW its phrases in the same menu —
+    // the S1 fix this task composes with.
+    const menu = await suggest(provider, ["natio"], 0, 5);
+    const nationalItem = menu!.items[menu!.items.length - 1]!;
+    expect(nationalItem.value).toBe("National");
+    expect(nationalItem.description).toMatch(/^session x\d+$/);
+
+    provider.applyCompletion(["natio"], 0, 5, nationalItem, "natio");
+    expect(chain.state()).toEqual({ word: "national" });
+
+    // Pending offer serves topSuccessors('national') at prefix "".
+    const offer = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
+    expect(offer?.prefix).toBe("");
+    expect(offer?.items.map((i) => [i.label, i.value])).toEqual([
+      ["renewable", " renewable"],
+      ["license", " license"],
+      ["wind", " wind"],
+    ]);
+
+    // Tab → armed(renewable); the S1/S2 interaction stays intact.
+    provider.applyCompletion(
+      current.state.lines,
+      0,
+      current.state.cursorCol,
+      offer!.items[0]!,
+      offer!.prefix,
+    );
+    expect(chain.state()).toEqual({ word: "renewable" });
+    expect(current.state.lines).toEqual(["National renewable"]);
+
+    const offer2 = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
+    expect(offer2?.items.map((i) => i.label)).toEqual(["energy"]);
   });
 });
