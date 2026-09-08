@@ -33,14 +33,16 @@
  * INDEX ORDERING INVARIANT (why prefixRange-then-snapshot is the only
  * safe public enumeration path): store.prefixRange(lower) returns
  * [start, end) INDICES over the internally sorted key array, and it
- * rebuilds that array first when it is dirty. sortedKeysSnapshot() alone
- * never rebuilds — a snapshot from before a dirtying mutation can list
- * evicted keys (S3 eviction, P1.M2.T4.S3, deletes keys and sets #dirty)
- * whose get() would return undefined. So: call prefixRange FIRST (it
- * performs any needed lazy rebuild), THEN take the snapshot and slice
+ * consolidates that array first (merging pending inserts — the amortized
+ * index maintenance that keeps a cold first query off the O(n log n)
+ * re-sort path — and dropping evicted ghosts). sortedKeysSnapshot() alone
+ * never consolidates — a snapshot from before a mutating batch can lag
+ * the map: new keys missing, evicted keys (S3 eviction, P1.M2.T4.S3)
+ * listed but with get() undefined. So: call prefixRange FIRST (it
+ * performs any needed consolidation), THEN take the snapshot and slice
  * [start, end). Never cache keys or snapshots across rankMatches calls —
- * eviction dirties the index between keystrokes. (A future store
- * accessor like keyAt(i) would be cleaner; out of scope here.)
+ * eviction and new inserts change the index between keystrokes. (A future
+ * store accessor like keyAt(i) would be cleaner; out of scope here.)
  */
 
 import { salience } from "./score.js";

@@ -100,6 +100,39 @@ describe("perf gate a — 20k-candidate prefix query + rank + top 8", () => {
   });
 });
 
+// ── Gate a2 — cold FIRST query, no warmup ───────────────────────────────────
+
+// COLD-START FIX REGRESSION (2026-09 validation): the old dirty-flag lazy
+// index rebuild handed the FIRST query after a 20k fill a whole-array
+// re-sort (~5 ms; validator-measured cold p99 1.4–3.3 ms) — over the
+// §02 h3.1 1 ms budget even though this gate's warm p99 passed (100
+// warmup queries absorbed the rebuild). The store now consolidates its
+// prefix index in INDEX_MERGE_BATCH chunks during the fill itself, so the
+// first query merges only the ≤-batch tail. This gate fills FRESH 20k
+// stores (fill is setup, never followed by a warmup query) and asserts the
+// cold first query stays under the 3× CI bound.
+describe("perf gate a2 — cold first query on a fresh 20k store (no warmup)", () => {
+  it("the very first rankMatches after a 20k fill stays under 3 ms (3× the 1 ms budget)", () => {
+    const cold: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      const s = makeStore(STORE_CAP); // fill cost is setup, not measured
+      const t = performance.now();
+      rankMatches(s, HOT_PREFIX, { limit: 8 }); // COLD: no warmup query first
+      cold.push(performance.now() - t);
+    }
+    cold.sort((a, b) => a - b);
+    // p99 = ⌈0.99·N⌉-th of N sorted samples (1-indexed).
+    const p99 = cold[Math.ceil(0.99 * cold.length) - 1]!;
+    const median = cold[Math.floor(cold.length / 2)]!;
+    console.log(
+      `[gate a2] COLD first-query p99=${p99.toFixed(3)}ms median=${median.toFixed(3)}ms ` +
+        `max=${cold[cold.length - 1]!.toFixed(3)}ms over ${cold.length} fresh 20k stores ` +
+        `(budget <1ms, CI bound <3ms; pre-fix cold p99 measured 1.4–3.3ms)`,
+    );
+    expect(p99).toBeLessThan(3);
+  });
+});
+
 // ── Gate b ──────────────────────────────────────────────────────────────────
 
 describe("perf gate b — dictionary load + full 20k-word lookup sweep", () => {

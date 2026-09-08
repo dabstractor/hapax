@@ -23,11 +23,18 @@
  * reset. currentOrdinal() is the read-only view for consumers (eviction,
  * P1.M2.T4.S3; restore replay, P1.M3.T2.S3; /acwords, P1.M3.T4.S1).
  *
- * PREFIX INDEX (P1.M2.T4.S2, PRD §06 h2.35): a lazily-maintained sorted
- * array of lowercase keys. New-key inserts only mark it dirty; the next
- * query re-sorts once (Array.sort's default UTF-16 code-unit order is
- * byte-lexicographic for lowercase ASCII keys) and binary-searches the
- * prefix range — insert stays O(1), query is O(log n + range).
+ * PREFIX INDEX (P1.M2.T4.S2, PRD §06 h2.35): a sorted array of lowercase
+ * keys maintained by AMORTIZED consolidation (the cold-start fix): new-key
+ * inserts only push to #pending; upsert merges the pending list into the
+ * sorted array in INDEX_MERGE_BATCH-sized chunks, and a query merges the
+ * ≤-batch tail (O(n + m log m), tens of µs at the 20k cap) before
+ * binary-searching the prefix range. Insert stays O(1) and the query is
+ * O(log n + range) — the index never hands a whole-array re-sort to the
+ * keystroke path. (The old dirty-flag lazy rebuild — re-sort all 20k keys
+ * on the first query after a dirtying batch — put a measured 1.4–3.3 ms
+ * cold p99 on that first query, over the PRD §02 h3.1 1 ms budget.)
+ * Array.sort's default UTF-16 code-unit order is byte-lexicographic for
+ * lowercase ASCII keys; consolidation preserves it.
  *
  * Pure in-memory, session-lifetime only — no persistence (PRD: none).
  * upsert is O(1) Map work below the cap: no sorting, no scanning, no
@@ -81,6 +88,14 @@ export const STORE_CAP = 20_000;
  *  EVICT_BATCH new distinct keys — never per upsert — while the post-
  *  eviction size stays ≤ STORE_CAP (drop ≥ exact overflow). */
 export const EVICT_BATCH = 256;
+
+/** Prefix-index consolidation batch (h2.35 amortization): upsert merges
+ *  the pending-new-key list into the sorted index whenever it reaches this
+ *  many keys, and a query merges only the sub-batch tail (≤ batch − 1).
+ *  Same pacing philosophy as EVICT_BATCH: bounded O(n) merges amortized
+ *  over ingest — never an O(n log n) whole-index re-sort on the keystroke
+ *  path. Baked, not config (PRD §08 h2.47). */
+export const INDEX_MERGE_BATCH = 256;
 
 /** Hard cap on stored bigrams (PRD §06 h2.38: "Cap the bigram map at
  *  10,000 keys"). Baked, not config (PRD §08 h2.47). The word store's
@@ -199,11 +214,21 @@ const NO_SUCCESSORS: readonly Successor[] = Object.freeze([]);
 export class CandidateStore {
   #map = new Map<string, Candidate>();
   #ordinal = 0; // last issued message ordinal (0 = none issued yet)
-  #sortedKeys: string[] = []; // key index as of the LAST rebuild
-  // True when #sortedKeys may miss keys present in #map. Set by new-key
-  // inserts and cleared by the next prefixRange() rebuild.
-  // S3 eviction must ALSO set #dirty = true on any key removal.
-  #dirty = false;
+  #sortedKeys: string[] = []; // key index as of the LAST consolidation
+  // New keys upserted since the last consolidation. Pushed O(1) by upsert;
+  // merged into #sortedKeys in INDEX_MERGE_BATCH chunks inside upsert, with
+  // the < INDEX_MERGE_BATCH tail merged by the next prefixRange() — the
+  // cold-start fix: no single query ever pays a full O(n log n) re-sort of
+  // a 20k-key index (the old dirty-flag rebuild landed ~5 ms on the FIRST
+  // keystroke after ingest/restore, over the §02 h3.1 1 ms query budget).
+  #pending: string[] = [];
+  // Evicted keys that may still linger in #sortedKeys as ghosts since the
+  // last consolidation. Ghosts are correct by construction — query.ts skips
+  // keys whose get() is undefined — and every consolidation filters them
+  // through the live map, so the index stays bounded by the live map.
+  // Counted (not listed): evictions only fire on new-key inserts, so a
+  // consolidation is already imminent whenever a tombstone can exist.
+  #tombstones = 0;
   // Bigram map (PRD §06 h2.38): "first second" → { count, lastSeenOrdinal }.
   // Deliberately NOT under #dirty: nothing about #bigrams ever invalidates
   // the WORD prefix index.
@@ -251,10 +276,15 @@ export class CandidateStore {
         rankGroup: sighting.rankGroup,
         isSubword: sighting.isSubword,
       });
-      // New key — the sorted prefix index (h2.35) must re-sort on next
-      // query. Deliberately NOT sorted here: upsert stays O(1) so a 20k
-      // restore replay amortizes into one lazy rebuild.
-      this.#dirty = true;
+      // New key — the prefix index (h2.35) picks it up at the next
+      // consolidation. Deliberately NOT sorted here: the key is parked in
+      // #pending and merged in INDEX_MERGE_BATCH chunks (here, and the tail
+      // at the next prefixRange) — a 20k restore replay pays ~80 bounded
+      // linear merges inside the ingest it already budgeted, instead of
+      // handing one ~5 ms whole-index re-sort to the FIRST keystroke after
+      // the replay (PRD §02 h3.1 1 ms query budget).
+      this.#pending.push(sighting.key);
+      if (this.#pending.length >= INDEX_MERGE_BATCH) this.#consolidate();
       this.evictIfOverCap(); // bounded store (§06 h2.37) — no-op below cap
       return;
     }
@@ -340,21 +370,79 @@ export class CandidateStore {
     });
     // Lowest scores = the sorted head; scored.length ≥ drop always (pool
     // ⊆ the map, and drop ≤ size = map size).
-    for (const { c } of scored.slice(0, drop)) {
+    const evicted = scored.slice(0, drop);
+    for (const { c } of evicted) {
       this.#map.delete(c.key);
     }
-    this.#dirty = true; // prefix index (h2.35) rebuilds on next query
+    // Evicted keys linger in #sortedKeys as ghosts until the next
+    // consolidation (correct: query.ts skips get() === undefined). A key
+    // still sitting only in #pending is filtered through the live map by
+    // the merge itself — counting it here merely consolidates one pass
+    // sooner (harmless, idempotent).
+    this.#tombstones += evicted.length;
   }
 
-  /** PRD §06 h2.35: half-open [start, end) index range over the lazily
+  /** Merge #pending into #sortedKeys and drop ghost keys in one linear
+   *  pass (h2.35): the sub-batch tail left by upsert (≤ INDEX_MERGE_BATCH
+   *  − 1 keys) is sorted (µs at 20k scale), then a two-pointer merge walks
+   *  the old array once, keeping only keys still live in the map. Cost is
+   *  O(n + m log m) with m ≤ INDEX_MERGE_BATCH — tens of µs at the 20k cap
+   *  — so the keystroke path never pays the O(n log n) whole-index re-sort
+   *  the old dirty-flag rebuild cost the first post-ingest query. Pending
+   *  keys evicted before their merge (a brand-new key can be an eviction
+   *  victim in the same pass) are filtered through the live map exactly
+   *  like ghosts. Byte order: default string sort = UTF-16 code-unit order
+   *  = byte-lexicographic for our lowercase ASCII keys (segment.ts
+   *  normalizes); no comparator — localeCompare would break the binary
+   *  search bounds. */
+  #consolidate(): void {
+    const pending = this.#pending;
+    if (pending.length !== 0) pending.sort();
+    const map = this.#map;
+    const old = this.#sortedKeys;
+    const merged: string[] = [];
+    let i = 0;
+    let j = 0;
+    while (i < old.length && j < pending.length) {
+      const a = old[i]!;
+      const b = pending[j]!;
+      if (a < b) {
+        if (map.has(a)) merged.push(a);
+        i++;
+      } else if (a > b) {
+        if (map.has(b)) merged.push(b);
+        j++;
+      } else {
+        if (map.has(a)) merged.push(a); // ghost + pending duplicate: keep one
+        i++;
+        j++;
+      }
+    }
+    for (; i < old.length; i++) {
+      const a = old[i]!;
+      if (map.has(a)) merged.push(a);
+    }
+    for (; j < pending.length; j++) {
+      const b = pending[j]!;
+      if (map.has(b)) merged.push(b);
+    }
+    this.#sortedKeys = merged;
+    this.#pending = [];
+    this.#tombstones = 0;
+  }
+
+  /** PRD §06 h2.35: half-open [start, end) index range over the amortized
    *  sorted key array covering exactly the keys starting with `prefix`.
    *  The caller (query.ts) must lowercase the fragment first — an
    *  uppercase prefix can never match a lowercase key and indicates a
    *  caller bug, so we throw rather than silently return empty results.
    *
-   *  Rebuild policy: dirty on new-key insert, re-sorted HERE at most once
-   *  per dirtying batch (lazy — PRD §02 h3.1 keeps the keystroke path
-   *  under 1 ms with no allocation-heavy ingest work). End bound = first
+   *  Consolidation policy: pending new keys (from upsert) and evicted
+   *  ghosts are merged HERE — in INDEX_MERGE_BATCH chunks inside upsert,
+   *  and the ≤-batch tail just before this search — so the index is
+   *  consistent with the live map at every query while no single query
+   *  ever pays a whole-array re-sort (PRD §02 h3.1 keeps the keystroke
+   *  path under 1 ms with no allocation-heavy ingest work). End bound = first
    *  key NOT starting with prefix, found by forward scan from `start`
    *  (O(range); ranges are short in practice — chosen over prefix-
    *  successor arithmetic for clarity and 0x7A→0x7B rollover immunity).
@@ -365,12 +453,8 @@ export class CandidateStore {
     if (prefix !== prefix.toLowerCase()) {
       throw new RangeError(`prefixRange: prefix must be lowercase, got "${prefix}"`);
     }
-    if (this.#dirty) {
-      // Default sort = UTF-16 code-unit order: byte-lexicographic for our
-      // lowercase ASCII keys (segment.ts normalizes). No comparator —
-      // localeCompare would break binary-search bounds.
-      this.#sortedKeys = Array.from(this.#map.keys()).sort();
-      this.#dirty = false;
+    if (this.#pending.length !== 0 || this.#tombstones !== 0) {
+      this.#consolidate(); // merge the pending tail, drop evicted ghosts
     }
     const start = CandidateStore.lowerBound(this.#sortedKeys, prefix);
     const keys = this.#sortedKeys;
@@ -379,9 +463,12 @@ export class CandidateStore {
     return [start, end];
   }
 
-  /** Defensive copy of the key index as of the LAST rebuild (h2.35). May
-   *  be stale when new keys were upserted since — this never rebuilds.
-   *  Test/inspection surface only; query logic must use prefixRange(). */
+  /** Defensive copy of the key index as of the LAST consolidation (h2.35).
+   *  May lag the live map: keys upserted since sit in #pending (absent
+   *  here), and keys evicted since can linger as ghosts (present here,
+   *  get() undefined) until the next consolidation — this never triggers
+   *  one itself. Test/inspection surface only; query logic must use
+   *  prefixRange(). */
   sortedKeysSnapshot(): string[] {
     return [...this.#sortedKeys];
   }

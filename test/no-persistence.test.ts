@@ -125,12 +125,21 @@ beforeAll(() => {
   utimesSync(join(userCfg, "hapax.json"), cfgTime, cfgTime);
   utimesSync(join(projCfg, "hapax.json"), cfgTime, cfgTime);
 
-  // The tripwire marker: backdated 5 s so the scan window is strictly WIDER
-  // than the exercise itself (any write in [now-5s, scan] is flagged).
+  // The tripwire marker: stamped at CREATION time (now), never backdated.
+  // The old 5 s backdate widened the scan window to [now − 5 s, scan] — a
+  // window that includes PRE-EXERCISE time in which any external writer (a
+  // validator writing its report files, an editor, git gc) gets
+  // misattributed to hapax: a false positive indistinguishable from a real
+  // leak, and one the surrounding pipeline had to work around by backdating
+  // its own artifacts before running this suite. The window is exactly the
+  // exercise: every hapax write can only happen after this beforeAll runs,
+  // i.e. at or after the marker's mtime, and `find -newer` compares full
+  // sub-second timestamps on modern filesystems (ext4/tmpfs/APFS), so no
+  // coarse-mtime widening margin is needed. The config fixtures above keep
+  // their explicit 10 s-in-the-past stamps — setup writes of THIS test
+  // must order strictly before the marker at any FS granularity.
   marker = join(workDir, "marker");
   writeFileSync(marker, "");
-  const markerTime = new Date(Date.now() - 5_000);
-  utimesSync(marker, markerTime, markerTime);
 
   // pi's own config-dir redirect, mirrored in-process by loadConfig's
   // homeDir injection below (hapax resolves its config under

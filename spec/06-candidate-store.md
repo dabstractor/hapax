@@ -22,10 +22,12 @@ Backing structures:
 
 - `Map<string, Candidate>` — primary upsert path.
 - **Prefix index** — maintained at ingest time for query-time speed: a sorted
-  array of lowercase keys (rebuilt lazily: marked dirty on insert, re-sorted
-  on next query if dirty — restores insert ~20k items once, then binary-search
-  per keystroke). Query = binary search for prefix range + gather + salience
-  sort of the range + top 8.
+  array of lowercase keys kept consistent by AMORTIZED consolidation (new-key
+  inserts push to a pending list; upsert merges it in 256-key chunks and the
+  next query merges the ≤-batch tail — no single query ever pays a whole-index
+  re-sort, so a cold first query after a 20k restore stays inside the 1 ms
+  budget, and insert stays ~O(1) with binary-search per keystroke). Query =
+  binary search for prefix range + gather + salience sort of the range + top 8.
 
 No persistence. Store is created at `session_start`, dropped at
 `session_shutdown`.
