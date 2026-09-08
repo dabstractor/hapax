@@ -290,3 +290,133 @@ describe("triggerCharacters mirror config.triggerChar", () => {
     expect(provider.triggerCharacters).toBeUndefined();
   });
 });
+
+describe("forced single-item returns (PRD §07 h3.8)", () => {
+  /** Arm "alpha" via the ONLY production path — a live menu + Tab
+   *  acceptance (armViaTab pattern from chain.test.ts; the factory's
+   *  default chain machine is real) — then seed alpha→beta(3),
+   *  alpha→bravo(2) through the sole bigram seam, so the count-desc top
+   *  successor is "beta". */
+  const armAlpha = async (
+    store: CandidateStore,
+    provider: ReturnType<typeof createHapaxProvider>,
+  ): Promise<void> => {
+    put(store, "alpha", 3, 5);
+    const menu = await provider.getSuggestions(["alpha"], 0, 5, opts());
+    expect(menu!.items.map((i) => i.value)).toContain("alpha");
+    for (let r = 0; r < 3; r++) store.recordBigramRuns([["alpha", "beta"]]);
+    for (let r = 0; r < 2; r++) store.recordBigramRuns([["alpha", "bravo"]]);
+    provider.applyCompletion(
+      ["alpha"],
+      0,
+      5,
+      { value: "alpha", label: "alpha" },
+      "alpha",
+    );
+  };
+
+  it("force:true + threshold fragment 'ze' → exactly the live top, prefix unchanged", async () => {
+    const provider = createHapaxProvider(zeStore(), cfg(), mockCurrent());
+
+    const result = await provider.getSuggestions(["ze"], 0, 2, opts({ force: true }));
+
+    expect(result).not.toBeNull();
+    expect(result!.items).toHaveLength(1); // pi-tui's === 1 fast path fires
+    expect(result!.items[0].value).toBe("Zendesk"); // rankMatches top
+    expect(result!.prefix).toBe("ze"); // prefix unchanged under force
+    // The seam keeps the FULL set — only the returned payload narrowed.
+    expect(provider.__hapaxLive()!.matches).toHaveLength(2);
+    expect(provider.__hapaxLive()!.matches[0].key).toBe("zendesk");
+    expect(provider.__hapaxLive()!.prefix).toBe("ze");
+  });
+
+  it("force absent/false → full set, byte-identical legacy behavior", async () => {
+    const provider = createHapaxProvider(zeStore(), cfg(), mockCurrent());
+
+    const unforced = await provider.getSuggestions(["ze"], 0, 2, opts());
+    const forceFalse = await provider.getSuggestions(["ze"], 0, 2, opts({ force: false }));
+
+    expect(unforced!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(forceFalse!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+  });
+
+  it("force:true + trigger fragment '#ze' → 1 item, trigger prefix kept", async () => {
+    const provider = createHapaxProvider(zeStore(), cfg(), mockCurrent());
+
+    const result = await provider.getSuggestions(["#ze"], 0, 3, opts({ force: true }));
+
+    expect(result!.items).toHaveLength(1);
+    expect(result!.items[0].value).toBe("Zendesk");
+    expect(result!.prefix).toBe("#ze");
+    expect(provider.__hapaxLive()!.matches).toHaveLength(2); // full set published
+  });
+
+  it("force:true + null match state → delegates with identical options (native Tab intact)", async () => {
+    const current = mockCurrent();
+    const provider = createHapaxProvider(zeStore(), cfg(), current);
+    const lines = ["z"]; // below threshold 2
+    const options = opts({ force: true });
+
+    const result = await provider.getSuggestions(lines, 0, 1, options);
+
+    expect(result).toBeNull();
+    expect(current.getSuggestions).toHaveBeenCalledOnce();
+    expect(current.getSuggestions.mock.calls[0][0]).toBe(lines);
+    expect(current.getSuggestions.mock.calls[0][3]).toBe(options);
+  });
+
+  it("force:true + zero candidates ('#zzz') → delegates; no fabricated empty set", async () => {
+    const current = mockCurrent();
+    const provider = createHapaxProvider(zeStore(), cfg(), current);
+    const options = opts({ force: true });
+    await provider.getSuggestions(["#ze"], 0, 3, opts()); // prime the cache
+
+    const result = await provider.getSuggestions(["#zzz"], 0, 4, options);
+
+    expect(result).toBeNull(); // stock pi-tui cancels + renders nothing
+    expect(provider.__hapaxLive()).toBeNull(); // cache drop preserved
+    expect(current.getSuggestions.mock.calls[0][3]).toBe(options);
+  });
+
+  it("force:true + aborted signal → abort still wins (delegates first)", async () => {
+    const current = mockCurrent();
+    const provider = createHapaxProvider(zeStore(), cfg(), current);
+    const controller = new AbortController();
+    controller.abort();
+    const options = { signal: controller.signal, force: true };
+
+    await provider.getSuggestions(["ze"], 0, 2, options);
+
+    expect(current.getSuggestions).toHaveBeenCalledOnce();
+    expect(current.getSuggestions.mock.calls[0][3]).toBe(options);
+  });
+
+  it("force:true + armed zero-char word start → 1 item = count-desc top successor, prefix ''", async () => {
+    const store = new CandidateStore();
+    const provider = createHapaxProvider(store, cfg(), mockCurrent());
+    await armAlpha(store, provider);
+
+    const result = await provider.getSuggestions(["alpha "], 0, 6, opts({ force: true }));
+
+    expect(result!.items).toHaveLength(1);
+    expect(result!.items[0].value).toBe("beta"); // beta×3 out-counts bravo×2
+    expect(result!.items[0].label).toBe("beta"); // bare value
+    expect(result!.prefix).toBe(""); // zero-char offer prefix unchanged
+    // The seam still holds the FULL successor set (S2/S3 compose on it).
+    const live = provider.__hapaxLive()!;
+    expect(live.matches.map((m) => m.display)).toEqual(["beta", "bravo"]);
+    expect(live.prefix).toBe("");
+  });
+
+  it("force:true + armed typed fragment → 1 item = top matching successor", async () => {
+    const store = new CandidateStore();
+    const provider = createHapaxProvider(store, cfg(), mockCurrent());
+    await armAlpha(store, provider);
+
+    const result = await provider.getSuggestions(["alpha b"], 0, 7, opts({ force: true }));
+
+    expect(result!.items).toHaveLength(1);
+    expect(result!.items[0].value).toBe("beta");
+    expect(result!.prefix).toBe("b"); // the raw typed fragment
+  });
+});

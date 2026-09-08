@@ -241,7 +241,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "provider.ts force branch (abort → armed → force-aware returns → normal)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M2.T1.S1"

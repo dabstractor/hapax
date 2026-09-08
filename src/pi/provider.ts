@@ -201,6 +201,24 @@ export function createHapaxProvider(
       if (options.signal.aborted) {
         return current.getSuggestions(lines, cursorLine, cursorCol, options);
       }
+      // 1.1 Force read (PRD §07 h3.8 Tab-opens-menu mitigation). pi-tui's
+      // editor Tab-with-no-menu path calls getSuggestions with force:true,
+      // then applies a single-item result IMMEDIATELY — its fast path is
+      // `options.force && options.explicitTab && suggestions.items.length
+      // === 1` (components/editor.js ~1903, verified against
+      // @earendil-works/pi-tui ~0.84.4; >1 items opens the menu in its
+      // 'force' state). This mitigation leans on that contract: every
+      // hapax-owned return below narrows to the single live top item when
+      // forced, so Tab completes in the same keypress and only ever
+      // completes — never opens, toggles, or summons a menu. PIN: if
+      // pi-tui changes the items.length === 1 fast path, this mitigation
+      // needs revisit (the zero-char chain offer and auto-open rules are
+      // unaffected). Strict === true — force is optional and foreign
+      // callers may pass truthy non-booleans that must not fire the
+      // branch. Branch order is the contract: abort → armed → force-aware
+      // returns → normal; aborted + force:true still delegated above
+      // (force never outranks abort).
+      const forced = options.force === true;
       // 1.5 Tab-armed chaining (PRD §07 h2.43, redesigned in plan 002
       // P1.M2.T1.S1): while a word W is armed, the chain answers INSTEAD
       // of extractMatchState — at chain threshold 0 for the WHOLE chain
@@ -283,7 +301,12 @@ export function createHapaxProvider(
             .topSuccessors(armed.word)
             .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
           if (succ.length > 0) {
-            return publishChain(succ, "");
+            const r = publishChain(succ, "");
+            // Forced (PRD §07 h3.8): only the RETURNED payload narrows —
+            // publishChain already published the FULL successor set to
+            // lastLive/liveKeyByValue above. items[0] is topSuccessors'
+            // count-desc top; never re-sorted. Prefix ("") unchanged.
+            return forced ? { items: [r.items[0]], prefix: r.prefix } : r;
           }
           chain.reset(); // no successors → idle; the normal path answers NOW
         }
@@ -307,7 +330,9 @@ export function createHapaxProvider(
           // pi's stock delegate answers on this SAME keystroke.
           chain.reset();
         } else {
-          return publishChain(succ, frag); // prefix = the raw typed fragment
+          const r = publishChain(succ, frag); // prefix = the raw typed fragment
+          // Forced: single-item return; lastLive above keeps the full set.
+          return forced ? { items: [r.items[0]], prefix: r.prefix } : r;
         }
       }
       // 2. No hapax match state (S1 null) → pi's completion stays in charge.
@@ -333,14 +358,21 @@ export function createHapaxProvider(
       lastLive = { matches, prefix: state.prefix, ts: Date.now() };
       liveKeyByValue.clear(); // rebuilt every query — keys shift after eviction
       for (const m of matches) liveKeyByValue.set(m.display, m.key);
-      return {
-        items: matches.map((m) => ({
-          value: m.display,
-          label: m.display,
-          description: m.description,
-        })),
-        prefix: state.prefix,
-      };
+      // Forced (PRD §07 h3.8): only the RETURNED payload narrows to the
+      // top-ranked item — lastLive/liveKeyByValue above keep the FULL set
+      // (S3's display layer composes and debounces against it; a narrowed
+      // cache would fight the hysteresis on the next un-forced keystroke).
+      // items[0] is rankMatches' top (salience desc → shorter →
+      // lexicographic) — never re-sorted. The prefix is unchanged: pi-tui
+      // splices prefix.length characters before the cursor verbatim.
+      const items = matches.map((m) => ({
+        value: m.display,
+        label: m.display,
+        description: m.description,
+      }));
+      return forced
+        ? { items: [items[0]], prefix: state.prefix }
+        : { items, prefix: state.prefix };
     },
 
     applyCompletion(lines, cursorLine, cursorCol, item, prefix) {

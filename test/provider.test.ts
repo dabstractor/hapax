@@ -362,3 +362,94 @@ describe("never-hijack acceptance (PRD §07)", () => {
     });
   });
 });
+
+describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", () => {
+  /** Fresh ze-fixture: Zendesk ×3 out-saliences zephyr ×1 → forced top is
+   *  "Zendesk" (same fixture as provider-live.test.ts). */
+  const zeStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    put(s, "zendesk", 3, 9, { display: "Zendesk" });
+    put(s, "zephyr", 1, 9);
+    return s;
+  };
+
+  it("Tab-before-paint: a direct forced query with no prior paint returns exactly the top item", async () => {
+    // The editor's Tab-with-no-menu path calls getSuggestions(force:true)
+    // with no preceding query at this keystroke; per pi-tui's editor.js
+    // ~1903 (`options.force && options.explicitTab &&
+    // suggestions.items.length === 1` → applyCompletion in the same
+    // keypress), hapax's single-item return makes Tab complete instead of
+    // opening the menu. Primed with NOTHING — the cold path is the bug's
+    // repro shape.
+    const current = makeCurrent();
+    const { provider } = makeStack(zeStore(), current);
+    const options = { signal: new AbortController().signal, force: true };
+
+    const result = await provider.getSuggestions(["ze"], 0, 2, options);
+
+    expect(current.getSuggestions).not.toHaveBeenCalled(); // hapax answered
+    expect(result?.items).toHaveLength(1);
+    expect(result?.items[0].value).toBe("Zendesk");
+    expect(result?.prefix).toBe("ze");
+  });
+
+  it("Tab never opens/toggles/summons a menu: forced live queries never return length > 1", async () => {
+    // Threshold fragment, trigger fragment, and the armed zero-char chain
+    // offer — every hapax-owned forced return is single-item (the seam the
+    // editor fast path consumes; a multi-item forced return would open a
+    // menu in pi-tui's 'force' state).
+    const current = makeCurrent();
+    const { inner, provider } = makeStack(zeStore(), current);
+
+    const threshold = await provider.getSuggestions(["ze"], 0, 2, {
+      signal: new AbortController().signal,
+      force: true,
+    });
+    const trigger = await provider.getSuggestions(["#ze"], 0, 3, {
+      signal: new AbortController().signal,
+      force: true,
+    });
+    expect(threshold?.items.length).toBe(1);
+    expect(trigger?.items.length).toBe(1);
+
+    // Armed chain: arm "alpha" via the production path (live menu + Tab),
+    // then a forced zero-char word start offers exactly the top successor.
+    // A dedicated inner bound to the alpha store (default machine) — the
+    // stack's inner holds the ze fixture.
+    const store = new CandidateStore();
+    put(store, "alpha", 3, 5);
+    const chainInner = createHapaxProvider(store, cfg(), current);
+    const menu = await chainInner.getSuggestions(["alpha"], 0, 5, opts());
+    expect(menu?.items.map((i) => i.value)).toContain("alpha");
+    for (let r = 0; r < 3; r++) store.recordBigramRuns([["alpha", "beta"]]);
+    for (let r = 0; r < 2; r++) store.recordBigramRuns([["alpha", "bravo"]]);
+    chainInner.applyCompletion(
+      ["alpha"],
+      0,
+      5,
+      { value: "alpha", label: "alpha" },
+      "alpha",
+    );
+    const armed = await chainInner.getSuggestions(["alpha "], 0, 6, {
+      signal: new AbortController().signal,
+      force: true,
+    });
+    expect(armed?.items).toHaveLength(1);
+    expect(armed?.items[0].value).toBe("beta");
+  });
+
+  it("menu auto-open semantics unaffected: force:false still returns the full multi-item set", async () => {
+    // Typing, not Tab, drives the menu: without force the full ranked set
+    // flows (the display layer's auto-open rules are untouched by the
+    // mitigation).
+    const current = makeCurrent();
+    const { provider } = makeStack(zeStore(), current);
+
+    const result = await provider.getSuggestions(["ze"], 0, 2, {
+      signal: new AbortController().signal,
+      force: false,
+    });
+
+    expect(result?.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+  });
+});
