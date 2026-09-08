@@ -1019,3 +1019,174 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     expect(display.dispose).toBeDefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Item 7 — NREL phrase regression pin (bugfix 001_0f4b641cf9ce, S3): the
+// PRD §09 M2 DoD scenario — accept `National` → zero additional typed
+// word-chars → `Renewable` → Tab → `Energy` → Tab → `Laboratory` — replayed
+// through the REAL ingest pipeline + SHIPPED dictionary via
+// test/fixtures/sessions/nrel-chain.jsonl (the PRD's own three-sentence
+// repro, six verbatim occurrences).
+//
+// BUG-002 history: the 50/20 band retune rejected national (q=90), energy
+// (q=94) and laboratory (q=57) — store.get(...) === undefined and
+// topSuccessors("national") === [], so the PRD's own DoD scenario was
+// unreachable. S1's proper-noun relief band (capitalized sightings with
+// REJECT ≤ q < PROPER_NOUN_ADMIT_CEILING admit at group 2; S2's tuning
+// protocol set the final ceiling value) admits all three again.
+//
+// Tripwire property: the assertions below are OUTCOME assertions — the
+// ceiling constant is never imported here, so any future retune that
+// re-breaks the phrase fails the sanity test at `store.get(...)`.
+//
+// Fixture sterility (deliberate): every surrounding word is either < 4
+// chars (shape gate), q ≥ 95 (rejected at/above the ceiling), or a
+// lowercase-only band word (the casing-gated relief rejects it) — the
+// replayed store holds EXACTLY the four phrase words, so the successor
+// chains are exact and the 'na' menu has a single candidate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("acceptance item 7 — NREL phrase (nrel-chain.jsonl, bugfix 001_0f4b641cf9ce)", () => {
+  it("fixture sanity — the four phrase words admit (BUG-002 inverted) and build the exact national→renewable→energy→laboratory successor chain", async () => {
+    const { store, pipeline } = makeChainPipeline(true);
+    const entries = parseSessionFixture(`${FIXTURES}/nrel-chain.jsonl`);
+    await replayChain(pipeline, entries);
+
+    // BUG-002's failing assertion, inverted: under the retuned bands all
+    // three capitalized phrase words came back undefined. renewable (q=19)
+    // admits in the normal band; the other three admit under the relief.
+    for (const w of ["national", "renewable", "energy", "laboratory"]) {
+      expect(store.get(w), w).toBeDefined();
+    }
+    // Display casing: every fixture sighting is identically cased, so the
+    // most-recent-casing-wins display is the phrase casing itself.
+    expect(store.get("national")!.display).toBe("National");
+    expect(store.get("renewable")!.display).toBe("Renewable");
+    expect(store.get("energy")!.display).toBe("Energy");
+    expect(store.get("laboratory")!.display).toBe("Laboratory");
+    // The relief admits at group 2 (S1 contract). renewable (q=19) is
+    // below MID_FREQ_THRESHOLD — rare-but-attested group 1, never touched
+    // by the band retunes. A retune that moves a word out of the relief
+    // band fails on the get() above; one that changes the admission group
+    // fails here.
+    expect(store.get("national")!.rankGroup).toBe(2);
+    expect(store.get("renewable")!.rankGroup).toBe(1);
+    expect(store.get("energy")!.rankGroup).toBe(2);
+    expect(store.get("laboratory")!.rankGroup).toBe(2);
+
+    // Sterile fixture: exactly the four phrase words stored, exactly three
+    // bigrams. Count 6 = the fixture's six verbatim phrase occurrences.
+    expect(store.size).toBe(4);
+    expect(store.bigramSize).toBe(3);
+    expect(store.topSuccessors("national")).toEqual([{ next: "renewable", count: 6 }]);
+    expect(store.topSuccessors("renewable")).toEqual([{ next: "energy", count: 6 }]);
+    expect(store.topSuccessors("energy")).toEqual([{ next: "laboratory", count: 6 }]);
+    // laboratory is the chain TAIL: is (2 chars, shape gate), again (142)
+    // and today (132) all reject, so no successor is ever recorded for it.
+    expect(store.topSuccessors("laboratory")).toEqual([]);
+
+    // The PRD's own probe: 'na' → National is the sole candidate, display
+    // is the exact cased insertion string (PRD §09 item 7's "National").
+    const menu = rankMatches(store, "na");
+    expect(menu.map((m) => m.display)).toEqual(["National"]);
+    expect(menu[0]!.key).toBe("national");
+    assertWordsOnly(menu, "na");
+  });
+
+  it("zero-typing chain — na → accept National → space → Renewable → Tab → Energy → Tab → Laboratory, zero typed word-chars (PRD §09 DoD M2 item 7)", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/nrel-chain.jsonl`);
+    const { store, pipeline } = makeChainPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(store, cfg(), current, chain);
+
+    /** One-word invariant on pi's menu shape (same gate as the zephyr
+     *  chain test's local helper; assertWordsOnly covers RankedMatch
+     *  outputs, chain menus are pi items — PRD §07 h2.38/h2.44). */
+    const expectSingleWordItems = (items: readonly AutocompleteItem[]): void => {
+      for (const i of items) expect(i.value).not.toContain(" ");
+    };
+
+    await replayChain(pipeline, entries);
+
+    // Type "na": the live menu offers National (the PRD's own assertion,
+    // mirrored from rankMatches — the menu is word-only, PRD 002 delta R1).
+    const menu = await provider.getSuggestions(["na"], 0, 2, opts());
+    expect(menu?.prefix).toBe("na");
+    expect(menu?.items.map((i) => i.value)).toEqual(["National"]);
+    expectSingleWordItems(menu?.items ?? []);
+
+    // Tab accepts the word item → the harness buffer "na" becomes
+    // "National"; the arming intercept arms the chain at the LOWERCASE key.
+    provider.applyCompletion(["na"], 0, 2, menu!.items[0]!, "na");
+    expect(chain.state()).toEqual({ word: "national" });
+    expect(current.state.lines).toEqual(["National"]);
+    expect(current.state.cursorCol).toBe(8);
+
+    // The user types the separating space (harness typeSpace — a word
+    // BOUNDARY, never a word char): the cursor is at the empty next word
+    // with ZERO typed word-chars, where the armed branch's zero-char offer
+    // fires. Every offer below is asserted at prefix "".
+    const offerPrefixes: string[] = [];
+    current.typeSpace();
+    expect(current.state.lines).toEqual(["National "]);
+    const offer1 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
+    // Top item IS the store's top successor — the value carries the
+    // successor's CANDIDATE DISPLAY CASING, asserted store-driven, never a
+    // hardcoded casing assumption:
+    const succR = store.topSuccessors("national")[0]!; // { next: "renewable", count: 6 }
+    const succRDisplay = store.get(succR.next)!.display;
+    expect(offer1?.prefix).toBe("");
+    offerPrefixes.push(offer1!.prefix);
+    expect(offer1?.items.map((i) => [i.label, i.value])).toEqual([[succRDisplay, succRDisplay]]);
+    expect(provider.__hapaxLive()?.prefix).toBe("");
+    expectSingleWordItems(offer1?.items ?? []);
+    provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer1!.items[0]!, offer1!.prefix);
+    expect(chain.state()).toEqual({ word: "renewable" }); // armed at the lowercase key
+    expect(current.state.lines).toEqual([`National ${succRDisplay}`]); // ONE space
+    expect(current.state.cursorCol).toBe(`National ${succRDisplay}`.length);
+
+    // Space → offer → accept: the energy hop, again bare at prefix "".
+    current.typeSpace();
+    const offer2 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
+    const succE = store.topSuccessors("renewable")[0]!; // { next: "energy", count: 6 }
+    const succEDisplay = store.get(succE.next)!.display;
+    expect(offer2?.prefix).toBe("");
+    offerPrefixes.push(offer2!.prefix);
+    expect(offer2?.items.map((i) => [i.label, i.value])).toEqual([[succEDisplay, succEDisplay]]);
+    expectSingleWordItems(offer2?.items ?? []);
+    provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer2!.items[0]!, offer2!.prefix);
+    expect(chain.state()).toEqual({ word: "energy" });
+    expect(current.state.lines).toEqual([`National ${succRDisplay} ${succEDisplay}`]);
+
+    // Space → offer → accept: the laboratory hop — the chain's tail.
+    current.typeSpace();
+    const offer3 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
+    const succL = store.topSuccessors("energy")[0]!; // { next: "laboratory", count: 6 }
+    const succLDisplay = store.get(succL.next)!.display;
+    expect(offer3?.prefix).toBe("");
+    offerPrefixes.push(offer3!.prefix);
+    expect(offer3?.items.map((i) => [i.label, i.value])).toEqual([[succLDisplay, succLDisplay]]);
+    expectSingleWordItems(offer3?.items ?? []);
+    provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer3!.items[0]!, offer3!.prefix);
+
+    // The full PRD phrase landed — the separating spaces were the only
+    // keystrokes between accepts (zero additional typed word-chars).
+    expect(current.state.lines).toEqual(["National Renewable Energy Laboratory"]);
+    expect(current.state.cursorCol).toBe("National Renewable Energy Laboratory".length);
+
+    // The machine rests ARMED at the tail: applyCompletion arms
+    // synchronously, and laboratory's lack of successors only resets the
+    // chain on the NEXT query (provider.ts armed branch (a): succ.length
+    // === 0 → chain.reset() then fall through). The successor-less tail is
+    // asserted so the resting state is measured machine reality.
+    expect(store.topSuccessors("laboratory")).toEqual([]);
+    expect(chain.state()).toEqual({ word: "laboratory" });
+
+    // Zero-word-char-typing proof: every offer fired at prefix "" (the
+    // separating spaces were the only typed characters), and hapax answered
+    // every query — the wrapped provider was never consulted mid-chain.
+    expect(offerPrefixes).toEqual(["", "", ""]);
+    expect(current.getSuggestions).not.toHaveBeenCalled();
+  });
+});

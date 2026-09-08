@@ -111,7 +111,7 @@
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Proper-noun admission relief so the M2 acceptance phrase admits and chains (BUG-002)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "The 50/20 band retune rejects national (q=90), energy (q=94), laboratory (q=57) so the NREL phrase never enters the store and integration item 7 is unreachable. A blanket retune (REJECT >= 95) would re-admit lowercase context (51)/posts (47) and break the calibration no-menu suite. Fix: whole-token-only relief band admitting shape-valid capitalized (properName) rank-rejected words below a ceiling constant (default 120: > 94 so the phrase admits, <= 156 so The/This/With/Them stay rejected), validated with the tuning protocol and pinned by an automated end-to-end acceptance test.",
               "subtasks": [
                 {
@@ -150,7 +150,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S3",
                   "title": "Pin the M2 acceptance phrase in an automated end-to-end test (integration item 7)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1",
@@ -177,7 +177,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "Lower the raw-text bare-run mask floor from 40 to 32 chars",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — SECRET_WINDOW_RES (src/core/shapeGate.ts ~410) ends with the greedy catch-all /[0-9a-zA-Z/+]{40,}/g (no anchor prefilter, last in claim order); the classic AWS secret access key is 38 chars ('wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY') and slips past it, leaving unmasked camelCase fragments for expandCandidates.\n2. INPUT: SECRET_WINDOW_RES array + SECRET_WINDOW_ANCHORS prefilter in src/core/shapeGate.ts; test/mask-secrets.test.ts conventions.\n3. LOGIC: Implement PRD §Major Issue 3 (h3.2) recommendation: introduce a named constant (e.g. BARE_RUN_MIN = 32) and change the catch-all to /[0-9a-zA-Z/+]{32,}/g so the 38-char AWS key is masked pre-segmentation (same-length spaces). TDD in test/mask-secrets.test.ts: the AWS key inside a sentence is fully masked; 31-char runs are NOT masked (boundary); existing 40+ cases unchanged; audit prose fixtures (test/fixtures/sessions/*.jsonl replays) for over-masking — plain prose must not lose legitimate candidates (32+ unbroken [0-9a-zA-Z/+] runs are effectively absent from prose; 32+ hex hashes are secret-shaped by intent).\n4. OUTPUT: Tightened mask constant in src/core/shapeGate.ts consumed by P1.M2.T2.S3 battery; mask-secrets tests green.\n5. DOCS: [Mode A] Update the SECRET_WINDOW_RES entry comment / shapeGate module JSDoc documenting the 32 floor and why (38-char AWS secret class).",
@@ -192,7 +192,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S2",
                   "title": "Propagate whole-token secret rejection to sub-word drafts in the ingest memo",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — #computeAdmitMemo (src/pi/ingest.ts ~590-650) gates each CandidateDraft from expandCandidates independently; the ONLY cross-draft state is wholeGroup, set just when the whole token gate-passed AND admitted ('if (!draft.isSubword && result !== \"reject\") wholeGroup ??= result;'). A whole token rejected with GateRejectReason 'secret' leaves no trace, so its sub-words (jalr, femik7, mden, cyexamplekey — all sub-16-char, <=1 digit, defeating rules 6/7) pass. expandCandidates emits the whole draft FIRST, then sub-words — an ordered flag works.\n2. INPUT: GateResult/GateRejectReason from src/core/types.ts ('tooShort'|'tooLong'|'lowEntropy'|'unigramRun'|'secret'|'consonantRun'); expandCandidates draft order; #computeAdmitMemo structure and #replayAdmitMemo counters.\n3. LOGIC: Implement the PRD h3.2 minimum bar 'suppress candidates whose parent token was secret-rejected': in #computeAdmitMemo, when the whole-token draft's passesShape rejects with reason 'secret', mark the token and reject ALL its sub-word drafts for that token (never stored; count them with the existing secret-reject counters). Masked-away text never reaches tokenize (maskSecrets blanks it), so shape-gate-rejected parents are the remaining leak. TDD in test/ingest-pipeline.test.ts or test/adversarial-ingest.test.ts with the real pipeline + synthetic dict: processText('password wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY trailing') -> store.entries() contains NONE of jalr/femik7/mden/cyexamplekey; provider.getSuggestions(['cy'],...) returns no items; sub-words of gate-PASSING parents still admit (regression). Mock: none (real modules; synthetic dict binary via test/helpers/dict-writer.ts).\n4. OUTPUT: Parent-secret-aware memo in src/pi/ingest.ts consumed by P1.M2.T2.S3 battery.\n5. DOCS: [Mode A] Update the #computeAdmitMemo doc-block documenting the parent-secret propagation rule and its rationale (§01 'never embarrass'; §09 item 5).",
