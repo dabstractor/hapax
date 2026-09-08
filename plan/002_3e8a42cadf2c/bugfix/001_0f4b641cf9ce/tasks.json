@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Provider integration correctness (BUG-001, BUG-005)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Make hapax a strict overlay on stock pi completion: slash-command, @-mention, quoted-path and unquoted-path contexts always delegate to current.getSuggestions with options passed through unchanged (fixing both the typing-path preemption and the Tab-opens-menu path in slash contexts), and the armed chain resets to idle when a non-word-start char (notably the trigger char) precedes the typed fragment so trigger mode wins with the correct consumed prefix.",
           "tasks": [
             {
@@ -59,7 +59,7 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Armed-chain trigger-char reset and correct prefix consumption (BUG-005)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "While a word is armed, typing the trigger char plus a fragment ('x alphaone #b') must reset the chain to idle and let trigger mode answer with prefix '#b' (trigger char consumed), instead of filtering successors at prefix 'b' which leaves the '#' in the buffer after blind prefix-length deletion.",
               "subtasks": [
                 {
@@ -83,7 +83,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "Editor-sim integration test: trigger consumption and one-word invariant during chains",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1"

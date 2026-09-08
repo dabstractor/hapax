@@ -42,13 +42,14 @@
  * membership, so each arming menu stays a pure word list.
  */
 
-import { describe, expect, it, vi, type Mock } from "vitest";
+import { beforeAll, describe, expect, it, vi, type Mock } from "vitest";
 import type {
   AutocompleteItem,
   AutocompleteProvider,
   AutocompleteSuggestions,
 } from "@earendil-works/pi-tui";
 import { loadDictionary } from "../src/core/dictionary.js";
+import { rankMatches } from "../src/core/query.js";
 import { CandidateStore } from "../src/core/store.js";
 import type { Sighting } from "../src/core/types.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
@@ -71,6 +72,11 @@ import {
   asSessionManager,
   parseSessionFixture,
 } from "./helpers/session-fixture.js";
+import {
+  editorApplyCompletion,
+  prefixIsAnchorSafe,
+} from "./helpers/editor-sim.js";
+import { assertWordsOnly } from "./helpers/query-invariants.js";
 
 // ── fixtures (provider.test.ts style) ───────────────────────────────────────
 
@@ -838,5 +844,177 @@ describe("chain machine — armed branch word-start guard (BUG-005)", () => {
     // The normal path answers: threshold mode at the bare fragment 'be'.
     expect(r?.prefix).toBe("be");
     expect((r?.items ?? []).every((i) => i.description !== "chain")).toBe(true);
+  });
+});
+
+// ── editor-sim integration (bugfix 001_0f4b641cf9ce, P1.M1.T2.S2) ───────
+// S1's unit cases above assert PROVIDER RETURN VALUES at the makeStack
+// level; this describe is the editor-level layer ABOVE them: a persistent
+// buffer flows through real accepts, and the assertions are on the
+// resulting LINE TEXT — pi-tui's applyCompletion deletes exactly
+// prefix.length chars blindly, so only the buffer can prove that the
+// BUG-005 fix consumes '#' AND 'b' with no stranded residue (the h3.4
+// repro). The store is populated through the REAL ingest pipeline
+// (shipped dictionary: the nonsense words are dictionary-absent → group 0
+// → admit); only `current` is mocked. Cursors are line.length-derived —
+// col > text.length would delegate via extractMatchState's range guard
+// and prove nothing.
+describe("editor-sim integration — trigger consumption & one-word invariant (BUG-005/BUG-001)", () => {
+  /** The h3.4 repro corpus: two lines; the real bigram hook records
+   *  alphaone→betaword, betaword→gamma, alphaone→deltaword,
+   *  deltaword→epsilon. 'betaword' is the ONLY stored b-word, so the
+   *  '#b' trigger menu is deterministic without extra seeding. */
+  let store: CandidateStore;
+  beforeAll(async () => {
+    const wired = makeChainPipeline(true);
+    await wired.pipeline.processText("alphaone betaword gamma", false);
+    await wired.pipeline.processText("alphaone deltaword epsilon", true);
+    store = wired.store;
+  });
+
+  /** Production arming path on the real-ingested word: live menu at
+   *  "al" + whole-word Tab acceptance (menu membership + arming both
+   *  asserted). Lines/col are the arming buffer, e.g. (["al"], 2). */
+  async function armAlphaone(
+    p: ReturnType<typeof createHapaxProvider>,
+    chain: ReturnType<typeof createChainMachine>,
+    lines: string[],
+    col: number,
+  ): Promise<void> {
+    const menu = await suggest(p, lines, 0, col);
+    expect(menu?.items.map((i) => i.value)).toContain("alphaone");
+    p.applyCompletion(lines, 0, col, item("alphaone"), "al");
+    expect(chain.state()).toEqual({ word: "alphaone" });
+  }
+
+  it("case 1 — trigger char during an armed chain is consumed by completion (BUG-005 e2e)", async () => {
+    const ed = editingCurrent(["al"], 2);
+    const chain = createChainMachine();
+    const inner = createHapaxProvider(store, cfg(), ed, chain);
+
+    // Arm: accept "alphaone" from the live "al" menu through the REAL
+    // provider accept path — the editing mock's pi-tui splice lands it
+    // in the buffer.
+    await armAlphaone(inner, chain, ed.state.lines, ed.state.cursorCol);
+    expect(ed.state.lines).toEqual(["alphaone"]);
+
+    // The user has typed on to the h3.4 repro line (typing never touches
+    // the provider — the sim sets buffer state directly; ONLY accepts
+    // flow through applyCompletion).
+    const line = "x alphaone #b";
+    ed.state.lines = [line];
+    ed.state.cursorCol = line.length; // end of the typed text
+
+    // The armed branch disqualifies ('b' is glued to '#') and the
+    // normal path answers in TRIGGER mode at prefix '#b':
+    const r = await suggest(inner, ed.state.lines, 0, line.length);
+    expect(r?.prefix).toBe("#b"); // never the bare 'b' — that strands '#'
+    expect(chain.state()).toBeNull(); // glued fragment → idle (PRD §07)
+    expectSingleWordItems(r?.items ?? []); // invariant pre-accept
+    expect((r?.items ?? []).every((i) => i.description !== "chain")).toBe(true);
+    expect(r?.items.map((i) => i.value)).toEqual(["betaword"]); // deterministic
+
+    // Anchor-safety contract BEFORE every sim apply — without it the sim
+    // models nothing (the provider handed pi a non-suffix prefix).
+    expect(prefixIsAnchorSafe(line, line.length, r!.prefix!)).toBe(true);
+
+    // THE CORRUPTION DETECTOR: pi-tui's blind splice through the raw
+    // sim math — '#' AND 'b' consumed, no residue:
+    const out = editorApplyCompletion(line, line.length, r!.items[0]!.value, r!.prefix!);
+    expect(out).toBe("x alphaone betaword"); // pre-fix: "x alphaone #betaword"
+
+    // Accepting through the REAL provider re-arms on the accepted word
+    // and lands the SAME buffer result through the editing mock:
+    inner.applyCompletion(ed.state.lines, 0, line.length, r!.items[0]!, r!.prefix!);
+    expect(ed.state.lines).toEqual(["x alphaone betaword"]); // buffer truth
+    expect(ed.state.cursorCol).toBe("x alphaone betaword".length);
+    expect(chain.state()).toEqual({ word: "betaword" }); // re-armed
+  });
+
+  it("case 2 — one-word invariant holds across every chain-context menu", async () => {
+    const ed = editingCurrent(["al"], 2);
+    const chain = createChainMachine();
+    const inner = createHapaxProvider(store, cfg(), ed, chain);
+
+    await armAlphaone(inner, chain, ed.state.lines, ed.state.cursorCol);
+
+    // (i) Zero-typed-char word-start offer — unfiltered successors at
+    // prefix "", bare values:
+    const offerLine = "x alphaone ";
+    ed.state.lines = [offerLine];
+    ed.state.cursorCol = offerLine.length;
+    const offer = await suggest(inner, ed.state.lines, 0, offerLine.length);
+    expect(offer?.prefix).toBe("");
+    expect(offer?.items.map((i) => i.value)).toEqual(["betaword", "deltaword"]);
+    expectSingleWordItems(offer?.items ?? []);
+
+    // (ii) Word-start fragment filter — live narrowing at chain
+    // threshold 0, prefix is the raw fragment:
+    const fragLine = "x alphaone be";
+    ed.state.lines = [fragLine];
+    ed.state.cursorCol = fragLine.length;
+    const filtered = await suggest(inner, ed.state.lines, 0, fragLine.length);
+    expect(filtered?.prefix).toBe("be");
+    expect(filtered?.items.map((i) => i.value)).toEqual(["betaword"]);
+    expectSingleWordItems(filtered?.items ?? []);
+
+    // (iii) Post-accept offer: accepting 'betaword' re-arms the chain on
+    // it; the NEXT word start serves betaword's own successor (the
+    // real hook recorded betaword→gamma) — still single-word:
+    inner.applyCompletion(ed.state.lines, 0, fragLine.length, filtered!.items[0]!, filtered!.prefix!);
+    expect(chain.state()).toEqual({ word: "betaword" }); // re-armed
+    expect(ed.state.lines).toEqual(["x alphaone betaword"]); // buffer truth
+    ed.typeSpace();
+    const post = await suggest(inner, ed.state.lines, 0, ed.state.cursorCol);
+    expect(post?.prefix).toBe("");
+    expect(post?.items.map((i) => i.value)).toEqual(["gamma"]);
+    expectSingleWordItems(post?.items ?? []);
+
+    // (iv) RankedMatch level: the shared helper gates the direct core
+    // path with the same rule the pi-item checks above apply.
+    assertWordsOnly(rankMatches(store, "al"), "rankMatches 'al'");
+  });
+
+  it("case 3 — slash flow: Tab-equivalent forced call on '/re' returns the stock result, never hapax items (BUG-001 sim)", async () => {
+    // Stock sentinel: identity-proves the DELEGATE's result came back —
+    // a hapax menu would be a fresh { items, prefix } object.
+    const stockResult: AutocompleteSuggestions = {
+      items: [{ value: "/retry", label: "/retry" }],
+      prefix: "/re",
+    };
+    const current = makeCurrent({
+      getSuggestions: vi.fn(async () => stockResult),
+    });
+    const chain = createChainMachine();
+    const inner = createHapaxProvider(store, cfg(), current, chain);
+
+    // Arm FIRST: the stock-context gate must win even over an armed
+    // chain (branch order: abort → stock → armed → force-aware → normal).
+    await armAlphaone(inner, chain, ["al"], 2);
+
+    // pi-tui's Tab shape (editor.js Tab-with-no-menu path): force:false +
+    // explicitTab:true. The stock gate fires BEFORE the force read, so
+    // the flags cannot change the outcome — they pin the real shape.
+    const options = {
+      ...opts(),
+      force: false,
+      explicitTab: true,
+    } as Parameters<AutocompleteProvider["getSuggestions"]>[3];
+    const lines = ["/re"];
+    const r = await inner.getSuggestions(lines, 0, 3, options);
+
+    expect(r).toBe(stockResult); // exact sentinel identity — delegated
+    expect(current.getSuggestions).toHaveBeenCalledOnce();
+    expect(current.getSuggestions.mock.calls[0]![0]).toBe(lines); // args identity
+    expect(current.getSuggestions.mock.calls[0]![3]).toBe(options); // options identity
+    // Zero hapax items: hapax menus ALWAYS stamp provenance ("chain" or
+    // "session x<N>"); pi's stock items carry no description at all.
+    const hapaxItem = (r?.items ?? []).find(
+      (i) => i.description === "chain" || /^session x\d+$/.test(i.description ?? ""),
+    );
+    expect(hapaxItem, "stock result must contain no hapax items").toBeUndefined();
+    // The stock gate delegates WITHOUT disarming — the machine is never
+    // consulted on this path (branch-order contract).
+    expect(chain.state()).toEqual({ word: "alphaone" });
   });
 });
