@@ -9,11 +9,13 @@ them as Tab completions in the prompt input via pi's built-in autocomplete
 menu.
 
 **Status: M2 (v2) — complete, verified 2026-09-07; P1 stabilization sweep
-(adversarial-probe regression fixes) verified 2026-09-07.** The M1
+(adversarial-probe regression fixes) verified 2026-09-07; documentation
+swept to the successor-chaining design (R6) 2026-09-08.** The M1
 definition-of-done gauntlet — every gate, command, and measured number — is
-recorded in [`docs/M1-DoD.md`](docs/M1-DoD.md); the M2 evidence sweep
-(zero-typing chained completion, `enablePhrases` gating, `/acwords` phrase
-dump, M1 regression) is the item-7 section of
+recorded in [`docs/M1-DoD.md`](docs/M1-DoD.md), together with its "M2
+Definition of Done" post-delta re-verification (zero-typed-char chain
+offers, one-word-per-Tab invariant, `before_agent_start` reset); the
+scripted zero-typing chain proof is the item-7 section of
 [`test/fixtures/sessions/RESULTS.md`](test/fixtures/sessions/RESULTS.md)
 ("Item 7 — chained completion, zero typed characters — VERDICT: PASS").
 
@@ -44,29 +46,19 @@ dump, M1 regression) is the item-7 section of
   realistic-key probes in `test/adversarial-ingest.test.ts`.
 - **Zero persistence, zero telemetry, zero network** — everything lives in
   RAM and dies at `session_shutdown` (`src/pi/index.ts`).
-- **Phrase completions** (`src/core/store.ts`, `src/core/query.ts`) —
-  2- and 3-word phrases join the menu when the phrase occurs **≥ 2 times
-  in-session** (repetition — confirmed and sticky), or on **first sight
-  when every constituent word is rare** (fast path — unconfirmed, and
-  demoted again unless repeated within **40 messages**). While a phrase is
-  a candidate, its constituent words are suppressed from word-only
-  completion so the phrase wins — except a constituent that bears
-  successors in the chain index, which stays completable so it can still
-  arm the chain (next bullet).
-- **Chained Tab completion — zero additional typing**
-  (`src/pi/provider.ts`) — accepting a word via Tab arms its most-likely
-  successor (top-3 successor index built at ingest, `src/core/store.ts`);
-  the very next Tab completes that successor with no additional typing —
-  `National` → `renewable` → `energy` → `laboratory` (scripted proof:
-  item 7 of `test/fixtures/sessions/RESULTS.md`). Chaining resets on
-  `before_agent_start` and on disqualifying input. Phrases cooperate with
-  the chain instead of killing it: a phrase's **last word** arms the chain
-  exactly as a word accept does, and a bare word that can still arm the
-  chain is exempt from constituent suppression, so it stays in the menu
-  next to phrases that contain it. Chains arm normally in resumed
-  sessions — the `National → renewable → energy → laboratory` walk above
-  is reachable after a history replay (pinned by the chain-post-restore
-  probe in `test/adversarial-typing.test.ts`).
+- **Chained Tab completion — zero additional typing, one word per Tab**
+  (`src/pi/provider.ts`) — a top-3 successor index is built at ingest from
+  strict-adjacency bigrams captured from raw text (`recordBigramRuns`,
+  `src/core/store.ts`). Accepting a word via Tab arms its most-likely
+  successor: at the next word start the successor is already the top
+  result with ZERO typed characters — Tab inserts ONE word and re-arms, so
+  `National` → `Renewable` → `Energy` → `Laboratory` walks with nothing
+  typed between accepts. Typed characters filter the live successor list
+  normally. Chaining resets on `before_agent_start` (each new user turn)
+  and on disqualifying input, and arms normally in resumed sessions —
+  chain-after-restore probe in `test/adversarial-typing.test.ts` (machine:
+  `test/chain.test.ts`; gating: `test/chaining-gating.test.ts`; index:
+  `test/successors.test.ts`).
 
 ## Quick start
 
@@ -94,29 +86,22 @@ type  ze        → menu offers Zendesk → Tab inserts "Zendesk" (cased)
 type  #l        → menu offers lwlock  → Tab inserts it
 ```
 
-Chained completion needs no typing at all once a phrase chain exists in the
-session — discuss the National Renewable Energy Laboratory, then:
+Chaining is the only multi-word mechanism — and every insertion is exactly
+one word. Discuss the National Renewable Energy Laboratory, then:
 
 ```text
-type  natio            → menu offers National → Tab inserts "National"
-     (menu stays up)   → top offer renewable → Tab (no typing!)
-                        → energy → Tab → laboratory — four words, four Tabs
+type  natio   → menu offers National → Tab inserts "National"
+              → successor already the top result, ZERO typing
+              → Tab inserts "Renewable" → Tab → "energy" → Tab → "laboratory"
 ```
 
-Once admitted (by repetition or an all-rare first sight), phrases appear in
-the same menu as words, and phrase salience (1.2 × the sum of its
-constituents, plus a repetition bonus) outranks the prefix word — from the
-first line that contains `National Renewable Energy`, the `natio` menu
-offers the phrase and Tab inserts it in one step. The zero-typing chain is
-not lost to the phrase layer: a bare word that can still arm the chain
-stays in the menu alongside phrases that contain it (the
-successor-bearing-constituent exemption, `src/core/query.ts`), and
-accepting a phrase arms the chain on its last word — so the
-`National → renewable → energy → …` walk remains reachable after the
-phrase is admitted, in fresh and resumed sessions alike
-(regression-pinned in `test/adversarial-typing.test.ts`; in phrase-free
-sessions, or with `enablePhrases: false`, everything above is pure word
-chaining).
+Accepting a word arms its most-likely successor (`src/pi/provider.ts`):
+at the very next word start the armed successor is offered as the top
+result with nothing typed, each Tab inserts one word and re-arms, and
+typed characters filter the live successor list normally. The chain resets
+on `before_agent_start` (each new user turn) and on disqualifying input,
+and arms normally in resumed sessions — the walk above is reachable after
+a history replay (regression-pinned in `test/adversarial-typing.test.ts`).
 
 Ordinary prose: typing is identical to stock pi — no key is captured, no
 menu appears for common words, and Tab with no selection inserts a literal
@@ -129,8 +114,9 @@ Two layers:
 - `src/core/` — pure, agent-agnostic computation: `dictionary` (packed
   binary loader), `segment` (word segmentation + camelCase/snake_case
   splitting), `shapeGate` (noise/secret rejection), `score` (admission +
-  salience), `store` (per-session candidates, 20k cap, plus the M2 phrase
-  store and top-3 successor index), `query` (prefix search + ranking). No
+  salience), `store` (per-session word candidates, 20k cap, plus the
+  top-3 successor index fed by strict-adjacency bigrams captured from raw
+  text at ingest), `query` (prefix search + ranking). No
   pi imports.
 - `src/pi/` — the pi adapter: `index` (extension factory + lifecycle),
   `ingest` (message handling), `provider` (autocomplete integration),
@@ -180,17 +166,16 @@ the packed dictionary fails to load, ingestion is disabled
 permanently for that runtime (one error notify) while the empty provider
 stays registered, delegating all completion to pi; a failure observed
 during the history replay also aborts the replay itself — a resumed
-session never admits history through a broken dictionary. A completed
-replay ends with one phrase-demotion sweep, so fast-path phrases from
-history that outlived their 40-ordinal probation without a repeat are
-demoted before the first live message — see
-[Missing dictionary → graceful disable](#missing-dictionary--graceful-disable).
+session never admits history through a broken dictionary.
 
 ## Design invariants
 
 1. **Never hijack typing.** No key is ever captured, consumed, or altered
    except Tab while a suggestion is selected. The user's typing experience is
-   unchanged; the menu is strictly take-it-or-leave. This is guaranteed, not
+   unchanged; the menu is strictly take-it-or-leave. Tab only completes —
+   the menu opens by typing only: the 2nd threshold char, the 1st char
+   after the trigger char, or the zero-char chain offer. There is no
+   manual open gesture. This is guaranteed, not
    best-effort: ordinary prose never opens a menu — the calibrated bands
    reject the top ~945 English words (`test/shipped-dict.test.ts`), and
    prose-no-menu probes pin it (`test/adversarial-typing.test.ts`).
@@ -357,17 +342,14 @@ notification, what the ingest pipeline actually admitted this session:
 - ingest counters: words seen, admitted, and per-rule shape-gate
   rejections (`tooShort`, `tooLong`, `lowEntropy`, `unigramRun`,
   `secret`, `consonantRun`);
-- the phrase layer (M2): the stored-phrase count against the 10,000-phrase
-  cap, the top 10 phrases by salience — display form, occurrence count
-  (`×N`), and a `(repeat)` marker on repetition-admitted phrases (seen ≥ 2
-  times) — plus one successor-index sample: the top successors of the top
-  phrase's first word, rendered `national → renewable ×4, license ×1`.
-  This sample is the tuning signal for the Tab-chained completion offers.
+- the successor-index sample: for the 10 highest-salience words that have
+  successors (`SUCCESSOR_SAMPLE_N` in `src/pi/debug.ts`), rows rendered
+  `word → successor ×count` — the tuning signal for chained offers. A
+  store with no successor entries renders `successor index sample` /
+  `(none)`.
 
 The dump contains stored words and counters only — it never prints
-message bodies. A session with no stored phrases (nothing ingested yet,
-or `enablePhrases: false` in the config) renders `phrases: (none)` and
-omits the successor sample.
+message bodies.
 
 ### Development
 
@@ -433,10 +415,8 @@ pi's built-in completion is delegated, never hijacked. The same gate owns
 the restore path: if the dictionary dies during `session_start` history
 replay, the replay aborts immediately and none of the remaining history is
 admitted — a resumed session starts from an empty store, never a
-half-ingested one — and the live path stays disabled afterwards. A replay
-that completes normally ends with one phrase-demotion sweep (stale
-fast-path phrases demoted, live vocabulary untouched). pi itself remains
-fully functional. Restore the file and restart pi to re-enable hapax.
+half-ingested one — and the live path stays disabled afterwards. pi itself
+remains fully functional. Restore the file and restart pi to re-enable hapax.
 (For testing, the `HAPAX_DICT=/path/to/file.bin` environment variable
 overrides the resolved path.)
 
@@ -451,7 +431,7 @@ npm run bench   # PRD §09 perf-gate micro-benchmarks (synthetic fixtures; >3× 
 The `npm test` gate also runs the adversarial suites —
 `test/adversarial-typing.test.ts` (prose no-menu, Tab-corruption editor
 sims, chain-after-restore) and `test/adversarial-ingest.test.ts`
-(realistic-key masking, bad-dict restore, demotion cadence) — the
+(realistic-key masking, bad-dict restore) — the
 regression pins behind the guarantees above.
 
 Performance gates (PRD §09; asserted at 3× budget headroom by

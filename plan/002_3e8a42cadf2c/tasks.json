@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "D2: M2 Redesign — successor-chaining only + Tab contract hardening",
-      "status": "Ready",
+      "status": "Complete",
       "description": "Ship the D2 delta on top of the complete M1+M2 codebase: enforce the one-word completion invariant (delete the entire multi-word phrase layer, keep only the raw-text-adjacency bigram successor index), harden segmentation against non-ASCII-adjacent runs, make Tab only ever complete (forced single-item mitigation against pi-tui's Tab flow), redesign chaining to offer successors at zero typed chars with bare one-word values, rename the config gate to enableChaining with a deprecated enablePhrases alias, and sync changeset-level docs. Grounded in plan/002_3e8a42cadf2c/architecture/ (system_context.md + 5 recon reports). Out of scope per PRD: dictionary/admission/salience/thresholds, pi-tui modifications, persistence, telemetry.",
       "milestones": [
         {
@@ -362,7 +362,7 @@
           "type": "Milestone",
           "id": "P1.M4",
           "title": "Changeset coherence — DoD re-verification & documentation sync (R6)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Re-verify the rewritten M2 Definition of Done across the whole delta (M1 suites re-run green, one-word invariant, every adjacency break, forced single-item, chain reset, integration item 7), then sync all changeset-level documentation.",
           "tasks": [
             {
@@ -427,14 +427,14 @@
               "type": "Task",
               "id": "P1.M4.T2",
               "title": "Sync changeset-level documentation (R6 — final task)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Mode B catch-all: README feature list, usage, architecture, invariants, configuration, and debug sections refreshed to describe exactly the shipped delta; every claim verified against behavior, anything unimplemented deleted.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M4.T2.S1",
                   "title": "README.md changeset sweep (features, usage, architecture, invariants, config, debug)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1",
