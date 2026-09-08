@@ -133,7 +133,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "Re-run tuning protocol: calibration, shipped-dict, and adversarial suites stay green",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1"

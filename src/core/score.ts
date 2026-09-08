@@ -103,10 +103,26 @@ export const MID_FREQ_THRESHOLD = 20 as const;
  *  bugfix/001_0f4b641cf9ce): a properName-flagged, non-subword,
  *  dictionary-attested candidate with REJECT_COMMON_THRESHOLD ≤ q <
  *  PROPER_NOUN_ADMIT_CEILING admits at group 2 instead of rejecting.
- *  Baked per PRD §08; 120 = the original spec §04 mid-band boundary.
- *  Must satisfy 94 < ceiling ≤ 156 so national(90)/energy(94)/
- *  laboratory(57) admit while The(240)/This(197)/With(179)/Them(156)
- *  stay rejected.
+ *  Baked per PRD §08; tuned 120 → 95 by the §09 tuning-protocol re-run
+ *  (P1.M2.T1.S2, Mode A below). Must satisfy 94 < ceiling ≤ 156 so
+ *  national(90)/energy(94)/laboratory(57) admit while The(240)/This(197)/
+ *  With(179)/Them(156) stay rejected.
+ *
+ *  Why 95 (measured, prose A/B against test/fixtures/sessions/
+ *  prose.jsonl): the fixture contains sentence-initial capitals, and the
+ *  relief admits ANY capitalized occurrence — at 120 sixteen common
+ *  words stored (Check q=119, Sleep 118, Light 113, Cold 109, Strong
+ *  106, Enjoy/Lunch 102, Books/Guard 95, Fresh 93, Rain/Warm 92, Spring
+ *  84, Feed 88, Apple 77, Apples 59) and two expected.md `[]` labels
+ *  flipped (gar → Guard, fresh → Fresh). 95 — the interval's minimum —
+ *  is the tightest legal band: it excludes every excludable label-breaker
+ *  (Guard/Books at q=95 reject at ceiling 95 since relief is q < ceiling
+ *  STRICT) and also keeps Water(121) out — "Water" occurs capitalized in
+ *  the fixture, so any ceiling ≥ 122 would re-break `wate → []`. Fresh
+ *  (q=93) is below the interval floor and cannot be excluded by any
+ *  legal ceiling; its expected.md row is the documented minimal
+ *  re-label (fallback ladder step 3). Full probe table + A/B result in
+ *  the admit() doc-block below.
  *
  *  Why a relief band and not a blanket REJECT retune: REJECT ≥ 95 would
  *  re-admit lowercase context(51)/posts(47) and break the calibration
@@ -115,7 +131,7 @@ export const MID_FREQ_THRESHOLD = 20 as const;
  *  spec/04's original 220/120 table — spec/*.md is READ-ONLY; this
  *  JSDoc is the record. Verified against the shipped artifact via
  *  tools/calibrate-bands.mjs. */
-export const PROPER_NOUN_ADMIT_CEILING = 120 as const;
+export const PROPER_NOUN_ADMIT_CEILING = 95 as const;
 
 /** Admission outcome: a rank group (0 = rarest/best … 2 = mid-frequency)
  *  or 'reject' (never enters the store). */
@@ -156,6 +172,37 @@ export type AdmissionResult = RankGroup | "reject";
  * bigram-path change. Downstream: a relieved parent sets wholeGroup = 2,
  * so its sub-words clamp to min(2, max(table, 2+1)) = 2; properName also
  * feeds salience (W_PROPER_NAME = 0.8) — unchanged.
+ *
+ * MEASURED — §09 tuning-protocol re-run (P1.M2.T1.S2, Mode A; real
+ * pipeline + shipped dict against test/fixtures/sessions/prose.jsonl):
+ * the fixture is full of sentence-initial capitals, so the relief is
+ * load-bearing there. Final ceiling 95 (tuned from S1's 120; legal
+ * integer range 95..156). Probe table (word → dict q → verdict under
+ * the final band):
+ *
+ *   admit group 2 via relief (capitalized in fixture, 50 ≤ q < 95):
+ *     Apple 77, Apples 59, Feed 88, Fresh 93, Rain 92, Spring 84,
+ *     Warm 92
+ *   reject / delegate (capitalized in fixture, q ≥ 95): Guard 95,
+ *     Books 95, Enjoy 102, Lunch 102, Strong 106, Cold 109, Light 113,
+ *     Sleep 118, Check 119, Water 121, Move 128, Keep 138, Long 138,
+ *     Take 155, They 174, Your 188, This 197
+ *   reject via casing gate (occur ONLY lowercase → never stored despite
+ *     50 ≤ q < 95): garden 86, bread 84, wind 97; and above-ceiling
+ *     lowercase: kitchen 96, window 99, morning 129, more 150,
+ *     water 121
+ *   normal mid-band (no relief needed): fences 41, posts 47
+ *
+ * A/B result: at S1's ceiling 120 two expected.md prose `[]` labels
+ * flipped (gar → relieved Guard 95; fresh → relieved Fresh 93). Ceiling
+ * 120 → 95 — one constant, the interval minimum — re-fixed `gar`
+ * (95 < 95 false → Guard rejects); `fresh` (q=93) is below the interval
+ * floor and unfixable by any legal ceiling, so its expected.md row is
+ * the documented minimal re-label (ladder step 3) to ["Fresh"]. Water
+ * (121, capitalized in the fixture) additionally caps the ceiling at
+ * 121. Evidence: test/acceptance.test.ts item-2 "prose A/B replay";
+ * probe/delegation guarantees (SENTINEL identity, calledOnce,
+ * __hapaxLive() null) unchanged.
  *
  * @param draft the shape-gated candidate (key must be lowercase)
  * @param dictionary quantized commonness dictionary (0–255 rank or null)

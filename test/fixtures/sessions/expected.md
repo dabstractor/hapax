@@ -29,9 +29,13 @@ Label casing matters: the menu shows the stored display casing verbatim
   `water` q=121, `morning` q=129, `more` q=150, `look` q=157, `long`
   q=138, and (since the Issue-1 retune) `garden` q=86, `kitchen` q=96,
   `window` q=99, `fresh` q=93, `bread` q=84, `fence` q=71, and the PRD's
-  named example `context` q=51. Rare and mid-band words still admit: the
-  prose store holds exactly 5 keys (`fences`, `howls`, `posts`,
-  `sweeten`, `washes` — q 26–47 band members).
+  named example `context` q=51. Rare and mid-band words still admit.
+  EXCEPTION — the proper-noun relief band (bugfix 001_0f4b641cf9ce,
+  ceiling 95, tuned by the §09 protocol re-run): a CAPITALIZED sighting
+  of a reject-band word with q < 95 stores at group 2. In this fixture
+  that admits apple/apples/feed/fresh/rain/spring/warm (all occur
+  sentence-initial capitalized); everything at q ≥ 95 (guard, books,
+  check, cold, enjoy, light, lunch, sleep, strong, water, …) stays out.
 
 ## zendesk-lwlock.jsonl (item 1 — jargon picked up mid-session)
 
@@ -56,6 +60,15 @@ but every such source word is shorter than the shape gate's 4-char minimum,
 so nothing is stored under those prefixes → zero candidates → the provider
 must delegate (never a menu).
 
+Store contents under the final band (ceiling 95, bugfix 001_0f4b641cf9ce
+tuning re-run): 12 keys — mid-band `fences`, `howls`, `posts`, `sweeten`,
+`washes` (q 26–47) plus seven relieved capitalized sightings `apple`,
+`apples`, `feed`, `fresh`, `rain`, `spring`, `warm` (q 59–93; display
+casing = the capitalized sighting). Every at/above-ceiling capitalized
+word (guard 95, books 95, … water 121) and every lowercase-only common
+word (water, kitchen, window, garden, bread, wind, morning, more) is
+absent from the store.
+
 | fragment | expected top-8 | note |
 | --- | --- | --- |
 | `of`,`on`,`at`,`be`,`by`,`do`,`go`,`he`,`in`,`it`,`no`,`or`,`so`,`to`,`up`,`we`,`me`,`my`,`us`,`if` | `[]` for every one | source words are all <4 chars → gate-rejected at ingest |
@@ -65,10 +78,10 @@ must delegate (never a menu).
 | `wate` | `[]` | `water` q=121 ≥ REJECT → rejected at admission, never stored |
 | `kit` | `[]` | `kitchen` q=96 reject-band (since the Issue-1 retune) → never stored |
 | `mor` | `[]` | `morning` q=129 and `more` q=150 both reject-band → never stored |
-| `wind` | `[]` | `window` q=99 and `wind` q=92 reject-band → never stored |
-| `fresh` | `[]` | `fresh` q=93 reject-band → never stored |
+| `wind` | `[]` | `window` q=99 and `wind` q=97 reject-band → never stored (neither occurs capitalized in this fixture — the relief never fires for them) |
+| `fresh` | `["Fresh"]` | RE-LABELED (bugfix 001_0f4b641cf9ce tuning re-run, ladder step 3): `fresh` q=93 sits BELOW the relief interval floor (94, 156], so no legal ceiling excludes it and the fixture's capitalized `Fresh` sightings store at group 2; display = the capitalized sighting |
 | `bread` | `[]` | `bread` q=84 reject-band → never stored |
-| `gar` | `[]` | `garden` q=86 reject-band → never stored |
+| `gar` | `[]` | `garden` q=86 reject-band → never stored (it never occurs capitalized here); relieved `Guard` q=95 is excluded at ceiling 95 (95 < 95 is false) and would have leaked at S1's 120 — the tuning re-run's ladder fixed this row via the ceiling alone |
 | `fenc` | `["Fences"]` | `fence` q=71 rejects but `fences` q=41 admits; display casing = most recent sighting |
 
 ## large-100k.jsonl (items 3 + 5 — restore performance, secrets never suggested)

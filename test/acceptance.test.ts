@@ -31,6 +31,10 @@ import { describe, expect, it, vi, beforeAll, type Mock } from "vitest";
 import { loadDictionary } from "../src/core/dictionary.js";
 import type { Dictionary } from "../src/core/types.js";
 import { maskSecrets, passesShape } from "../src/core/shapeGate.js";
+import {
+  PROPER_NOUN_ADMIT_CEILING,
+  REJECT_COMMON_THRESHOLD,
+} from "../src/core/score.js";
 import { rankMatches } from "../src/core/query.js";
 import { CandidateStore } from "../src/core/store.js";
 import type { CandidateDraft } from "../src/core/segment.js";
@@ -275,6 +279,119 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     expect(result!.items.map((i) => i.value)).toEqual(["posts"]);
     expect(result!.prefix).toBe("post");
     expect(provider.__hapaxLive()).not.toBeNull();
+  });
+
+  it("prose A/B replay under the proper-noun relief band (§09 tuning protocol, bugfix 001_0f4b641cf9ce P1.M2.T1.S2)", async () => {
+    // RUN NOTES (evidence for P1.M2.T1.S3 / P1.M4.T1.S1 — measured against
+    // the shipped artifact, ceiling tuned 120 → 95 by this protocol run):
+    //
+    // The relief admits ANY capitalized sighting with
+    // REJECT_COMMON_THRESHOLD ≤ q < PROPER_NOUN_ADMIT_CEILING, and this
+    // fixture is full of sentence-initial capitals. MEASURED (real
+    // pipeline + shipped dict):
+    //
+    //   relieved + stored (group 2): Apple 77, Apples 59, Feed 88,
+    //     Fresh 93, Rain 92, Spring 84, Warm 92
+    //   excluded at ceiling 95 (q ≥ 95, capitalized in fixture): Guard 95,
+    //     Books 95, Enjoy 102, Lunch 102, Strong 106, Cold 109, Light 113,
+    //     Sleep 118, Check 119, Water 121, Move 128, Keep/Long 138,
+    //     Take 155, They 174, Your 188, This 197
+    //   lowercase-only common words (never capitalized → never stored,
+    //     relief is casing-gated): water 121, kitchen 96, window 99,
+    //     garden 86, bread 84, wind 97, morning 129, more 150
+    //
+    // LADDER RECORD: at S1's ceiling 120, TWO expected.md `[]` labels
+    // broke — `gar` (relieved Guard q=95 prefix-matched it; garden itself
+    // never occurs capitalized) and `fresh` (relieved Fresh q=93).
+    // Lowering the ceiling to the interval minimum 95 — one
+    // constant, legal range (94, 156] — re-fixed `gar` (95 < 95 is
+    // false → Guard rejects). `fresh` (q=93) is BELOW the interval floor
+    // and cannot be excluded by any legal ceiling → the documented
+    // fallback applied: exactly the `fresh` row of expected.md was
+    // re-labeled to ["Fresh"] (ladder step 3); no other label changed,
+    // and no delegation-identity assertion was weakened. Water(121) is
+    // why the ceiling must also stay ≤ 121: "Water" occurs capitalized,
+    // so any ceiling ≥ 122 would re-break `wate → []`.
+    const { store } = await ingestFixture(`${FIXTURES}/prose.jsonl`);
+    const dict: Dictionary = loadDictionary(resolveDictPath());
+    const current = mockCurrent(SENTINEL);
+    const provider = createHapaxProvider(store, cfg(), current);
+
+    // ── Negative side: every remaining expected.md `[]` label delegates. ──
+    // (wate/kit/mor/wind/bread/gar — the multi-char no-menu labels; the
+    // 2-char probes are pinned by the tests above.) Each must return the
+    // delegate's SENTINEL by identity, call the wrapped provider exactly
+    // once, and leave NO live cache behind (a stale live result is a
+    // no-hijack violation even when the return value matches).
+    const noMenuProbes = ["wate", "kit", "mor", "wind", "bread", "gar"];
+    for (const probe of noMenuProbes) {
+      const current2 = mockCurrent(SENTINEL);
+      const p = createHapaxProvider(store, cfg(), current2);
+      const result = await p.getSuggestions([probe], 0, probe.length, opts());
+      expect(result, `probe "${probe}"`).toBe(SENTINEL);
+      expect(current2.getSuggestions, `probe "${probe}"`).toHaveBeenCalledOnce();
+      expect(p.__hapaxLive(), `probe "${probe}" live cache`).toBeNull();
+    }
+
+    // ── Positive side, relief band: capitalized fixture sightings with
+    // REJECT ≤ q < ceiling store at group 2. Guard assertions are
+    // parameterized on the IMPORTED constants — a future retune that
+    // moves a word out of (or into) the band fails here and forces the
+    // label surface to be re-synced, never silently drifted.
+    const relieved: [word: string, fixtureDisplay: string][] = [
+      ["apple", "Apple"],
+      ["apples", "Apples"],
+      ["feed", "Feed"],
+      ["fresh", "Fresh"],
+      ["rain", "Rain"],
+      ["spring", "Spring"],
+      ["warm", "Warm"],
+    ];
+    for (const [word, display] of relieved) {
+      const q = dict.lookup(word);
+      expect(q, `${word}: fixture-measured band member`).not.toBeNull();
+      expect(q!, `${word}: relief requires q ≥ REJECT`).toBeGreaterThanOrEqual(REJECT_COMMON_THRESHOLD);
+      expect(q!, `${word}: relief requires q < ceiling`).toBeLessThan(PROPER_NOUN_ADMIT_CEILING);
+      const c = store.get(word);
+      expect(c, `${word}: relieved capitalized sighting must store`).toBeDefined();
+      expect(c!.rankGroup, `${word}: relief admits at group 2`).toBe(2);
+      expect(c!.display, `${word}: display casing`).toBe(display);
+    }
+
+    // ── Positive side, exclusion: capitalized fixture words at/above the
+    // ceiling must NOT store — the same words with q ≥ ceiling stay
+    // rejected even though they occur capitalized.
+    const excluded = [
+      "guard", "books", "enjoy", "lunch", "strong", "cold", "light",
+      "sleep", "check", "water", "move", "keep", "long", "take",
+      "they", "this", "your",
+    ];
+    for (const word of excluded) {
+      const q = dict.lookup(word);
+      expect(q, `${word}: fixture-measured at/above ceiling`).not.toBeNull();
+      expect(q!, `${word}: exclusion requires q ≥ ceiling (raise the ceiling and re-run the protocol)`).toBeGreaterThanOrEqual(
+        PROPER_NOUN_ADMIT_CEILING,
+      );
+      expect(store.get(word), `${word}: at/above-ceiling capitalized word must not store`).toBeUndefined();
+    }
+
+    // ── Casing gate: common words that occur ONLY lowercase in this
+    // fixture must stay absent even when the relief band covers their q —
+    // the relief is per-sighting properName, never a word-level whitelist.
+    for (const word of ["water", "kitchen", "window", "garden", "bread", "wind", "morning", "more"]) {
+      expect(store.get(word), `${word}: lowercase-only sighting must never store`).toBeUndefined();
+    }
+
+    // ── precision@8 rank order for the menu-positive labels under the
+    // final band: the two normal-mid controls plus the ONE re-labeled
+    // row (fresh; see the ladder record above — expected.md is the
+    // authority, this pins its current state).
+    expect(rankMatches(store, "post").map((m) => m.display)).toEqual(["posts"]);
+    expect(rankMatches(store, "fenc").map((m) => m.display)).toEqual(["Fences"]);
+    expect(rankMatches(store, "fresh").map((m) => m.display)).toEqual(["Fresh"]);
+    const freshMenu = await provider.getSuggestions(["fresh"], 0, 5, opts());
+    expect(freshMenu?.items.map((i) => i.value)).toEqual(["Fresh"]);
+    expect(freshMenu?.prefix).toBe("fresh");
   });
 });
 
