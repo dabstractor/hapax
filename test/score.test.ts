@@ -9,6 +9,13 @@
  * recalibration (BUG-001 retune), while the "baked thresholds" describe
  * below deliberately pins the current measured values.
  *
+ * The proper-noun relief band (BUG-002 fix, plan 002
+ * bugfix/001_0f4b641cf9ce) has its own describe: a capitalized whole
+ * token with REJECT ≤ q < PROPER_NOUN_ADMIT_CEILING admits at group 2
+ * instead of rejecting; lowercase occurrences, at/above-ceiling words,
+ * and sub-words never relieve. Boundary cases use the imported ceiling
+ * constant, same discipline as the band boundaries.
+ *
  * The Dictionary is stubbed per the types.ts contract — no real binary is
  * loaded in unit tests — so key strings are arbitrary: lookup is a pure
  * function of the stub map.
@@ -23,6 +30,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MID_FREQ_THRESHOLD,
+  PROPER_NOUN_ADMIT_CEILING,
   REJECT_COMMON_THRESHOLD,
   admit,
   compareCandidates,
@@ -39,13 +47,22 @@ const dict = (entries: Record<string, number>): Dictionary => ({
   entryCount: Object.keys(entries).length,
 });
 
-/** Whole-token draft by default; isSubword=true adds a parentKey. */
-const draft = (key: string, isSubword = false): CandidateDraft => ({
+/** Whole-token draft by default; isSubword=true adds a parentKey. The
+ *  third parameter overrides any CandidateDraft field — used by the
+ *  relief-band cases to set properName/display (admit() reads only
+ *  key/isSubword/properName, and the key stays lowercase per its
+ *  contract; display carries the capitalized form for realism). */
+const draft = (
+  key: string,
+  isSubword = false,
+  over: Partial<CandidateDraft> = {},
+): CandidateDraft => ({
   key,
   display: key,
   properName: false,
   isSubword,
   ...(isSubword ? { parentKey: "parent" } : {}),
+  ...over,
 });
 
 /** Fresh 1-sighting group-0 candidate seen at ordinal 1; override any field. */
@@ -159,6 +176,88 @@ describe("admit — subword clamp (PRD §04 h2.24)", () => {
     expect(
       admit(draft("token", true), dict({ token: REJECT_COMMON_THRESHOLD - 1 })),
     ).toBe(2);
+  });
+});
+
+describe("admit — proper-noun relief band (BUG-002)", () => {
+  // The BUG-002 shape: National=90, Energy=94, Laboratory=57 in the
+  // shipped dict — all ≥ REJECT_COMMON_THRESHOLD (50) so the BUG-001
+  // bands rejected them and M2 integration item 7 ("National Renewable
+  // Energy Laboratory" chaining) could never arm. The relief admits
+  // CAPITALIZED WHOLE tokens in [REJECT, CEILING) at group 2.
+  it("capitalized mid word (REJECT ≤ q < ceiling) relieves to group 2", () => {
+    expect(
+      admit(
+        draft("national", false, { display: "National", properName: true }),
+        dict({ national: 90 }),
+      ),
+    ).toBe(2);
+  });
+
+  it("lowercase occurrence of the same word still rejects (properName false)", () => {
+    expect(admit(draft("national"), dict({ national: 90 }))).toBe("reject");
+  });
+
+  it("capitalized word at/above the ceiling still rejects (The = 240)", () => {
+    expect(
+      admit(draft("the", false, { display: "The", properName: true }), dict({ the: 240 })),
+    ).toBe("reject");
+  });
+
+  it("boundary: q = ceiling rejects, q = ceiling − 1 relieves (strict <)", () => {
+    // Synthetic word so the case is independent of any real corpus shift;
+    // both edges pinned via the imported constant, same as the band tests.
+    const proper = { display: "Nadroj", properName: true };
+    expect(
+      admit(
+        draft("nadroj", false, proper),
+        dict({ nadroj: PROPER_NOUN_ADMIT_CEILING }),
+      ),
+    ).toBe("reject");
+    expect(
+      admit(
+        draft("nadroj", false, proper),
+        dict({ nadroj: PROPER_NOUN_ADMIT_CEILING - 1 }),
+      ),
+    ).toBe(2);
+  });
+
+  it("sub-words never relieve: a table-rejected sub-word stays rejected (clamp-immune)", () => {
+    // The PRP's literal case (sub-word at q=94, relieved parent → 2)
+    // contradicts the module contract this suite already pins: relief
+    // requires !isSubword, and 'reject' returns BEFORE the clamp (it is
+    // clamp-immune) — so the sub-word of a relieved parent whose OWN
+    // lookup lands in the reject band stays rejected. Pinned as such.
+    expect(
+      admit(
+        draft("energy", true, { display: "Energy", properName: true }),
+        dict({ energy: 94 }),
+        2,
+      ),
+    ).toBe("reject");
+  });
+
+  it("sub-word of a relieved parent clamps at group 2 (never above parent + 1)", () => {
+    // Own table result admits (mid band → 2); relieved parent is group 2
+    // → min(2, max(2, 2+1)) = 2.
+    expect(
+      admit(draft("energetic", true), dict({ energetic: 30 }), 2),
+    ).toBe(2);
+    // Own table result rare (→ 1); parent 2 → min(2, max(1, 3)) = 2.
+    expect(
+      admit(draft("energise", true), dict({ energise: 10 }), 2),
+    ).toBe(2);
+  });
+
+  it("capitalized dictionary-absent word stays group 0 (relief never demotes)", () => {
+    // q === null already admits rarest (group 0); a relief that returned
+    // 2 here would DEMOTE it. The q !== null guard prevents that.
+    expect(
+      admit(
+        draft("zorpwibble", false, { display: "Zorpwibble", properName: true }),
+        dict({}),
+      ),
+    ).toBe(0);
   });
 });
 

@@ -13,6 +13,9 @@
  *   otherwise                  → 'reject'   very common ("the", "context",
  *                                           "data" — PRD §04's reject
  *                                           examples and their band)
+ *   + proper-noun relief (BUG-002): a CAPITALIZED whole token with
+ *     REJECT_COMMON_THRESHOLD ≤ q < PROPER_NOUN_ADMIT_CEILING admits at
+ *     group 2 instead of rejecting.
  *
  * Band values are pinned by MEASUREMENT against the shipped artifact —
  * tools/calibrate-bands.mjs prints the rank↔word↔q table and re-verifies the
@@ -96,6 +99,24 @@ export const REJECT_COMMON_THRESHOLD = 50 as const;
  *  live bands: reject [50,255], mid [20,50), rare-attested [0,20)). */
 export const MID_FREQ_THRESHOLD = 20 as const;
 
+/** Relief ceiling for capitalized whole tokens (BUG-002 fix,
+ *  bugfix/001_0f4b641cf9ce): a properName-flagged, non-subword,
+ *  dictionary-attested candidate with REJECT_COMMON_THRESHOLD ≤ q <
+ *  PROPER_NOUN_ADMIT_CEILING admits at group 2 instead of rejecting.
+ *  Baked per PRD §08; 120 = the original spec §04 mid-band boundary.
+ *  Must satisfy 94 < ceiling ≤ 156 so national(90)/energy(94)/
+ *  laboratory(57) admit while The(240)/This(197)/With(179)/Them(156)
+ *  stay rejected.
+ *
+ *  Why a relief band and not a blanket REJECT retune: REJECT ≥ 95 would
+ *  re-admit lowercase context(51)/posts(47) and break the calibration
+ *  no-menu gate (test/calibration.test.ts — its probes are lowercase, so
+ *  the capitalized-only relief cannot touch them). Known drift from
+ *  spec/04's original 220/120 table — spec/*.md is READ-ONLY; this
+ *  JSDoc is the record. Verified against the shipped artifact via
+ *  tools/calibrate-bands.mjs. */
+export const PROPER_NOUN_ADMIT_CEILING = 120 as const;
+
 /** Admission outcome: a rank group (0 = rarest/best … 2 = mid-frequency)
  *  or 'reject' (never enters the store). */
 export type AdmissionResult = RankGroup | "reject";
@@ -107,6 +128,34 @@ export type AdmissionResult = RankGroup | "reject";
  * then — for sub-words only — clamps the result so it never ranks above the
  * parent whole token's group + 1 (saturated at 2). 'reject' passes through
  * unclamped.
+ *
+ * Proper-noun relief (BUG-002, bugfix/001_0f4b641cf9ce): BEFORE the reject
+ * early-return, a candidate that tabled as 'reject' is admitted at group 2
+ * when ALL of the following hold —
+ *   - `result === "reject"` (the table rejected it),
+ *   - `!draft.isSubword` (whole tokens only; sub-words keep the clamp and
+ *     never relieve — a table-rejected sub-word stays rejected),
+ *   - `draft.properName` (capitalized occurrences only: set by
+ *     expandCandidates from the display's first char at extraction time —
+ *     lowercase prose like "energy" still rejects, so menu noise stays
+ *     calibrated),
+ *   - `q !== null` (dictionary-attested only; an absent word already
+ *     admits at group 0 and a relief to 2 would DEMOTE it),
+ *   - `q < PROPER_NOUN_ADMIT_CEILING` (strict — the ceiling itself
+ *     rejects; see the constant's JSDoc for the load-bearing (94, 156]
+ *     interval and the known drift from spec/04's original 220/120
+ *     table).
+ *
+ * Rationale: M2 integration item 7 chains "National Renewable Energy
+ * Laboratory", whose words sit at q 57–94 — inside the BUG-001 reject
+ * band. A blanket retune (REJECT ≥ 95) would re-admit lowercase
+ * context(51)/posts(47) and break the calibration no-menu gate; the
+ * capitalized-only relief admits the phrase while prose stays rejected.
+ * Admission alone restores chaining: admitted whole tokens enter
+ * adjacency runs, so the successor index fills (§06) with no separate
+ * bigram-path change. Downstream: a relieved parent sets wholeGroup = 2,
+ * so its sub-words clamp to min(2, max(table, 2+1)) = 2; properName also
+ * feeds salience (W_PROPER_NAME = 0.8) — unchanged.
  *
  * @param draft the shape-gated candidate (key must be lowercase)
  * @param dictionary quantized commonness dictionary (0–255 rank or null)
@@ -126,6 +175,22 @@ export function admit(
   else if (q >= REJECT_COMMON_THRESHOLD) result = "reject";
   else if (q >= MID_FREQ_THRESHOLD) result = 2;
   else result = 1;
+
+  // Proper-noun relief (BUG-002): capitalized whole tokens below the
+  // ceiling admit at group 2 — M2 integration item 7 (National Renewable
+  // Energy Laboratory) without re-admitting lowercase prose words. Must
+  // precede the reject early-return (after it this branch is dead code)
+  // and the subword clamp (relief is whole-token-only; 'reject' stays
+  // clamp-immune for every non-relieved draft).
+  if (
+    result === "reject" &&
+    !draft.isSubword &&
+    draft.properName &&
+    q !== null &&
+    q < PROPER_NOUN_ADMIT_CEILING
+  ) {
+    result = 2;
+  }
 
   if (result === "reject") return result;
   if (draft.isSubword && parentGroup !== undefined) {

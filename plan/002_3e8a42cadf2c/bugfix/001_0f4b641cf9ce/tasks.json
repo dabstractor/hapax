@@ -111,14 +111,14 @@
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Proper-noun admission relief so the M2 acceptance phrase admits and chains (BUG-002)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "The 50/20 band retune rejects national (q=90), energy (q=94), laboratory (q=57) so the NREL phrase never enters the store and integration item 7 is unreachable. A blanket retune (REJECT >= 95) would re-admit lowercase context (51)/posts (47) and break the calibration no-menu suite. Fix: whole-token-only relief band admitting shape-valid capitalized (properName) rank-rejected words below a ceiling constant (default 120: > 94 so the phrase admits, <= 156 so The/This/With/Them stay rejected), validated with the tuning protocol and pinned by an automated end-to-end acceptance test.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "Implement the proper-noun relief band in admit() with unit tests",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — src/core/score.ts admit() (109-135): q===null->0; q>=REJECT_COMMON_THRESHOLD(50)->'reject'; q>=MID_FREQ_THRESHOLD(20)->2; else 1; subword clamp min(2, max(result, parentGroup+1)). Shipped dict: national=90, energy=94, laboratory=57, renewable=19; the=240, with=179, this=197, them=156 (must stay rejected), context=51. CandidateDraft.properName = initial-uppercase flag (segment.ts expandCandidates). Bigrams form only between admitted whole tokens (§06), so admission alone restores chaining.\n2. INPUT: CandidateDraft (src/core/segment.ts:198-212), Dictionary (src/core/types.ts), existing exported band constants.\n3. LOGIC: Implement PRD §Major Issue 2 (h3.1) recommendation (recalibration path chosen because a blanket REJECT retune is rejected by calibration.test.ts): add `export const PROPER_NOUN_ADMIT_CEILING = 120 as const` and in admit(), when result==='reject' && !draft.isSubword && draft.properName && q !== null && q < PROPER_NOUN_ADMIT_CEILING -> result = 2 (group 2). Sub-words keep the existing clamp (no relief). TDD in test/score.test.ts with the synthetic dict-writer helper: capitalized 'National' at q=90 admits group 2; lowercase 'national' at q=90 still rejects; capitalized 'The' at q=240 rejects; ceiling boundary q=120 rejects, q=119 admits; subword of a relieved parent still clamped. Use tools/calibrate-bands.mjs to sanity-check the ceiling against the shipped dict before committing to 120 (must stay within (94, 156]).\n4. OUTPUT: New exported constant + modified admit() in src/core/score.ts, consumed by P1.M2.T1.S2 (tuning validation) and P1.M2.T1.S3 (acceptance pin).\n5. DOCS: [Mode A] Update the JSDoc module comment and admit() doc-block in src/core/score.ts to document the relief band, the ceiling rationale (M2 item 7 vs calibration), and the known spec/04 (220/120) drift — spec/*.md itself is READ-ONLY.",
@@ -133,7 +133,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "Re-run tuning protocol: calibration, shipped-dict, and adversarial suites stay green",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1"
@@ -150,7 +150,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S3",
                   "title": "Pin the M2 acceptance phrase in an automated end-to-end test (integration item 7)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1",
