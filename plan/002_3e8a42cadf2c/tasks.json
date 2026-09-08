@@ -192,7 +192,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "Chain machine + provider armed branch redesign (bare values, threshold 0)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T3.S2"

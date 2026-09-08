@@ -37,7 +37,7 @@ import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-
 
 import { rankMatches } from "../core/query.js";
 import type { CandidateStore } from "../core/store.js";
-import type { RankedMatch } from "../core/types.js";
+import type { RankedMatch, Successor } from "../core/types.js";
 import type { HapaxConfig } from "./config.js";
 
 /**
@@ -144,12 +144,15 @@ export type HapaxProvider = AutocompleteProvider & {
  *   3. rankMatches returns [] → clear the live cache, then delegate
  *      (zero candidates never render a menu).
  *
- * P2.M2.T3.S1 (PRD §09 integration item 7) adds TWO amendments:
+ * P1.M2.T1.S1 (plan 002, PRD §07 h2.43 redesign) keeps TWO chain
+ * behaviors:
  *
- *   - a PENDING OFFER in the armed branch: the first getSuggestions after
- *     an arm, taken with the cursor immediately after the accepted word
- *     (zero typed characters), offers the armed word's unfiltered top
- *     successors — see the armed-branch comment for the adjacency rule.
+ *   - the ARMED BRANCH: while a word W is armed, the zero-typed-char
+ *     word start (line start or right after a space/tab) offers W's
+ *     unfiltered top successors with BARE single-word values at prefix
+ *     "", and any typed fragment filters that set live — at chain
+ *     threshold 0 for the whole chain duration (never config.threshold;
+ *     extractMatchState stays bypassed on this path).
  *   - an `enablePhrases` gate on the whole chain layer: with the flag
  *     false the armed branch never runs and the arming intercept never
  *     arms — the provider behaves exactly as M1 word-only (the flag
@@ -170,9 +173,10 @@ export type HapaxProvider = AutocompleteProvider & {
  *
  * `chain` (P2.M2.T2.S1) is the Tab-armed successor-chaining machine:
  * getSuggestions consults it AFTER the aborted check — while armed it
- * swaps the suggestion set for the armed word's successors at threshold
- * 1 — and applyCompletion arms through it as a side-effect BEFORE
- * delegating verbatim (never-hijack case (b) pins that pass-through).
+ * swaps the suggestion set for the armed word's successors (zero-typed-
+ * char word-start offer, then threshold-0 live fragment filtering) — and
+ * applyCompletion arms through it as a side-effect BEFORE delegating
+ * verbatim (never-hijack case (b) pins that pass-through).
  * Optional with a fresh idle default so direct 3-argument callers (the
  * P1 test suites) get a machine that can never arm; index.ts is the
  * production caller and passes its per-session machine.
@@ -197,104 +201,59 @@ export function createHapaxProvider(
       if (options.signal.aborted) {
         return current.getSuggestions(lines, cursorLine, cursorCol, options);
       }
-      // 1.5 Tab-armed chaining (PRD §07 h2.43, P2.M2.T2.S1): while armed,
-      // REPLACE the suggestion set with the armed word's top successors
-      // filtered live by the trailing fragment, at chain threshold 1 —
-      // NOT config.threshold — so extractMatchState is deliberately NOT
-      // consulted on this path (it would enforce config.threshold and
-      // kill 1-char chain fragments). Disqualification rules: word-less
-      // state (space/punctuation/nothing the fragment regex matches) and
-      // zero matching successors both reset to idle and FALL THROUGH to
-      // the normal path on this same keystroke, so the user sees normal
-      // candidates immediately instead of a closed menu. Like every other
-      // path: suggestion-set only — nothing is blocked or captured.
+      // 1.5 Tab-armed chaining (PRD §07 h2.43, redesigned in plan 002
+      // P1.M2.T1.S1): while a word W is armed, the chain answers INSTEAD
+      // of extractMatchState — at chain threshold 0 for the WHOLE chain
+      // duration, so config.threshold is never consulted on this path
+      // (extractMatchState is deliberately not called here: it would
+      // enforce config.threshold and kill short chain fragments).
+      //
+      //   (a) ZERO-TYPED-CHAR OFFER: the cursor at an empty word start —
+      //       line start or right after a space/tab — offers W's
+      //       unfiltered top successors. This is the keystroke right
+      //       after the user separates the accepted word from the next
+      //       ("Tab alpha, type space"): the PRD's "zero typed
+      //       characters" means zero chars of the NEXT word.
+      //   (b) TYPED FRAGMENT: any trailing [A-Za-z][A-Za-z0-9_]* filters
+      //       the successor set live; typing never disarms while the
+      //       fragment still matches a successor.
+      //   (c) DISQUALIFICATION: punctuation, word-less non-start input,
+      //       zero matching successors, or an empty successor index all
+      //       chain.reset() and FALL THROUGH to the normal path on this
+      //       SAME keystroke — the user sees normal candidates (or pi's
+      //       stock delegate) immediately, never a closed or empty menu
+      //       (PRD §01 invariant 3).
+      //
+      // BARE VALUES (pi-tui insertion semantics, confirmed from the
+      // @earendil-works/pi-tui dist editor.js — external_deps.md §2a):
+      // with prefix "" applyCompletion splices item.value VERBATIM at
+      // the cursor, and the text before the cursor already ends with the
+      // user's separating space — a BARE word inserts word-separated
+      // ("alpha " + "beta" → "alpha beta") while a leading-space value
+      // would double-space ("alpha  beta"). pi's plain path adds NO
+      // trailing space, so chaining relies on the user's space as the
+      // word boundary. Item values are bare single words everywhere
+      // (PRD §06 h2.38 one-word invariant) — no leading-space, no
+      // multi-word values anywhere.
       //
       // enablePhrases gate (P2.M2.T3.S1): the entire layer — armed
-      // branch, pending offer, and arming intercept below — is inert
-      // under `enablePhrases: false`; word completion is untouched.
-      //
-      // PENDING OFFER (P2.M2.T3.S1, PRD §09 item 7 — zero additional
-      // typed characters): immediately after applyCompletion arms W, the
-      // cursor sits right after the inserted W — a trailing "fragment"
-      // that is W itself, which matches no successor of W, so the plain
-      // fragment rules would disarm and item 7 would fail. arm() there-
-      // fore records a one-shot pending word, consumed by the FIRST
-      // armed query: when that query's cursor is ADJACENT to the
-      // accepted insertion — the text before the cursor, lowercased,
-      // ENDS WITH the armed word with no trailing whitespace — the
-      // branch offers W's unfiltered top successors at prefix "" (the
-      // display classifier's result.prefix === live.prefix check holds
-      // with "" on both sides, so the offer composes with S3's debounce
-      // unchanged). One-shot: consumed whether or not the adjacency
-      // check passes, and a later fragment query filters through the
-      // T2.S1 rules unchanged below. The adjacency rule is strict (no
-      // "optionally trailing whitespace" form) on purpose: a word-less
-      // first query — e.g. buffer "alpha " — must keep T2.S1's
-      // disarm + delegate behavior (pinned by test/chain.test.ts case
-      // (8), which this task may not modify). Item values carry a
-      // LEADING SPACE (label stays clean): pi's editor applies
-      // completions as before + item.value, and with prefix "" that
-      // space is the only thing separating the accepted words —
-      // accepting the offer at "…National" inserts " renewable".
+      // branch and arming intercept below — is inert under
+      // `enablePhrases: false`; word completion is untouched.
       const armed = chain.state();
       if (armed && config.enablePhrases) {
         const before = lines[cursorLine]?.slice(0, cursorCol) ?? "";
-        if (
-          chain.consumePending() !== null &&
-          before.toLowerCase().endsWith(armed.word)
-        ) {
-          const succ = store
-            .topSuccessors(armed.word)
-            .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
-          if (succ.length > 0) {
-            // Unfiltered successor set, published through the SAME
-            // lastLive seam as the armed path — chain-keyed so
-            // applyCompletion re-arms to the accepted successor.
-            const items = succ.map((s) => ({
-              value: ` ${s.next}`, // leading space — see pending-offer note
-              label: s.next,
-              description: "chain", // provenance marker, role of query.ts's
-            }));
-            lastLive = {
-              matches: succ.map((s) => ({
-                key: CHAIN_KEY_PREFIX + s.next,
-                display: s.next,
-                description: "chain",
-                salience: -s.count, // higher count → stronger, count-desc order
-              })),
-              prefix: "",
-              ts: Date.now(),
-            };
-            liveKeyByValue.clear(); // rebuilt every query — same as normal path
-            for (const s of succ) {
-              liveKeyByValue.set(` ${s.next}`, CHAIN_KEY_PREFIX + s.next);
-            }
-            return { items, prefix: "" };
-          }
-          // Armed word has no successors → pending already consumed
-          // (one-shot); fall through to the fragment rules below.
-        }
-        const frag = before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0];
-        const succ =
-          frag === undefined
-            ? []
-            : store
-                .topSuccessors(armed.word)
-                .filter((s) => s.next.startsWith(frag.toLowerCase()))
-                .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
-        if (frag === undefined || succ.length === 0) {
-          chain.reset(); // disarm → normal threshold matching resumes NOW
-        } else {
-          // Successor-only live set, published through the SAME lastLive
-          // seam as the normal path so S3's classification (rule 2) and
-          // debounce pick it up with zero display-layer changes. Entries
-          // are registered under chain markers so applyCompletion can
-          // distinguish "successor accepted → armed(next)" from "word
-          // candidate accepted → armed(word)" (plain key) and "phrase
-          // accepted → arm its LAST word" (space-joined key, BUG-005
-          // part 2).
+
+        // Publish an armed successor set through the SAME lastLive seam
+        // as the normal path so S3's classification (result.prefix ===
+        // live.prefix) and debounce compose unchanged — the published
+        // prefix MUST equal the returned prefix. Entries are registered
+        // under CHAIN_KEY_PREFIX so applyCompletion can tell "successor
+        // accepted → armed(next)" from "word candidate accepted →
+        // armed(word)" (plain key). Values are BARE s.next; live-map
+        // keys are CHAIN_KEY_PREFIX + s.next — never leading-space.
+        const publishChain = (succ: readonly Successor[], prefix: string) => {
           const items = succ.map((s) => ({
-            value: s.next,
+            value: s.next, // BARE — pi-tui splices verbatim at prefix ""
             label: s.next,
             description: "chain", // provenance marker, role of query.ts's
           }));
@@ -305,14 +264,50 @@ export function createHapaxProvider(
               description: "chain",
               salience: -s.count, // higher count → stronger, count-desc order
             })),
-            prefix: frag, // the raw typed fragment, as the normal path would
+            prefix,
             ts: Date.now(),
           };
           liveKeyByValue.clear(); // rebuilt every query — same as normal path
           for (const s of succ) {
             liveKeyByValue.set(s.next, CHAIN_KEY_PREFIX + s.next);
           }
-          return { items, prefix: frag };
+          return { items, prefix };
+        };
+
+        // (a) Zero-typed-char offer — cursor at an empty word start.
+        // Mutually exclusive with (b): a word start has no trailing word
+        // chars, so the fragment regex below cannot match here; the
+        // word-start check runs first to make the intent explicit.
+        if (before === "" || /[ \t]$/.test(before)) {
+          const succ = store
+            .topSuccessors(armed.word)
+            .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
+          if (succ.length > 0) {
+            return publishChain(succ, "");
+          }
+          chain.reset(); // no successors → idle; the normal path answers NOW
+        }
+
+        // (b) Typed fragment — threshold-0 live filtering. `armed` may be
+        // stale after an (a) reset, but a word start never matches the
+        // fragment regex, so this only produces a menu for genuine
+        // fragments where `armed` is still current.
+        const frag = before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0];
+        const succ =
+          frag === undefined
+            ? []
+            : store
+                .topSuccessors(armed.word)
+                .filter((s) => s.next.startsWith(frag.toLowerCase()))
+                .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
+        if (frag === undefined || succ.length === 0) {
+          // (c) Disqualify: punctuation, word-less non-start input, or
+          // zero matching successors → idle. Never return an empty hapax
+          // set — the normal path (extractMatchState → rankMatches) or
+          // pi's stock delegate answers on this SAME keystroke.
+          chain.reset();
+        } else {
+          return publishChain(succ, frag); // prefix = the raw typed fragment
         }
       }
       // 2. No hapax match state (S1 null) → pi's completion stays in charge.
@@ -356,42 +351,29 @@ export function createHapaxProvider(
       // ever arms — the chain layer is inert and the provider behaves
       // exactly as M1 word-only. Delegation itself is unconditional.
       //
-      // liveKeyByValue keys come in exactly THREE shapes (BUG-005 part
-      // 2), checked in this order:
+      // liveKeyByValue keys come in exactly TWO shapes, checked in this
+      // order:
       //   1. CHAIN_KEY_PREFIX + next — a chain successor was accepted;
       //      re-arm at it (armed(next)).
       //   2. a single token — a whole-word candidate; arm its
-      //      lowercase form.
-      //   3. a single-space-joined lowercase phrase (query.ts builds
-      //      phrase keys exactly that way) — arm the phrase's LAST
-      //      word. chain.arm(W) primes topSuccessors(W), the
-      //      NEXT-word continuation (§07 h2.43), so last-word arming
-      //      continues PAST the accepted text ('national renewable
-      //      energy' → successors of 'energy', e.g. 'laboratory');
-      //      arming the FIRST word would re-offer words already typed
-      //      into the buffer. Deliberate deviation from the bug-hunt's
-      //      first-word recommendation — rationale documented in
-      //      plan/001_88fc3a66fd74/bugfix/001_9e0f97150b68/architecture/
-      //      system_context.md (BUG-005), pinned by test/chain.test.ts.
+      //      lowercase form. This is also how trigger-mode completions
+      //      arm: they are whole-word insertions (pinned by
+      //      test/chain.test.ts case 11).
+      //   Phrase keys no longer exist: rankMatches is words-only since
+      //   P1.M1.T2.S2 (PRD §06 h2.38 one-word invariant), so plan 002's
+      //   P1.M2.T1.S1 deleted the old space-joined phrase arm branch
+      //   (BUG-005 part 2) as dead code.
       if (config.enablePhrases) {
         const key = liveKeyByValue.get(item.value);
         if (key !== undefined) {
           if (key.startsWith(CHAIN_KEY_PREFIX)) {
             // A chain successor was accepted → armed(next).
             chain.arm(key.slice(CHAIN_KEY_PREFIX.length));
-          } else if (!key.includes(" ")) {
-            // Whole-word candidate: word keys are single tokens, phrase
-            // keys are space-joined. The successor index is lowercase
-            // (h2.27) — arm the lowercase form so topSuccessors() finds it.
-            chain.arm(item.value.toLowerCase());
           } else {
-            // Phrase candidate (space-joined key): arm at the phrase's
-            // LAST word — see the key-shape note above. Phrase keys
-            // arrive lowercase + single-space-joined (query.ts), so the
-            // split token is already a successor-index key: no case
-            // folding, no normalization (PRD §08: no config surface).
-            const words = key.split(" ");
-            chain.arm(words[words.length - 1]);
+            // Whole-word candidate: word keys are single tokens. The
+            // successor index is lowercase (h2.27) — arm the lowercase
+            // form so topSuccessors() finds it.
+            chain.arm(item.value.toLowerCase());
           }
         }
         // Not in the map (path completion / stale value) → never arms.
@@ -415,8 +397,8 @@ export function createHapaxProvider(
 /**
  * Marker prefixed to every chain entry in liveKeyByValue (and used as
  * the shim RankedMatch.key) so applyCompletion can tell "a successor was
- * accepted → armed(next)" apart from plain word keys and phrase keys.
- * The \u0000 lead byte can never occur in a store key.
+ * accepted → armed(next)" apart from plain word keys. The \u0000 lead
+ * byte can never occur in a store key.
  */
 const CHAIN_KEY_PREFIX = "\u0000chain:";
 
@@ -427,50 +409,42 @@ const CHAIN_KEY_PREFIX = "\u0000chain:";
 export type ChainState = { word: string } | null;
 
 /**
- * The Tab-armed successor-chaining state holder (PRD §07 h2.43). Two
- * states and five armed rules:
+ * The Tab-armed successor-chaining state holder (PRD §07 h2.43,
+ * redesigned in plan 002 P1.M2.T1.S1). Two states:
  *
  *   idle ──Tab accepts a hapax candidate W──► armed(W)
- *         (W = a whole word, a chain successor, or a phrase's LAST
- *         word — BUG-005 part 2; never a path-completion value)
+ *         (W = a whole word or a chain successor — never a
+ *         path-completion value)
  *   armed(W):
- *     - next word start (fragment ≥ 1 char) → offer W's top successors
- *       (store.topSuccessors) filtered live by the fragment, at chain
- *       threshold 1 — NOT config.threshold
+ *     - the zero-typed-char word start (line start, or right after a
+ *       space/tab) → offer W's unfiltered top successors
+ *       (store.topSuccessors) with BARE values at prefix ""
+ *     - any typed fragment → filter that set live, at chain threshold 0
+ *       — NOT config.threshold — for the whole chain duration
  *     - Tab with a highlighted successor → insert (delegated
  *       applyCompletion), transition armed(next)
- *     - word-less input (space, punctuation, escape-equivalent —
- *       anything the fragment regex treats as no-word) → idle
- *     - W has no successors, or none match the fragment → idle; normal
- *       threshold matching resumes on the SAME keystroke
+ *     - disqualification: punctuation, word-less non-start input, zero
+ *       matching successors, or an empty successor index → idle; the
+ *       normal path (or pi's stock delegate) answers on the SAME
+ *       keystroke
  *     - a new user turn (before_agent_start → reset) → idle
  *
  * INVARIANTS (PRD §01 invariant 1): the machine feeds the suggestion
  * set ONLY — it never blocks or captures typing, never swallows a
  * keystroke, never throws. Arming happens exclusively through hapax's
  * own applyCompletion side-effect (a hapax item was accepted: whole
- * word, chain successor, or phrase's last word — BUG-005 part 2);
- * path-completion and out-of-map values never arm. All timing and
- * display composition stay in S3 — armed sets publish through the same
- * lastLive seam as normal results, so the 100ms debounce composes
- * unchanged.
+ * word or chain successor); path-completion and out-of-map values never
+ * arm. All timing and display composition stay in S3 — armed sets
+ * publish through the same lastLive seam as normal results, so the
+ * 100ms debounce composes unchanged.
  */
 export interface ChainMachine {
   /** Current armed word, or null when idle. */
   state(): ChainState;
-  /** Arm on acceptance of a hapax item: a whole word (lowercased), a
-   *  chain successor, or a phrase's LAST word (BUG-005 part 2 —
-   *  next-word continuation past the accepted text). Also records a
-   *  ONE-SHOT pending word so the first getSuggestions after the
-   *  accept can offer the armed word's successors with zero typed
-   *  characters (P2.M2.T3.S1). */
+  /** Arm on acceptance of a hapax item: a whole word (lowercased), or
+   *  a chain successor (already lowercase from the successor index). */
   arm(word: string): void;
-  /** Take the pending word (P2.M2.T3.S1): returns it and clears it —
-   *  one-shot, so only the FIRST armed query after an arm sees it.
-   *  Null when no arm happened since the last consume/reset. */
-  consumePending(): string | null;
-  /** Force idle (before_agent_start; also the disqualification path).
-   *  Clears the pending word too — a reset turn never owes an offer. */
+  /** Force idle (before_agent_start; also the disqualification path). */
   reset(): void;
 }
 
@@ -482,21 +456,13 @@ export interface ChainMachine {
  */
 export function createChainMachine(): ChainMachine {
   let armed: string | null = null;
-  let pending: string | null = null; // one-shot offer word (P2.M2.T3.S1)
   return {
     state: () => (armed === null ? null : { word: armed }),
     arm: (word) => {
       armed = word;
-      pending = word;
-    },
-    consumePending: () => {
-      const word = pending;
-      pending = null;
-      return word;
     },
     reset: () => {
       armed = null;
-      pending = null;
     },
   };
 }

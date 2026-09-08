@@ -4,16 +4,17 @@
  *
  *   inner = createHapaxProvider(store, config, current, chain)
  *
- * Covers every armed rule of h2.43: arming from hapax items — whole
- * words and chain successors; never path completion or out-of-map
- * values — successor-only menus at
- * chain threshold 1 (NOT config.threshold), live fragment filtering,
- * Tab accept → armed(next) with verbatim delegation, word-less /
- * zero-match disarm falling through to the normal path on the SAME
- * keystroke, reset-on-new-turn, and composition with the S3 display
- * debounce. The machine feeds the suggestion set ONLY: applyCompletion
- * always delegates verbatim — test/provider.test.ts pins that and must
- * stay green untouched.
+ * Covers every armed rule of h2.43 (as redesigned in plan 002
+ * P1.M2.T1.S1): arming from hapax items — whole words and chain
+ * successors; never path completion or out-of-map values — the
+ * zero-typed-char word-start offer (bare values, prefix ""),
+ * successor-only menus at chain threshold 0 (NOT config.threshold),
+ * live fragment filtering, Tab accept → armed(next) with verbatim
+ * delegation, punctuation / zero-match disarm falling through to the
+ * normal path on the SAME keystroke, reset-on-new-turn, and composition
+ * with the S3 display debounce. The machine feeds the suggestion set
+ * ONLY: applyCompletion always delegates verbatim —
+ * test/provider.test.ts pins that and must stay green untouched.
  *
  * SEEDING ORDER NOTE (PRD §06 h3.9 + h2.43): the bare first word stays a
  * menu item whenever topSuccessors() is non-empty (arming is whole-word
@@ -287,32 +288,72 @@ describe("chain machine (P2.M2.T2.S1, PRD §07 h2.43)", () => {
     expect(chain.state()).toBeNull();
   });
 
-  it("(8) word-less state (trailing space, then punctuation) → disarm + delegate", async () => {
+  it("(8) trailing space → zero-char successor offer; punctuation → disarm + delegate", async () => {
     const current = makeCurrent();
     const store = seedStore();
     const { chain, inner } = makeStack(store, current);
     await armViaTab(inner, chain, store, "alpha", "al");
 
-    // Trailing space: nothing the fragment regex matches → disarm, and
-    // the request DELEGATES (extractMatchState null → pi stays in charge).
-    const options = opts();
+    // Trailing space: the cursor sits at the empty NEXT word with zero
+    // typed chars — the redesigned zero-char offer (PRD §07 h2.43, plan
+    // 002) serves alpha's UNFILTERED successors with BARE values at
+    // prefix "". Supersedes this case's old disarm+delegate pin, which
+    // belonged to the retired adjacency/pending mechanism and
+    // contradicted the PRD's word-start semantics. The chain STAYS
+    // armed (this is an offer, not disqualification) and pi is never
+    // consulted.
     const lines = ["alpha "];
-    const result = await inner.getSuggestions(lines, 0, 6, options);
-    expect(result).toBeNull(); // current's null passed through
-    expect(current.getSuggestions).toHaveBeenCalledOnce();
-    const call = current.getSuggestions.mock.calls[0];
-    expect(call[0]).toBe(lines); // verbatim array identity
-    expect(call[3]).toBe(options);
-    expect(chain.state()).toBeNull();
+    const result = await inner.getSuggestions(lines, 0, 6, opts());
+    expect(result).toEqual({
+      items: [
+        { value: "beta", label: "beta", description: "chain" },
+        { value: "bravo", label: "bravo", description: "chain" },
+      ],
+      prefix: "",
+    });
+    expect(chain.state()).toEqual({ word: "alpha" }); // still armed
+    expect(current.getSuggestions).not.toHaveBeenCalled();
 
-    // Punctuation: "!" ends the line — no trailing identifier → same
-    // disarm + delegate. Fresh stack armed on "beta" (alpha's admitted
-    // bigrams would shadow its own arming menu — seeding-order gotcha;
-    // no stored word's key prefixes "be", so beta's menu is clean).
+    // Punctuation: "!" ends the line — no word start, no trailing
+    // identifier → disarm + delegate, unchanged. Fresh stack armed on
+    // "beta" (alpha's admitted bigrams would shadow its own arming menu —
+    // seeding-order gotcha; no stored word's key prefixes "be", so beta's
+    // menu is clean).
     const fresh = makeStack(store, current);
     await armViaTab(fresh.inner, fresh.chain, store, "beta", "be", () => {});
-    expect(await suggest(fresh.inner, ["beta!"], 0, 5)).toBeNull();
-    expect(current.getSuggestions).toHaveBeenCalledTimes(2);
+    const options = opts();
+    const pLines = ["beta!"];
+    expect(await fresh.inner.getSuggestions(pLines, 0, 5, options)).toBeNull();
+    const call = current.getSuggestions.mock.calls[0];
+    expect(call[0]).toBe(pLines); // verbatim array identity
+    expect(call[3]).toBe(options);
+    expect(fresh.chain.state()).toBeNull();
+  });
+
+  it("(8b) line start offers successors too; word start with no successors delegates", async () => {
+    const current = makeCurrent();
+    const store = seedStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alpha", "al");
+
+    // Line start (before === "") is a zero-typed-char word start too —
+    // same unfiltered bare-value offer, prefix "".
+    const offer = await suggest(inner, [""], 0, 0);
+    expect(offer).toEqual({
+      items: [
+        { value: "beta", label: "beta", description: "chain" },
+        { value: "bravo", label: "bravo", description: "chain" },
+      ],
+      prefix: "",
+    });
+    expect(chain.state()).toEqual({ word: "alpha" });
+
+    // An armed word with an EMPTY successor index at a word start →
+    // disarm + fall through on the SAME keystroke: extractMatchState is
+    // null there, so the request delegates (pi stock behavior).
+    const fresh = makeStack(store, current);
+    await armViaTab(fresh.inner, fresh.chain, store, "gamma", "ga", () => {});
+    expect(await suggest(fresh.inner, ["gamma "], 0, 6)).toBeNull();
     expect(fresh.chain.state()).toBeNull();
   });
 
@@ -517,15 +558,24 @@ describe("bare-word arming on a replayed store (BUG-005 part 2 successor route)"
     provider.applyCompletion(["natio"], 0, 5, nationalItem, "natio");
     expect(chain.state()).toEqual({ word: "national" });
 
-    // Pending offer serves topSuccessors('national') at prefix "".
+    // The user types the separating space — the cursor is now at the
+    // empty next word with ZERO typed chars, which is where the
+    // redesigned word-start offer (plan 002) serves
+    // topSuccessors('national') at prefix "" with BARE values. The old
+    // pending offer fired from the adjacent-cursor position with
+    // leading-space values — retired with the pending mechanism.
+    current.state.lines = ["National "];
+    current.state.cursorCol = 9;
     const offer = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => [i.label, i.value])).toEqual([
-      ["renewable", " renewable"],
-      ["wind", " wind"], // license dropped: was a gate-rejected-"lab" bridge (P1.M1.T3.S2)
+      ["renewable", "renewable"],
+      ["wind", "wind"], // license dropped: was a gate-rejected-"lab" bridge (P1.M1.T3.S2)
     ]);
 
-    // Tab → armed(renewable); the S1/S2 interaction stays intact.
+    // Tab → armed(renewable); pi-tui splices the BARE value verbatim at
+    // the cursor (prefix ""), so the user's space stays the single
+    // separator — no double space.
     provider.applyCompletion(
       current.state.lines,
       0,
@@ -534,8 +584,12 @@ describe("bare-word arming on a replayed store (BUG-005 part 2 successor route)"
       offer!.prefix,
     );
     expect(chain.state()).toEqual({ word: "renewable" });
-    expect(current.state.lines).toEqual(["National renewable"]);
+    expect(current.state.lines).toEqual(["National renewable"]); // ONE space
 
+    // Space again → the chain continues at the next word start:
+    // renewable's successors.
+    current.state.lines = ["National renewable "];
+    current.state.cursorCol = 19;
     const offer2 = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
     expect(offer2?.items.map((i) => i.label)).toEqual(["energy"]);
   });

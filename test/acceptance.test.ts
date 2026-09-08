@@ -696,23 +696,31 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     expect(current.state.lines).toEqual(["National"]);
     expect(current.state.cursorCol).toBe(8);
 
-    // ZERO typed characters: the very next getSuggestions runs on the
-    // post-accept buffer ("National", cursor 8) and the PENDING OFFER
-    // answers with the armed word's unfiltered successors at prefix "".
+    // The user types the separating space: the cursor is now at the
+    // empty NEXT word with ZERO typed characters (PRD h2.43 redesign,
+    // plan 002 — the old pending offer fired from the adjacent cursor
+    // with leading-space values; retired). The armed branch answers with
+    // the unfiltered successors at prefix "", BARE values.
+    current.state.lines = ["National "];
+    current.state.cursorCol = 9;
     const offer1 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
     expect(offer1?.prefix).toBe("");
     expect(offer1?.items.map((i) => [i.label, i.value])).toEqual([
-      ["renewable", " renewable"], // leading space: pi inserts value verbatim
-      ["wind", " wind"], // license no longer offered: was a "lab" bridge (P1.M1.T3.S2)
+      ["renewable", "renewable"], // bare: pi-tui splices value verbatim at prefix ""
+      ["wind", "wind"], // license no longer offered: was a "lab" bridge (P1.M1.T3.S2)
     ]);
     expect(provider.__hapaxLive()?.prefix).toBe("");
 
-    // Tab → harness inserts " renewable" (no typed characters); re-armed.
+    // Tab → harness inserts "renewable" after the user's single space;
+    // re-armed.
     provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer1!.items[0]!, offer1!.prefix);
     expect(chain.state()).toEqual({ word: "renewable" });
     expect(current.state.lines).toEqual(["National renewable"]);
     const colAfterRenewable = current.state.cursorCol;
 
+    // Space again → the next word start → renewable's successors.
+    current.state.lines = ["National renewable "];
+    current.state.cursorCol = 19;
     const offer2 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
     expect(offer2?.prefix).toBe("");
     expect(offer2?.items.map((i) => i.label)).toEqual(["energy"]); // sole successor
@@ -720,6 +728,9 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     expect(chain.state()).toEqual({ word: "energy" });
     expect(current.state.lines).toEqual(["National renewable energy"]);
 
+    // Space again → the next word start → energy's successors.
+    current.state.lines = ["National renewable energy "];
+    current.state.cursorCol = 26;
     const offer3 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
     expect(offer3?.items.map((i) => i.label)).toEqual(["laboratory"]);
     provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer3!.items[0]!, offer3!.prefix);
@@ -730,14 +741,15 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     expect(current.state.cursorCol).toBe("National renewable energy laboratory".length);
     expect(chain.state()).toEqual({ word: "laboratory" });
 
-    // Zero-typing proof: cursor positions between accepts came ONLY from
-    // accepts (each offer was queried exactly at the previous accept's
-    // landed cursor), and hapax answered every query — no delegation.
+    // Zero-fragment-typing proof: cursor movement between accepts came
+    // only from accepts and the separating spaces (never a fragment
+    // character — every offer was queried at a zero-typed-char word
+    // start), and hapax answered every query — no delegation.
     expect(colAfterRenewable).toBe("National renewable".length);
     expect(current.getSuggestions).not.toHaveBeenCalled();
   });
 
-  it("pending offer is one-shot and adjacency-gated — word-less queries keep T2.S1 disarm semantics", async () => {
+  it("word start after an arm offers the chain; word-less non-start still disarms + delegates", async () => {
     const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
     const { store, pipeline } = makeNrelPipeline(true);
     const current = editingCurrent();
@@ -749,25 +761,30 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     provider.applyCompletion(["natio"], 0, 5, { value: "National", label: "National" }, "natio");
     await replayNrel(pipeline, entries.slice(NREL_PHASE1));
 
-    // FIRST post-accept query word-less ("National ") → NOT adjacent
-    // (trailing whitespace) → T2.S1 disarm + delegate, not the offer.
+    // FIRST post-accept query at the word start ("National ") — the
+    // redesigned zero-char offer answers (unfiltered successors, bare
+    // values, prefix "") and the chain STAYS armed. The old pending
+    // mechanism was adjacency-gated and one-shot; the redesign offers at
+    // every word start for the whole chain duration.
+    const offer = await provider.getSuggestions(["National "], 0, 9, opts());
+    expect(offer?.prefix).toBe("");
+    expect(offer?.items.map((i) => [i.label, i.value])).toEqual([
+      ["renewable", "renewable"],
+      ["wind", "wind"],
+    ]);
+    expect(chain.state()).toEqual({ word: "national" });
+
+    // Punctuation (word-less, NOT a word start) still disarms + delegates
+    // on the same keystroke (T2.S1 semantics preserved).
     const options = opts();
-    const result = await provider.getSuggestions(["National "], 0, 9, options);
+    const result = await provider.getSuggestions(["National!"], 0, 9, options);
     expect(result).toBeNull();
     expect(current.getSuggestions).toHaveBeenCalledOnce();
     expect(current.getSuggestions.mock.calls[0][3]).toBe(options);
     expect(chain.state()).toBeNull();
-
-    // The pending word was consumed by that one-shot query (it never
-    // re-fires): a later adjacency-position query takes the NORMAL path —
-    // plain threshold menu — with no chain menu.
-    const normal = await provider.getSuggestions(["National"], 0, 8, opts());
-    expect(normal?.prefix).toBe("National");
-    expect(normal?.items.map((i) => i.value)).toContain("National");
-    expect(chain.state()).toBeNull();
   });
 
-  it("typed fragments after an arm still filter through the T2.S1 armed branch (no pending double-fire)", async () => {
+  it("typed fragments after an arm still filter through the armed branch (threshold 0)", async () => {
     const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
     const { store, pipeline } = makeNrelPipeline(true);
     const current = editingCurrent();
@@ -779,9 +796,9 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     provider.applyCompletion(["natio"], 0, 5, { value: "National", label: "National" }, "natio");
     await replayNrel(pipeline, entries.slice(NREL_PHASE1));
 
-    // First post-accept query carries a typed fragment "r": adjacency
-    // fails, pending is consumed one-shot, and the FRAGMENT rules answer —
-    // live-filtered successors at the fragment, threshold 1 (T2.S1).
+    // First post-accept query carries a typed fragment "r": the armed
+    // branch's FRAGMENT rules answer — live-filtered successors at the
+    // fragment, threshold 0 (chain duration), no disarm.
     const filtered = await provider.getSuggestions(["National r"], 0, 10, opts());
     expect(filtered?.prefix).toBe("r");
     expect(filtered?.items).toEqual([
@@ -796,7 +813,7 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     expect(chain.state()).toEqual({ word: "national" });
   });
 
-  it("reset (new user turn) clears the pending offer with the arm", async () => {
+  it("reset (new user turn) clears the arm", async () => {
     const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
     const { store, pipeline } = makeNrelPipeline(true);
     const current = editingCurrent();
@@ -810,15 +827,15 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
 
     chain.reset(); // the before_agent_start handler
 
-    // Adjacent cursor position, but the arm (and its pending offer) is
-    // gone: plain threshold matching answers — plain word menu.
+    // Adjacent cursor position, but the arm is gone: the armed branch
+    // never runs, so plain threshold matching answers — plain word menu.
     const menu = await provider.getSuggestions(["National"], 0, 8, opts());
     expect(menu?.prefix).toBe("National");
     expect(menu?.items.map((i) => i.value)).toContain("National");
     expect(chain.state()).toBeNull();
   });
 
-  it("pending offer flows through the display layer's classification (prefix \"\" on both sides)", async () => {
+  it("word-start offer flows through the display layer's classification (prefix \"\" on both sides)", async () => {
     const entries = parseSessionFixture(`${FIXTURES}/nrel.jsonl`);
     const { store, pipeline } = makeNrelPipeline(true);
     const current = editingCurrent();
@@ -833,10 +850,13 @@ describe("acceptance item 7 — chained completion, zero typed characters (nrel.
     inner.applyCompletion(["natio"], 0, 5, { value: "National", label: "National" }, "natio");
     await replayNrel(pipeline, entries.slice(NREL_PHASE1));
 
-    // The pending offer through the DISPLAY provider: live prefix "" and
-    // result prefix "" match → classified hapax → painted immediately
-    // (first paint of this stack is never delayed, S3 rule 4a).
-    const painted = await display.getSuggestions(["National"], 0, 8, opts());
+    // The word-start offer through the DISPLAY provider: live prefix ""
+    // and result prefix "" match → classified hapax → painted immediately
+    // (first paint of this stack is never delayed, S3 rule 4a). The
+    // buffer carries the user's separating space — the redesign's
+    // zero-typed-char word start (the old pending offer fired from the
+    // adjacent cursor).
+    const painted = await display.getSuggestions(["National "], 0, 9, opts());
     expect(painted?.prefix).toBe("");
     expect(painted?.items.map((i) => i.label)).toEqual(["renewable", "wind"]);
     expect(display.dispose).toBeDefined();

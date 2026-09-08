@@ -483,15 +483,18 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       "National",
     ]);
 
-    // Hop 1 — the pending offer serves topSuccessors('national') at
-    // prefix "" (zero typed characters after the accepted word).
+    // Hop 1 — the user types the separating space; the word-start offer
+    // (plan 002 redesign) serves topSuccessors('national') at prefix ""
+    // (zero typed characters of the NEXT word).
+    current.state.lines = ["National "];
+    current.state.cursorCol = 9;
     const offer1 = await provider.getSuggestions(
       current.state.lines,
       0,
       current.state.cursorCol,
       opts(),
     );
-    expect(offer1!.prefix, "hop 1: pending offer must answer with zero typed chars").toBe("");
+    expect(offer1!.prefix, "hop 1: word-start offer must answer with zero typed chars").toBe("");
     expect(offer1!.items.map((i) => i.label), "hop 1: 'national' successors (count-desc)").toEqual([
       "renewable",
       "wind",
@@ -510,7 +513,10 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       "National renewable",
     ]);
 
-    // Hop 2 — 'energy' offered as renewable's successor and accepted.
+    // Hop 2 — space again, then 'energy' offered as renewable's successor
+    // and accepted.
+    current.state.lines = ["National renewable "];
+    current.state.cursorCol = 19;
     const offer2 = await provider.getSuggestions(
       current.state.lines,
       0,
@@ -531,8 +537,11 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     });
     expect(current.state.lines).toEqual(["National renewable energy"]);
 
-    // Hop 3 — 'laboratory' offered as energy's successor: the exact link
-    // the original bug hunt found dead in resumed sessions (BUG-005).
+    // Hop 3 — space again, then 'laboratory' offered as energy's
+    // successor: the exact link the original bug hunt found dead in
+    // resumed sessions (BUG-005).
+    current.state.lines = ["National renewable energy "];
+    current.state.cursorCol = 26;
     const offer3 = await provider.getSuggestions(
       current.state.lines,
       0,
