@@ -52,6 +52,14 @@
  * ≤64KB message slice. No normalization/lowercasing here (S2); no shape-gate
  * rules (≥4 chars, entropy, secrets) here (P1.M2.T2).
  *
+ * Every RawToken carries its UTF-16 span (start inclusive, end exclusive)
+ * into the exact `text` argument — always valid String.prototype.slice
+ * bounds (text.slice(t.start, t.end) === t.raw). Consumed by ingest for the
+ * strict whitespace-only adjacency bigram rule (P1.M1.T3.S2, PRD 002 §06
+ * h3.6); since ingest tokenizes maskSecrets(segment) and masking blanks in
+ * place, the offsets are into the POST-maskSecrets segment string by the
+ * time a consumer sees them.
+ *
  * Stage 2 — expandCandidates() (S2, same module): takes each RawToken and
  * emits the whole token plus its camelCase/snake_case sub-words (length ≥ 4)
  * as CandidateDrafts, normalized per PRD §04 h3.4/h3.5 (lowercase key,
@@ -111,7 +119,11 @@ interface SpanToken {
  *
  * Returns one token per disjoint match span, ascending by position: base
  * tokens with `hexish: false`, digit-led/hash-shaped hexish tokens with
- * `hexish: true`. Never emits overlapping tokens; never lowercases.
+ * `hexish: true`. Never emits overlapping tokens; never lowercases. Each
+ * token reports its own span as UTF-16 offsets into `text` (start
+ * inclusive, end exclusive) — a hexish token that absorbed base tails
+ * reports the hexish span, never an absorbed tail's. Dead (disqualified or
+ * absorbed) tokens are skipped, so their spans never surface.
  */
 export function tokenize(text: string): RawToken[] {
   // /g regexes carry mutable lastIndex across calls — always scan from 0.
@@ -207,7 +219,7 @@ export function tokenize(text: string): RawToken[] {
     if (takeBase) i++;
     else j++;
     if (t.dead) continue;
-    out.push({ raw: t.raw, hexish: t.hexish });
+    out.push({ raw: t.raw, hexish: t.hexish, start: t.start, end: t.end });
   }
   return out;
 }

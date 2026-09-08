@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Core simplification — one-word invariant, strict adjacency bigrams, segment hardening (R1, R2)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Delete the phrase layer across store/types/query/debug, replace ingest windowing with raw-text adjacency runs feeding a slim 10k-capped bigram map + successor index, and disqualify ASCII runs bounded by Unicode letters in segmentation.",
           "tasks": [
             {
@@ -106,14 +106,14 @@
               "type": "Task",
               "id": "P1.M1.T3",
               "title": "Raw-text adjacency bigram capture end-to-end (R1)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Thread token spans from tokenize through ingest, compute per-line adjacency runs (whitespace-only between consecutive admitted whole tokens, same line), feed them to recordBigramRuns, and rewrite the successor/adjacency test suites for every enumerated window break.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T3.S1",
                   "title": "segment.ts: emit token spans on RawToken",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -131,7 +131,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T3.S2",
                   "title": "ingest.ts: adjacency runs + onAdmittedTokens contract + break-case suite",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T3.S1",
@@ -153,7 +153,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T3.S3",
                   "title": "successors.test.ts rewrite + remaining test-seam pruning",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T3.S2"

@@ -76,6 +76,15 @@ export interface RawToken {
    *  at least one letter a–f; commit-hash-shaped). Hexish tokens are
    *  opaque — subword splitting (S2) skips them. */
   hexish: boolean;
+  /** UTF-16 offset of the token's first char, into the exact string passed
+   *  to tokenize() — i.e. into the POST-maskSecrets segment string by the
+   *  time ingest calls it (maskSecrets blanks in place, preserving length).
+   *  Valid String.prototype.slice bounds: text.slice(start, end) === raw.
+   *  Consumed by ingest (P1.M1.T3.S2) for the strict whitespace-only
+   *  adjacency bigram rule (PRD 002 §06 h3.6). */
+  start: number;
+  /** one past the token's last char (exclusive), same string as `start` */
+  end: number;
 }
 
 /** Why the shape gate rejected a candidate. PRD §04 shape-gate rules. */

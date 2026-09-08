@@ -19,9 +19,17 @@ import type { RawToken } from "../src/core/types.js";
 
 const raws = (tokens: RawToken[]): string[] => tokens.map((t) => t.raw);
 
+/** {raw, hexish} projection (P1.M1.T3.S1): token spans (start/end) get their
+ *  own dedicated assertions in the "span offsets" block below, so the legacy
+ *  shape cases keep their exact two-field literals. */
+const strip = (
+  tokens: RawToken[],
+): Array<Pick<RawToken, "raw" | "hexish">> =>
+  tokens.map(({ raw, hexish }) => ({ raw, hexish }));
+
 describe("tokenize — base tokens (PRD §04 rule 1)", () => {
   it("extracts identifiers/words in order, original casing, hexish false", () => {
-    expect(tokenize("fix state Tokenized Hello")).toEqual([
+    expect(strip(tokenize("fix state Tokenized Hello"))).toEqual([
       { raw: "fix", hexish: false },
       { raw: "state", hexish: false },
       { raw: "Tokenized", hexish: false },
@@ -30,10 +38,10 @@ describe("tokenize — base tokens (PRD §04 rule 1)", () => {
   });
 
   it("emits 2-char and 64-char identifiers, drops 1-char words", () => {
-    expect(tokenize("ok")).toEqual([{ raw: "ok", hexish: false }]);
+    expect(strip(tokenize("ok"))).toEqual([{ raw: "ok", hexish: false }]);
     expect(tokenize("a I b")).toEqual([]);
     const id = "z".repeat(64);
-    expect(tokenize(id)).toEqual([{ raw: id, hexish: false }]);
+    expect(strip(tokenize(id))).toEqual([{ raw: id, hexish: false }]);
   });
 
   it("caps identifier matches at 64 chars (70-char identifier)", () => {
@@ -67,20 +75,22 @@ describe("tokenize — hexish tokens (PRD §04 rule 2)", () => {
   it("captures a digit-containing letter-initial hash as hexish", () => {
     // "f3a9c2e" matches both passes with equal spans; the digits prove
     // hash-shape → hexish wins (PRD §09: "f3a9c2e captured").
-    expect(tokenize("f3a9c2e")).toEqual([{ raw: "f3a9c2e", hexish: true }]);
+    expect(strip(tokenize("f3a9c2e"))).toEqual([{ raw: "f3a9c2e", hexish: true }]);
   });
 
   it("captures digit-leading hashes additively, absorbing the base tail", () => {
     // The base pass only sees the letter-initial tail "f3a9c2"; the hexish
     // span contains it, so one opaque token ships — spans never overlap.
-    expect(tokenize("0f3a9c2")).toEqual([{ raw: "0f3a9c2", hexish: true }]);
+    expect(strip(tokenize("0f3a9c2"))).toEqual([{ raw: "0f3a9c2", hexish: true }]);
   });
 
   it("keeps all-letter hex words as base tokens (base pass wins)", () => {
     // "abcdef" matches both passes equally but has no digit — plausibly a
     // word (decade, facade, deface) — so the base capture stands.
-    expect(tokenize("abcdef")).toEqual([{ raw: "abcdef", hexish: false }]);
-    expect(tokenize("deadbeef")).toEqual([{ raw: "deadbeef", hexish: false }]);
+    expect(strip(tokenize("abcdef"))).toEqual([{ raw: "abcdef", hexish: false }]);
+    expect(strip(tokenize("deadbeef"))).toEqual([
+      { raw: "deadbeef", hexish: false },
+    ]);
   });
 
   it("does not capture hex runs without letters", () => {
@@ -91,14 +101,14 @@ describe("tokenize — hexish tokens (PRD §04 rule 2)", () => {
   it("does not capture hexish from 41+ char all-letter runs", () => {
     // 42 hex letters: base captures the whole ≤64 run; the hexish scan's
     // last-40 match is strictly inside it → dropped. No hexish:true token.
-    expect(tokenize("abcdef".repeat(7))).toEqual([
+    expect(strip(tokenize("abcdef".repeat(7)))).toEqual([
       { raw: "abcdef".repeat(7), hexish: false },
     ]);
   });
 
   it("captures a 40-char digit-led hexish run with a letter", () => {
     const s = "0" + "a".repeat(39);
-    expect(tokenize(s)).toEqual([{ raw: s, hexish: true }]);
+    expect(strip(tokenize(s))).toEqual([{ raw: s, hexish: true }]);
   });
 
   it("bounds longer digit-led hex runs to the last 40 chars (regex-as-spec)", () => {
@@ -106,25 +116,27 @@ describe("tokenize — hexish tokens (PRD §04 rule 2)", () => {
     // so no base capture absorbs it). Bounds stay 6–40; the shape gate's
     // ≥20-pure-hex rejection handles noise downstream (P1.M2.T2).
     const run = "1a".repeat(20) + "1"; // 41 chars, digit-led
-    expect(tokenize(`x ${run} y`)).toEqual([
+    expect(strip(tokenize(`x ${run} y`))).toEqual([
       { raw: run.slice(1), hexish: true }, // last 40 chars
     ]);
   });
 
   it("does not treat a 5-char hex-letter string as hexish (too short)", () => {
     // Below the 6-char minimum; letter-initial and ≥ 2 chars → base token.
-    expect(tokenize("abcde")).toEqual([{ raw: "abcde", hexish: false }]);
+    expect(strip(tokenize("abcde"))).toEqual([{ raw: "abcde", hexish: false }]);
   });
 
   it("keeps hexish spans nested inside an identifier in the identifier", () => {
     // The inner hexish match is strictly inside the base capture → dropped.
-    expect(tokenize("xabcdef1")).toEqual([{ raw: "xabcdef1", hexish: false }]);
+    expect(strip(tokenize("xabcdef1"))).toEqual([
+      { raw: "xabcdef1", hexish: false },
+    ]);
   });
 });
 
 describe("tokenize — CJK and non-ASCII (PRD §04 rule 3)", () => {
   it("skips CJK runs, emitting nothing for them", () => {
-    expect(tokenize("前回の session トークン")).toEqual([
+    expect(strip(tokenize("前回の session トークン"))).toEqual([
       { raw: "session", hexish: false },
     ]);
   });
@@ -152,7 +164,7 @@ describe("tokenize — CJK and non-ASCII (PRD §04 rule 3)", () => {
 
 describe("tokenize — ordering and bounds invariants", () => {
   it("interleaves hexish tokens in textual position (document order)", () => {
-    expect(tokenize("aa 0f3a9c2 bb")).toEqual([
+    expect(strip(tokenize("aa 0f3a9c2 bb"))).toEqual([
       { raw: "aa", hexish: false },
       { raw: "0f3a9c2", hexish: true },
       { raw: "bb", hexish: false },
@@ -176,7 +188,7 @@ describe("tokenize — ordering and bounds invariants", () => {
       longHex,
       "deadbeef",
     ].join(" ");
-    const expected: RawToken[] = [
+    const expected: Array<Pick<RawToken, "raw" | "hexish">> = [
       { raw: "fix", hexish: false },
       { raw: "state", hexish: false },
       { raw: "of", hexish: false },
@@ -191,7 +203,7 @@ describe("tokenize — ordering and bounds invariants", () => {
       { raw: longHex, hexish: true },
       { raw: "deadbeef", hexish: false },
     ];
-    expect(tokenize(mixed)).toEqual(expected);
+    expect(strip(tokenize(mixed))).toEqual(expected);
     for (const t of expected) {
       if (t.hexish) {
         expect(t.raw.length).toBeGreaterThanOrEqual(6);
@@ -204,9 +216,72 @@ describe("tokenize — ordering and bounds invariants", () => {
   });
 });
 
+describe("tokenize — span offsets (P1.M1.T3.S1)", () => {
+  it("reports exact UTF-16 spans on the canonical mixed case", () => {
+    expect(tokenize("fix 0f3a9c2 now")).toEqual([
+      { raw: "fix", hexish: false, start: 0, end: 3 },
+      { raw: "0f3a9c2", hexish: true, start: 4, end: 11 },
+      { raw: "now", hexish: false, start: 12, end: 15 },
+    ]);
+  });
+
+  it("spans are valid slice bounds, disjoint and ascending across mixed inputs", () => {
+    const cases = [
+      "fix 0f3a9c2 now",
+      "state-of-the-art",
+      "f3a9c2e deadbeef abcdef 123456", // dedupe shapes + digit run (→ nothing)
+      "fixRoundingError HTTPServer session_token_valid", // camel/snake whole tokens
+      `${"z".repeat(64)} ${"z".repeat(70)} ok`, // 64-cap overruns + 1-char drop
+      `x ${"1a".repeat(20)}1 y`, // digit-led hex overrun → last 40 chars
+      "0f3a9c2 absorbs its base-captured tail f3a9c2",
+      "前回の session トークン", // CJK neighbors
+      "𝕏 fix", // astral char = 2 UTF-16 units; offsets shift by 2, stay valid
+    ];
+    for (const text of cases) {
+      const toks = tokenize(text);
+      for (let i = 0; i < toks.length; i++) {
+        const t = toks[i];
+        // Offsets are UTF-16 code-unit indices into the exact input string —
+        // always valid String.prototype.slice bounds (S2's gap-slice relies
+        // on exactly this).
+        expect(text.slice(t.start, t.end)).toBe(t.raw);
+        // Disjoint, ascending (gap 0 only where spans merely abut).
+        if (i > 0) expect(toks[i - 1].end).toBeLessThanOrEqual(t.start);
+      }
+    }
+  });
+
+  it("hexish token reports its own span, not an absorbed base tail's", () => {
+    const [whole] = tokenize("0f3a9c2");
+    expect(whole).toEqual({ raw: "0f3a9c2", hexish: true, start: 0, end: 7 });
+    const text = "run 0f3a9c2!";
+    const toks = tokenize(text);
+    expect(toks).toHaveLength(2); // "run" + one opaque hexish token
+    const t = toks[1];
+    expect(t.hexish).toBe(true);
+    expect(t.start).toBe(4);
+    expect(t.end).toBe(11); // absorbed tail "f3a9c2" sits at 5..10 — not reported
+    expect(text.slice(t.start, t.end)).toBe("0f3a9c2");
+  });
+
+  it("rejected non-ASCII-adjacent runs emit nothing", () => {
+    expect(tokenize("Þórhildur ΩbsidianMirror 草x0f3a9c2")).toEqual([]);
+  });
+
+  it("spans survive CJK runs between tokens (fix 草sword error)", () => {
+    const text = "fix 草sword error";
+    // "草sword" is disqualified whole; 草 is ONE UTF-16 unit, so "error"
+    // starts after it: f i x ␠ 草 s w o r d ␠ e r r o r → 11..16.
+    expect(tokenize(text)).toEqual([
+      { raw: "fix", hexish: false, start: 0, end: 3 },
+      { raw: "error", hexish: false, start: 11, end: 16 },
+    ]);
+  });
+});
+
 describe("expandCandidates — camelCase/snake_case subwords (PRD §04 h3.4/h3.5)", () => {
   const expand = (raw: string): CandidateDraft[] =>
-    expandCandidates({ raw, hexish: false });
+    expandCandidates({ raw, hexish: false, start: 0, end: raw.length });
 
   it("fixRoundingError → whole + Rounding + Error (fix dropped, len<4)", () => {
     expect(expand("fixRoundingError")).toEqual([
@@ -308,7 +383,9 @@ describe("expandCandidates — camelCase/snake_case subwords (PRD §04 h3.4/h3.5
   });
 
   it("hexish tokens are opaque: exactly one whole draft, never split", () => {
-    expect(expandCandidates({ raw: "f3a9c2e", hexish: true })).toEqual([
+    expect(
+      expandCandidates({ raw: "f3a9c2e", hexish: true, start: 0, end: 7 }),
+    ).toEqual([
       {
         key: "f3a9c2e",
         display: "f3a9c2e",
