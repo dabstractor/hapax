@@ -49,6 +49,7 @@ const GOOGLE = "AIza" + "aA0-_Z9".repeat(5); // AIza + exactly 35
 const GHP = "ghp_" + "aB3".repeat(12); // ghp_ + exactly 36
 const GPAT = "github_pat_" + "aB3_".repeat(9); // github_pat_ + exactly 36
 const SK_LEGACY = "sk-" + "a1".repeat(10) + "T3BlbkFJ" + "b2".repeat(10);
+const GLPAT = "glpat-" + "aB3".repeat(8); // glpat- + exactly 24 (Probe C, BUG-003 h3.2)
 
 // --- unit block: pure maskSecrets -------------------------------------------
 
@@ -63,6 +64,7 @@ describe("maskSecrets — BUG-003 probe keys (unit)", () => {
     ["the Google API key", GOOGLE],
     ["the GitHub PAT", GHP],
     ["the GitHub fine-grained PAT", GPAT],
+    ["the GitLab PAT (Probe C)", GLPAT],
   ];
   for (const [name, key] of cases) {
     it(`fully masks ${name}, length preserved`, () => {
@@ -101,6 +103,10 @@ describe("maskSecrets — false-positive guards (unit)", () => {
     expect(maskSecrets(prose)).toBe(prose);
     expect(maskSecrets(url)).toBe(url);
     expect(maskSecrets(vocab)).toBe(vocab);
+    // Probe C (glpat- window): the literal prefix without a ≥20-char
+    // payload must stay byte-identical — the regex needs glpat- + 20.
+    const glpatProse = "we prefix gitlab tokens with glpat- but never paste one here";
+    expect(maskSecrets(glpatProse)).toBe(glpatProse);
   });
 
   it("returns empty string for empty input", () => {

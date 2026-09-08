@@ -66,9 +66,16 @@ const CONSONANT_RUN_MIN = 6;
 
 /** Known secret-key prefixes, lowercase — matched against the lowercased
  *  display so the match is case-insensitive. OpenAI sk-/sk_, GitHub
- *  ghp_/gho_/github_pat_, Slack xox[bpars]-, AWS akia, Google aiza, and
- *  eyj (every JWT body starts with base64(`{"`) = "eyJ"). PRD §04 h2.23
- *  rule 3, first bullet. Baked constant — no config surface. */
+ *  ghp_/gho_/github_pat_, Slack xox[bpars]-, AWS akia, Google aiza,
+ *  eyj (every JWT body starts with base64(`{"`) = "eyJ"), and npm_
+ *  (Probe C — P1.M2.T2.S3 battery, BUG-003 PRD h3.2: closes the
+ *  zero-digit mixed-case npm payload gap S1's bare-run can't reach —
+ *  the whole `npm_<payload>` token AND the bare `npm_` remainder token
+ *  left after layer-1 payload masking were stored/ranked pre-fix).
+ *  PRD §04 h2.23 rule 3, first bullet. Baked constant — no config
+ *  surface. NOTE: hyphen-formats (glpat-) can NEVER work here —
+ *  tokenize() splits at '-', so they own a maskSecrets regex instead
+ *  (see SECRET_WINDOW_RES). */
 const SECRET_PREFIXES: readonly string[] = [
   "sk-",
   "sk_",
@@ -85,6 +92,12 @@ const SECRET_PREFIXES: readonly string[] = [
   // JWT bodies — base64(`{"…`) starts "eyJ"; stored lowercase because the
   // match runs against the lowercased display (case-insensitive).
   "eyj",
+  // Probe C (P1.M2.T2.S3): npm publish tokens 'npm_' + payload — closes
+  // the battery's 'npm short: npm_Xoremu…' / bare-'npm_'-remainder cases
+  // (<32-char zero-digit payloads pass every other rule). Verified not to
+  // fire on prose/fixtures (no 'npm_'-prefixed token in any fixture; the
+  // mask-secrets identity + prose-replay suites pin this).
+  "npm_",
 ];
 /** Digit+symbol ratio rule applies only from this length up (rule 3,
  *  second bullet). */
@@ -195,6 +208,17 @@ export function passesShape(draft: CandidateDraft): GateResult {
  * same layering admits Slack-style lowercase tails ("abcdefghijklmnopqrstu
  * vwx": entropy ≈ 4.6 but no digit, no uppercase) — the Slack masking
  * regex owns the full xoxb-… key.
+ *
+ * Probe C additions (P1.M2.T2.S3, BUG-003 PRD h3.2 battery): rule 1's
+ * 'npm_' entry and maskSecrets' glpat- window exist only because the
+ * battery proved them leaking — the whole `npm_<payload>` token (zero
+ * digits → rules 6/7 never fire) and the bare 'npm_' remainder left after
+ * layer-1 payload masking were stored/ranked pre-fix, as were 'glpat'
+ * (tokenization splits the hyphen format) and its payload's sub-words.
+ * Documented residual: a <32-char vowel-bearing mixed-case no-digit
+ * payload after a prose word like "Bearer " still admits (the battery
+ * vector is sized so every sub-word is < 4 chars and the whole token is
+ * consonant-run repelled) — no prose-safe rule covers it; owner-accepted.
  *
  * Called with draft.display (original casing, same length as key); the
  * single lowercase here is what makes rule 1 case-insensitive. Baked
@@ -424,7 +448,13 @@ function hasHighEntropySecretRun(display: string): boolean {
  *  8. JWT strict — ey…≥17.ey…≥17.sig≥10 (optionally =-padded)
  *  9. JWT loose three-segment — eyJ… for headers the strict second-`ey`
  *     shape misses; empty third segment allowed so a two-dot fragment masks
- * 10. AWS secret bare run — ANY run of ≥ BARE_RUN_MIN (32) [0-9a-zA-Z/+]
+ * 10. GitLab PAT — glpat- + ≥ 20 [A-Za-z0-9_-] (Probe C, P1.M2.T2.S3,
+ *     BUG-003 PRD h3.2: 'glpat-' tokenizes as 'glpat' + payload, so no
+ *     token-level prefix can ever see the key whole — pre-fix 'glpat'
+ *     itself and the payload's sub-words were stored/ranked). Placed
+ *     BEFORE the bare-run catch-all on purpose: the catch-all would mask
+ *     only the ≥32 payload run and leave 'glpat' tokenizing standalone.
+ * 11. AWS secret bare run — ANY run of ≥ BARE_RUN_MIN (32) [0-9a-zA-Z/+]
  *     chars, greedy catch-all, LAST (open-ended so over-long runs mask
  *     fully). The floor sits at 32: safely below the 38-char classic AWS
  *     secret access key (the BUG-003 h3.2 leak — its slash-free form
@@ -464,7 +494,8 @@ const SECRET_WINDOW_RES: readonly RegExp[] = [
   /sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}/g,
   /ey[a-zA-Z0-9]{17,}\.ey[a-zA-Z0-9/_-]{17,}\.(?:[a-zA-Z0-9/_-]{10,}={0,2})?/g,
   /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g,
-  BARE_ALNUM_RUN_RE, // AWS secret bare run — greedy catch-all, LAST; floor BARE_RUN_MIN = 32 (38-char AWS secret class)
+  /glpat-[A-Za-z0-9_-]{20,}/g, // 10. GitLab PAT (Probe C, BUG-003 h3.2) — precedes the bare-run catch-all, which would otherwise mask only the ≥32 payload and leave 'glpat' tokenizing
+  BARE_ALNUM_RUN_RE, // 11. AWS secret bare run — greedy catch-all, LAST; floor BARE_RUN_MIN = 32 (38-char AWS secret class)
 ];
 
 /** Literal necessary-condition anchors for SECRET_WINDOW_RES (index-aligned):
@@ -472,7 +503,7 @@ const SECRET_WINDOW_RES: readonly RegExp[] = [
  *  when `segment.indexOf(anchor)` misses for all of a rule's anchors the
  *  regex pass is provably a no-op and is skipped. This is a pure fast path
  *  (same maskings, same claim order); rules with no usable literal (the
- *  bare alnum catch-all, BARE_RUN_MIN = 32, index 9) always run. Anchors are
+ *  bare alnum catch-all, BARE_RUN_MIN = 32, index 10) always run. Anchors are
  *  case-sensitive exactly like the regexes themselves. Without the
  *  prefilter, ten full-string regex scans per segment dominated the ingest
  *  profile (2026-09 Issue 4: ~15 ms of an ~175 ms 800 KB ingest); with it,
@@ -490,7 +521,8 @@ const SECRET_WINDOW_ANCHORS: readonly (readonly string[])[] = [
   ["sk-"], // 7. OpenAI modern
   ["ey"], // 8. JWT strict (weak anchor — still memchr-cheap)
   ["eyJ"], // 9. JWT loose three-segment
-  [], // 10. AWS secret bare run — no literal anchor: always runs
+  ["glpat-"], // 10. GitLab PAT (Probe C, BUG-003 h3.2)
+  [], // 11. AWS secret bare run — no literal anchor: always runs
 ];
 
 /**

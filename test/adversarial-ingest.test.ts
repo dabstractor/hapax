@@ -70,6 +70,58 @@ const JWT_DOZJG =
 const SK_PROJ_PREFIX = OPENAI.slice("sk-proj-".length, "sk-proj-".length + 5)
   .toLowerCase();
 
+// --- Probe C synthetic-token battery keys (BUG-003, PRD h3.2). Every vector
+// --- was empirically run through the pre-fix pipeline (maskSecrets →
+// --- tokenize → expandCandidates → passesShape → store) before these
+// --- assertions were locked; the fragments each vector actually emitted
+// --- define the shapeGate fixes, the rest pin S1 (bare-run floor 32) + S2
+// --- (parent-secret propagation) behavior.
+
+/** PRD h3.2 exact repro: the classic 38-char AWS secret access key WITHOUT
+ *  its slashes. At BARE_RUN_MIN = 32 the bare-run catch-all (layer 1) masks
+ *  it whole — pinned here, no new rule needed. */
+const AWS_38_NOSLASH = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY";
+
+/** npm publish token, LONG form: 'npm_' + 36 alnum. Layer 1 masks the ≥32
+ *  payload run, but the 'npm_' remainder still tokenizes (a 4-char token:
+ *  entropy 2.0 bits/char) — pre-fix it was STORED and ranked under the
+ *  'npm_' query. Closed by the 'npm_' SECRET_PREFIXES entry. */
+const NPM_LONG = "npm_" + "aA0bB1cC2dD3eE4fF5gG6hH7iI8jJ9kK2mM3";
+
+/** npm token, SHORT form: 'npm_' + 22-char mixed-case no-digit payload with
+ *  every camelCase sub-word ≥ 4 vowel-bearing chars. Pre-fix the whole
+ *  token AND its sub-words admitted — zero digits means rules 6/7 never
+ *  fire, which is exactly the gap the 'npm_' SECRET_PREFIXES entry closes
+ *  (S2 then poisons the sub-words). */
+const NPM_SHORT = "npm_XoremuFapikDolamYsunet";
+
+/** GitLab PAT, the REAL hyphen format: 'glpat-' + 22-char mixed-case
+ *  no-digit payload. Tokenization splits at the hyphen, so NO token-level
+ *  prefix can ever see 'glpat-…' whole — pre-fix 'glpat' itself stored and
+ *  the payload token plus its sub-words admitted. Closed by the glpat- mask
+ *  regex (SECRET_WINDOW_RES with its index-aligned "glpat-" anchor). */
+const GLPAT_HYPHEN = "glpat-QaleviSorekTumibYrenod";
+
+/** Stripe-style live secret key: 'sk_live_' + 22-char payload. NO new rule —
+ *  the existing 'sk_' prefix already matches via startsWith, and S2's
+ *  parent-secret propagation poisons the payload sub-words. Battery pins
+ *  both; adding a redundant 'sk_live' entry is an anti-pattern. */
+const SK_LIVE = "sk_live_MiwokaZeltaPurinVoseka";
+
+/** Bearer authorization payload: <32-char mixed-case no-digit — the
+ *  documented RESIDUAL class ('bearer' is prose; a prefix rule on it would
+ *  reject every auth discussion). Sized so every case-boundary sub-word is
+ *  < 4 chars (below MIN_LENGTH) and the whole token is consonant-run
+ *  repelled — nothing from it may be stored or ranked. The general
+ *  vowel-bearing <32 payload after a prose word stays theoretically leaky:
+ *  owner-accepted residual, documented in shapeGate's isSecretShaped JSDoc. */
+const BEARER_PAYLOAD = "QmXvRtYpLwZkJhGfDsAa";
+
+/** The alphabet-run synthetic behind PRD h3.2's documented fragments
+ *  ('abcdefghijklmnopqrstuvwxy' / 'yz0123456789' / 'zabc'): 40 chars, fully
+ *  masked by the bare-run catch-all (layer 1). */
+const ALPHA_RUN = "abcdefghijklmnopqrstuvwxyz0123456789zabc";
+
 // --- shared helpers ----------------------------------------------------------
 
 /** Real pipeline + shipped dict via the HAPAX_DICT seam — nothing mocked. */
@@ -147,6 +199,94 @@ describe("Probe A — realistic secrets never become candidates (BUG-003)", () =
     // gate deaths, never masking damage (shipped-dict facts per
     // test/mask-secrets.test.ts).
     expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbine");
+  });
+});
+
+// --- Probe C: synthetic-token paste battery (BUG-003, PRD h3.2) --------------
+
+describe("Probe C — synthetic-token paste battery (BUG-003, PRD h3.2)", () => {
+  let store: CandidateStore;
+
+  beforeAll(async () => {
+    const pipeline = makePipeline((store = new CandidateStore()));
+    await pipeline.processText(`aws key: ${AWS_38_NOSLASH} end`, true);
+    await pipeline.processText(`npm long: ${NPM_LONG} end`, true);
+    await pipeline.processText(`npm short: ${NPM_SHORT} end`, true);
+    await pipeline.processText(`gitlab: ${GLPAT_HYPHEN} end`, true);
+    await pipeline.processText(`stripe: ${SK_LIVE} end`, true);
+    await pipeline.processText(`auth: Bearer ${BEARER_PAYLOAD} end`, true);
+    await pipeline.processText(`synthetic: ${ALPHA_RUN} end`, true);
+    // Positive control rides the SAME store (Probe A convention): rare prose
+    // words from these very messages must admit, so the no-leak assertions
+    // can never pass vacuously against a dead store.
+    await pipeline.processText("a zephyr drifted over the vestibule", true);
+  });
+
+  // Each row: [fragment, provenance]. The PRD-documented leaks plus every
+  // battery token's plausible sub-word pieces (camelCase/case-boundary
+  // splits ≥ 4 chars, lowercased — derived from the constants above).
+  const FRAGMENTS: [string, string][] = [
+    // PRD h3.2 documented fragments (the alphabet-run synthetic's leaks)
+    ["abcdefghijklmnopqrstuvwxy", "PRD h3.2 documented leak (alphabet run)"],
+    ["yz0123456789", "PRD h3.2 documented leak (alphabet run)"],
+    ["zabc", "PRD h3.2 documented leak (alphabet run)"],
+    // AWS 38-char no-slash key (layer-1 bare-run pin; camelCase pieces)
+    ["wjal", "AWS 38-char no-slash key head (layer-1 masked)"],
+    ["k7mdeng", "AWS key mid-piece (layer-1 masked)"],
+    ["bpxrfi", "AWS key tail-piece (layer-1 masked)"],
+    // npm_ tokens ('npm_' prefix rule closes both)
+    ["npm_", "bare npm_ remainder token post-masking (pre-fix stored+ranked)"],
+    ["a0bb", "npm 36-char payload head (layer-1 masks the ≥32 run)"],
+    ["xore", "npm short-payload sub-word Xoremu (pre-fix admitted)"],
+    ["fapi", "npm short-payload sub-word Fapik (pre-fix admitted)"],
+    ["dola", "npm short-payload sub-word Dolam (pre-fix admitted)"],
+    ["ysun", "npm short-payload sub-word Ysunet (pre-fix admitted)"],
+    // glpat- token (hyphen split — mask-regex closed)
+    ["glpa", "glpat- hyphen-split token (pre-fix stored+ranked)"],
+    ["qale", "glpat payload sub-word Qalevi (pre-fix admitted)"],
+    ["sore", "glpat payload sub-word Sorek (pre-fix admitted)"],
+    ["tumi", "glpat payload sub-word Tumib (pre-fix admitted)"],
+    ["yren", "glpat payload sub-word Yrenod (pre-fix admitted)"],
+    // sk_live_ (existing 'sk_' prefix + S2 propagation pin — no new rule)
+    ["sk_l", "sk_live_ prefix head (existing sk_ rule)"],
+    ["miwo", "sk_live payload sub-word Miwoka (S2-poisoned)"],
+    ["zelt", "sk_live payload sub-word Zelta (S2-poisoned)"],
+    ["puri", "sk_live payload sub-word Purin (S2-poisoned)"],
+    ["vose", "sk_live payload sub-word Voseka (S2-poisoned)"],
+    // Bearer residual class (sub-words < 4; whole token consonant-run-repelled)
+    ["qmxv", "Bearer payload head (documented residual class)"],
+  ];
+
+  it.each(FRAGMENTS)("never stores or ranks %s (%s)", (fragment) => {
+    expect(
+      rankMatches(store, fragment)
+        .map((m) => m.key)
+        .some((k) => k.includes(fragment)),
+    ).toBe(false);
+    expect(storedKeys(store).some((k) => k.includes(fragment))).toBe(false);
+  });
+
+  it("provider query path: 'abc'/'yz0'/'zabc' prefixes return no fragment-bearing items", () => {
+    for (const prefix of ["abc", "yz0", "zabc"]) {
+      expect(
+        rankMatches(store, prefix).some((m) =>
+          ["abcdefghijklmnopqrstuvwxy", "yz0123456789", "zabc"].some((f) =>
+            m.key.includes(f),
+          ),
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("positive control: the rare prose word 'zephyr' from the same messages admits", () => {
+    expect(rankMatches(store, "zeph").map((m) => m.key)).toContain("zephyr");
+  });
+
+  it("positive control: 'bearer' stays prose — the ordinary word itself admits", () => {
+    // 'Bearer' must never become a secret prefix: the word lands in the
+    // store like any prose word, proving the Bearer line reached ingest
+    // while its payload contributed nothing (the residual-class contract).
+    expect(rankMatches(store, "bear").map((m) => m.key)).toContain("bearer");
   });
 });
 

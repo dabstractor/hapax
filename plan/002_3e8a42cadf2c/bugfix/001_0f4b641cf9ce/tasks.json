@@ -104,7 +104,7 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Admission and secret-defense correctness (BUG-002, BUG-003)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Make the PRD's own M2 acceptance phrase (National -> Renewable -> Energy -> Laboratory at zero typed chars) reachable again without reintroducing common-word menu noise, via a capitalized-occurrence (proper-noun) admission relief band validated by the §09 tuning protocol and pinned in an automated test; and close the secret-fragment leak by lowering the raw-text bare-run mask floor to 32 and propagating whole-token secret rejection to its sub-word drafts, verified against the PRD's paste battery.",
           "tasks": [
             {
@@ -170,7 +170,7 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "Suppress fragments of pasted secrets (BUG-003)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Sub-16-char, <=1-digit camelCase sub-words of secret-shaped whole tokens (CYEXAMPLEKEY from the 38-char AWS example key) and fragments of npm/glpat/sk_live/Bearer synthetics currently pass every gate and surface in the menu. Fix all three PRD levers: bare-run mask floor 40->32, parent-secret propagation so sub-words of a secret-rejected whole token are never stored, and a conservative synthetic-token battery.",
               "subtasks": [
                 {
@@ -207,7 +207,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S3",
                   "title": "Synthetic-token paste battery: npm/glpat/sk_live/Bearer fragments never offered",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T2.S1",
