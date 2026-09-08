@@ -197,6 +197,71 @@ LIVE=$(mktemp -d) && touch $LIVE/marker && \
 
 ---
 
+## Bugfix-001 re-verification — PRD §09 integration items 5/6/7 (P1.M4.T1.S1, 2026-09-08)
+
+Closes the PRD Testing-Summary loop for bugfix-001 (fixes BUG-001..006:
+stock-context delegation, armed-chain reset, relief ceiling 95, 32-char
+mask floor + sub-word poisoning, astral boundary, bigram drain loop).
+Full gauntlet at head `f69e893`:
+`npm run check` exit 0 · `npm test` **33 files / 723 passed / 1 skipped**
+(the known gc-dependent `dictionary.test.ts` case) — up from the 636-test
+pre-fix baseline, with every new pin green. No cross-fix fallout; no
+spec-derived test was weakened. The recorded known gap "successorIndex
+eviction cleanup" (M2 section below) remains recorded and untouched.
+
+### Integration item 5 — secret paste battery: PASS
+
+```
+$ npx vitest --run test/adversarial-ingest.test.ts test/mask-secrets.test.ts
+```
+- 2026-09-08 @ `f69e893`: **2 files, 62/62 green.** The battery runs the
+  realistic-key corpus (38-char AWS `wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY`,
+  npm/glpat/sk_live/Bearer synthetics) through the real `IngestPipeline` +
+  shipped `dict/common-en.bin` and asserts via `rankMatches` that NO
+  fragment — including `cyexamplekey`, `jalr`, `femik7` — is ever offered
+  by any prefix query; the 32-char mask floor + sub-word poisoning cover
+  the residual classes the earlier 20-char floor leaked.
+
+### Integration item 6 — stock-context parity sentinels: PASS
+
+```
+$ npx vitest --run test/provider.test.ts test/provider-live.test.ts test/provider-match.test.ts
+```
+- 2026-09-08 @ `f69e893`: **3 files, 99/99 green.** Slash (`/re`), `@men`,
+  and quoted-path (`"src/roun`) contexts delegate to
+  `current.getSuggestions` with byte-identical arguments
+  (classifyStockContext runs BEFORE the armed-chain machine); Tab in a
+  stock context never opens the hapax menu, and Tab-only-completes holds
+  on the forced path.
+
+### Integration item 7 — NREL chain at zero typed chars: PASS
+
+```
+$ npx vitest --run test/chain.test.ts test/chaining-gating.test.ts test/acceptance.test.ts
+```
+- 2026-09-08 @ `f69e893`: **3 files, 58/58 green**, including the end-to-end
+  pin in test/acceptance.test.ts ("zero-typing chain … PRD §09 DoD M2 item
+  7"): `na` → accept `National` → zero additional typed word-chars →
+  `Renewable` top → Tab → `Energy` → Tab → `Laboratory`, replayed against
+  the shipped dictionary with no mocks.
+
+### Query-latency spot check (same sweep)
+
+```
+$ npm run bench ; npx vitest --run test/perf-gates.test.ts --disableConsoleIntercept
+```
+- Query gate: **p99 0.062 ms** (bench) / **0.106 ms** (perf-gates) on a
+  20k-candidate store — the ~0.1 ms class budget holds.
+- Ingest gate under the new bigram drain loop: **76.7 ms** best-of-3
+  (perf-gates) / **60.97 ms** bench mean for 800 KB — ~1.0–1.3× the 60 ms
+  budget, well inside the 3× hard bound (down from the pre-drain-loop
+  172–185 ms sweep; the one-call drain removed the per-drain resort cost).
+- Carried watch flags (inside bounds, unchanged verdicts): heap delta
+  6.93 MB vs 6 MB budget (GC-sampling noise); 25k-flood 109.6 ms vs the
+  §05 hard 100 ms budget.
+
+---
+
 ## M2 Definition of Done — post-delta re-verification (P1.M4.T1.S2)
 
 PRD §09 h2.54 (rewritten, verbatim contract for the D2 redesign):
