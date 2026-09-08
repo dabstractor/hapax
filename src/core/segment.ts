@@ -4,10 +4,15 @@
  *
  * `tokenize` is pure: no node/pi imports (type-only import of RawToken), no
  * external state beyond the module-scope regexes (whose /g lastIndex is reset
- * on every call). CJK and all other non-ASCII text falls outside the ASCII
- * character classes, so those runs are skipped for free and ASCII words
- * resume after them (rule 3). Punctuation and whitespace terminate tokens —
- * no hyphen or apostrophe joining (rule 4).
+ * on every call). Rule 3 (R2 delta): a word candidate must be bounded on BOTH
+ * sides by non-letter characters, where ANY Unicode letter counts as a letter
+ * — a run adjacent (either side) to a Unicode letter is disqualified whole
+ * (Þórhildur, ΩbsidianMirror, 草sword emit nothing — never their ASCII
+ * remainder), while space/punctuation-bounded ASCII beside a CJK run still
+ * tokenizes normally ("fix 方法 error" → fix, error). The scan regexes stay
+ * ASCII-only; disqualification is a post-hoc per-match guard (isUniLetter
+ * below), keeping regex cost unchanged for the ASCII hot path. Punctuation
+ * and whitespace terminate tokens — no hyphen or apostrophe joining (rule 4).
  *
  * Passes (PRD §04):
  *  1. Base: /[A-Za-z][A-Za-z0-9_]{0,63}/g — ASCII identifiers/words, capped
@@ -67,6 +72,30 @@ const HEXISH_RE = /(?=[0-9a-fA-F]*[A-Fa-f])(?:[0-9a-fA-F]{6,40})\b/g;
 /** Hash-shape discriminator for letter-initial tokens both passes matched. */
 const HAS_DIGIT_RE = /[0-9]/;
 
+/** Any Unicode letter (PRD §04 rule 3, R2 delta): CJK, Latin-1, Greek, … */
+const UNI_LETTER_RE = /\p{L}/u;
+
+/** ASCII letters — the only letters the scan regexes can consume. */
+const ASCII_LETTER_RE = /[A-Za-z]/;
+
+/**
+ * True when a guard-position code point is a NON-ASCII Unicode letter, i.e. a
+ * character the ASCII scan regexes could never have consumed — its adjacency
+ * disqualifies the whole candidate run (rule 3, R2). ASCII letters are
+ * excluded: a maximal-class base match cannot abut one, EXCEPT at the 64-char
+ * cap split ("zz…z" × 70 → 64 + 6), where both segments must keep their
+ * historical behavior. `undefined` (string edge) → false. Limitation: an
+ * astral letter (surrogate pair) immediately BEFORE a match is seen via
+ * codePointAt() as its lone low surrogate, which is not \p{L}, so such runs
+ * slip through; the AFTER side is code-point-correct because codePointAt() at
+ * a high surrogate returns the full pair. Accepted v1 trade-off.
+ */
+function isUniLetter(cp: number | undefined): boolean {
+  if (cp === undefined) return false;
+  const ch = String.fromCodePoint(cp);
+  return UNI_LETTER_RE.test(ch) && !ASCII_LETTER_RE.test(ch);
+}
+
 /** Internal token with span + liveness for dedupe/merge bookkeeping. */
 interface SpanToken {
   raw: string;
@@ -94,12 +123,22 @@ export function tokenize(text: string): RawToken[] {
   const bases: SpanToken[] = [];
   for (let m = BASE_RE.exec(text); m !== null; m = BASE_RE.exec(text)) {
     if (m[0].length >= 2) {
+      // Rule 3 (R2): a run abutting a Unicode letter on either side is
+      // disqualified whole. Disqualified runs are still pushed (dead: true)
+      // rather than skipped, so pass-2 cursor/dedupe math keeps seeing their
+      // span: a hexish match inside a disqualified identifier must die with
+      // it ("草x0f3a9c2" must not leak "0f3a9c2"), and equal-span letter-
+      // initial hexish overlaps must not resurrect it. The merge drops dead
+      // tokens, so nothing is emitted.
+      const dead =
+        isUniLetter(text.codePointAt(m.index - 1)) ||
+        isUniLetter(text.codePointAt(m.index + m[0].length));
       bases.push({
         raw: m[0],
         start: m.index,
         end: m.index + m[0].length,
         hexish: false,
-        dead: false,
+        dead,
       });
     }
   }
@@ -114,6 +153,24 @@ export function tokenize(text: string): RawToken[] {
     const start = m.index;
     const end = start + m[0].length;
     while (k < bases.length && bases[k].end <= start) k++; // ends before us
+    // Rule 3 (R2): hexish runs abutting a Unicode letter on either side (the
+    // trailing \b still matches there — a Unicode letter is non-\w to the
+    // ASCII regex) are disqualified whole. Their base-captured inner tails
+    // must die with them ("草0f3a9c2" must not leak tail "f3a9c2"), so the
+    // absorb-contained-bases bookkeeping runs, but the hexish token itself
+    // is not pushed. Advancing k here is safe: bases passed over either end
+    // before `start` or lie fully inside this span, so no later match can
+    // interact with them.
+    if (
+      isUniLetter(text.codePointAt(start - 1)) ||
+      isUniLetter(text.codePointAt(end))
+    ) {
+      while (k < bases.length && bases[k].start < end) {
+        if (bases[k].end <= end) bases[k].dead = true;
+        k++;
+      }
+      continue;
+    }
     const b = bases[k];
     if (b !== undefined && b.start <= start) {
       // `start` lies inside b. Equal span ⇒ letter-initial string both

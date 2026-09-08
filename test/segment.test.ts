@@ -129,8 +129,24 @@ describe("tokenize — CJK and non-ASCII (PRD §04 rule 3)", () => {
     ]);
   });
 
-  it("resumes ASCII tokens after a non-ASCII run", () => {
+  it("disqualifies ASCII runs adjacent to a Unicode letter (rule 3, R2)", () => {
+    expect(raws(tokenize("Þórhildur"))).toEqual([]);
+    expect(raws(tokenize("ΩbsidianMirror"))).toEqual([]);
+    expect(raws(tokenize("草sword"))).toEqual([]);
+  });
+
+  it("still captures space/punctuation-bounded ASCII after CJK runs", () => {
     expect(raws(tokenize("fix 方法 error"))).toEqual(["fix", "error"]);
+    expect(raws(tokenize("漢字 word"))).toEqual(["word"]);
+  });
+
+  it("disqualifies hexish spans adjacent to a Unicode letter", () => {
+    expect(tokenize("草0f3a9c2")).toEqual([]);
+    expect(tokenize("0f3a9c2草")).toEqual([]);
+  });
+
+  it("keeps a following Unicode letter from leaking via trailing \\b (deadbeef草)", () => {
+    expect(raws(tokenize("deadbeef草"))).toEqual([]);
   });
 });
 

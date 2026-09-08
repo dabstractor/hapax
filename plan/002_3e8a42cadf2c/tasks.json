@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "D2: M2 Redesign — successor-chaining only + Tab contract hardening",
-      "status": "Ready",
+      "status": "Planned",
       "description": "Ship the D2 delta on top of the complete M1+M2 codebase: enforce the one-word completion invariant (delete the entire multi-word phrase layer, keep only the raw-text-adjacency bigram successor index), harden segmentation against non-ASCII-adjacent runs, make Tab only ever complete (forced single-item mitigation against pi-tui's Tab flow), redesign chaining to offer successors at zero typed chars with bare one-word values, rename the config gate to enableChaining with a deprecated enablePhrases alias, and sync changeset-level docs. Grounded in plan/002_3e8a42cadf2c/architecture/ (system_context.md + 5 recon reports). Out of scope per PRD: dictionary/admission/salience/thresholds, pi-tui modifications, persistence, telemetry.",
       "milestones": [
         {
@@ -18,18 +18,24 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Segmentation: disqualify ASCII runs adjacent to Unicode letters (R2)",
-              "status": "Planned",
+              "status": "Complete",
               "description": "A word candidate must be bounded on both sides by non-letter characters where any Unicode letter counts as a letter; never slice a non-ASCII letter out of a word and complete the ASCII remainder.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T1.S1",
                   "title": "Unicode-letter boundary rejection in segment.ts tokenize",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
-                  "prd_selectors": ["h2.1", "h2.22", "h3.3", "h3.4", "h2.49"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/ingest_segment_map.md §2 — BASE_RE /[A-Za-z][A-Za-z0-9_]{0,63}/g (src/core/segment.ts ~line 47) simply restarts matching after a non-ASCII run, so today 'Þórhildur' yields 'rhildur' and 'ΩbsidianMirror' yields 'bsidianMirror'; internal SpanToken already carries start/end before the merge loop drops them.\n2. INPUT: none — leaf pure module (src/core/segment.ts imports only src/core/types.ts).\n3. LOGIC: Implement PRD §04 segmentation rule 3 (R2): after the base and hexish scans, reject any candidate whose immediately-preceding OR immediately-following source character is a Unicode letter (test with /\\p{L}/u — ASCII letters cannot abut a same-class match, so this effectively means non-ASCII letters: CJK, Latin-1). Hook: tokenize Pass 1 base loop (~lines 65–75, m.index in hand) checks text[m.index-1] and text[m.index+m[0].length]; apply the analogous guard to hexish spans (digit-led runs are word candidates too). '漢字 word' still yields 'word' (space-bounded); '草sword' → nothing. Update test/segment.test.ts: replace the 'resumes ASCII tokens after a non-ASCII run' case with whole-run-disqualification cases (Þórhildur→nothing, ΩbsidianMirror→nothing, 草sword→nothing) while keeping pure-ASCII-after-CJK-run-punctuation cases. NOTE: prd_snapshot §09 (h2.49) still lists the old 'CJK run skipped; ASCII resumes after' bullet — the delta R2 explicitly overrides it.\n4. OUTPUT: tokenize()/expandCandidates() signatures unchanged (strings-only out); strictly fewer RawTokens emitted. Consumed in-place by every ingest test and by P1.M1.T3.S1 (span threading, same file).\n5. DOCS: none — internal module, no user-facing/config/API surface change; README sweep is P1.M4.T2.S1 (Mode B)."
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/ingest_segment_map.md §2 — BASE_RE /[A-Za-z][A-Za-z0-9_]{0,63}/g (src/core/segment.ts ~line 47) simply restarts matching after a non-ASCII run, so today 'Þórhildur' yields 'rhildur' and 'ΩbsidianMirror' yields 'bsidianMirror'; internal SpanToken already carries start/end before the merge loop drops them.\n2. INPUT: none — leaf pure module (src/core/segment.ts imports only src/core/types.ts).\n3. LOGIC: Implement PRD §04 segmentation rule 3 (R2): after the base and hexish scans, reject any candidate whose immediately-preceding OR immediately-following source character is a Unicode letter (test with /\\p{L}/u — ASCII letters cannot abut a same-class match, so this effectively means non-ASCII letters: CJK, Latin-1). Hook: tokenize Pass 1 base loop (~lines 65–75, m.index in hand) checks text[m.index-1] and text[m.index+m[0].length]; apply the analogous guard to hexish spans (digit-led runs are word candidates too). '漢字 word' still yields 'word' (space-bounded); '草sword' → nothing. Update test/segment.test.ts: replace the 'resumes ASCII tokens after a non-ASCII run' case with whole-run-disqualification cases (Þórhildur→nothing, ΩbsidianMirror→nothing, 草sword→nothing) while keeping pure-ASCII-after-CJK-run-punctuation cases. NOTE: prd_snapshot §09 (h2.49) still lists the old 'CJK run skipped; ASCII resumes after' bullet — the delta R2 explicitly overrides it.\n4. OUTPUT: tokenize()/expandCandidates() signatures unchanged (strings-only out); strictly fewer RawTokens emitted. Consumed in-place by every ingest test and by P1.M1.T3.S1 (span threading, same file).\n5. DOCS: none — internal module, no user-facing/config/API surface change; README sweep is P1.M4.T2.S1 (Mode B).",
+                  "prd_selectors": [
+                    "h2.1",
+                    "h2.22",
+                    "h3.3",
+                    "h3.4",
+                    "h2.49"
+                  ]
                 }
               ]
             },
@@ -44,21 +50,39 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "store.ts + types.ts: phrase machinery out, recordBigramRuns in",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [],
-                  "prd_selectors": ["h2.1", "h2.6", "h2.11", "h2.35", "h2.37", "h2.38", "h3.7", "h2.33", "h2.49"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/core_phrase_layer_map.md — exact deletion inventory with line ranges: constants/helpers PHRASE_CAP, PHRASE_EVICT_BATCH, phraseSortKey, EvictNode, evictNodeBefore, heapPush, heapPop (src/core/store.ts 98–196; successorBefore/NO_SUCCESSORS STAY), fields #phrases/#phraseCandidates/#phraseEvictHeap/#fastPathAdmitted (213–235), phrase methods recordPhraseLines…iteratePhrases (445–880). #bumpSuccessor (528–575) and #dropSuccessorFor (748–758) are private and ONLY called from phrase paths — they survive and get re-pointed. types.ts: PhraseEntry (61–78) DELETE, Successor (82–90) KEEP.\n2. INPUT: none — this subtask PRODUCES the new store contract. Keep intact: word layer (#map, STORE_CAP=20_000, evictIfOverCap 329–372, upsert/prefixRange/get/entries/rankGroupHistogram), #successorIndex Map<string, Successor[]> (225), topSuccessors() (856–859).\n3. LOGIC: Implement PRD §06 (h2.38/h3.7): replace the phrase map with a slim bigram count map — key lowercase 'first second', value {count, lastSeenOrdinal} (no admission/sticky/demotion states, no trigrams). New public recorder recordBigramRuns(runs: readonly string[][]): for each run, for each consecutive pair (w1,w2): count++/lastSeen refresh and #bumpSuccessor(w1,w2) (make it the recording path). Cap the bigram map at 10,000 keys using the existing lazy-heap eviction pattern minus sticky; on evict call #dropSuccessorFor(key) to splice from the successor index. Re-point the one production caller src/pi/index.ts:183 (recordPhraseLines → recordBigramRuns) and delete the onSweepPhrases wiring (index.ts:188) plus the #onSweepPhrases seam in src/pi/ingest.ts (opts 129/135, fields 163–164, invocations 233/277) so the tree compiles. Prune now-dead test cases to keep the suite green (test/phrases.test.ts, test/phrase-gating.test.ts, test/index.test.ts:411–444, ingest-restore sweep/fast-path cases) — full rewrites land in P1.M1.T3.S2/S3. TDD implied throughout.\n4. OUTPUT: CandidateStore exposes recordBigramRuns + topSuccessors + a bigramSize/debug accessor; consumed by P1.M1.T3.S2 (ingest wiring), P1.M2.T1.S1 (chain), P1.M3.T2.S1 (/acwords).\n5. DOCS: none — internal; README sweep in P1.M4.T2.S1 (Mode B)."
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/core_phrase_layer_map.md — exact deletion inventory with line ranges: constants/helpers PHRASE_CAP, PHRASE_EVICT_BATCH, phraseSortKey, EvictNode, evictNodeBefore, heapPush, heapPop (src/core/store.ts 98–196; successorBefore/NO_SUCCESSORS STAY), fields #phrases/#phraseCandidates/#phraseEvictHeap/#fastPathAdmitted (213–235), phrase methods recordPhraseLines…iteratePhrases (445–880). #bumpSuccessor (528–575) and #dropSuccessorFor (748–758) are private and ONLY called from phrase paths — they survive and get re-pointed. types.ts: PhraseEntry (61–78) DELETE, Successor (82–90) KEEP.\n2. INPUT: none — this subtask PRODUCES the new store contract. Keep intact: word layer (#map, STORE_CAP=20_000, evictIfOverCap 329–372, upsert/prefixRange/get/entries/rankGroupHistogram), #successorIndex Map<string, Successor[]> (225), topSuccessors() (856–859).\n3. LOGIC: Implement PRD §06 (h2.38/h3.7): replace the phrase map with a slim bigram count map — key lowercase 'first second', value {count, lastSeenOrdinal} (no admission/sticky/demotion states, no trigrams). New public recorder recordBigramRuns(runs: readonly string[][]): for each run, for each consecutive pair (w1,w2): count++/lastSeen refresh and #bumpSuccessor(w1,w2) (make it the recording path). Cap the bigram map at 10,000 keys using the existing lazy-heap eviction pattern minus sticky; on evict call #dropSuccessorFor(key) to splice from the successor index. Re-point the one production caller src/pi/index.ts:183 (recordPhraseLines → recordBigramRuns) and delete the onSweepPhrases wiring (index.ts:188) plus the #onSweepPhrases seam in src/pi/ingest.ts (opts 129/135, fields 163–164, invocations 233/277) so the tree compiles. Prune now-dead test cases to keep the suite green (test/phrases.test.ts, test/phrase-gating.test.ts, test/index.test.ts:411–444, ingest-restore sweep/fast-path cases) — full rewrites land in P1.M1.T3.S2/S3. TDD implied throughout.\n4. OUTPUT: CandidateStore exposes recordBigramRuns + topSuccessors + a bigramSize/debug accessor; consumed by P1.M1.T3.S2 (ingest wiring), P1.M2.T1.S1 (chain), P1.M3.T2.S1 (/acwords).\n5. DOCS: none — internal; README sweep in P1.M4.T2.S1 (Mode B).",
+                  "prd_selectors": [
+                    "h2.1",
+                    "h2.6",
+                    "h2.11",
+                    "h2.35",
+                    "h2.37",
+                    "h2.38",
+                    "h3.7",
+                    "h2.33",
+                    "h2.49"
+                  ]
                 },
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "query.ts: words-only rankMatches; drop suppress seam; one-word invariant test",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T2.S1"],
-                  "prd_selectors": ["h2.1", "h2.25", "h2.26", "h2.44", "h2.49"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/core_phrase_layer_map.md §query.ts — delete: 'Phrase gathering' block (~218–233), constituent suppression (~236–253 incl. the BUG-005 successor-bearing exemption), phrase RankedMatch push (~255–262, description literal 'phrase'), phraseSalience (115–131), firstWord (100–104), phraseSuppresses (136–140), PHRASE_MULTIPLIER (86), PHRASE_REPETITION_W (93). RankOptions.suppress (71–78) has NO production caller (tests only). KEEP: rankMatches signature, DEFAULT_LIMIT, compareRankedMatches (153–170).\n2. INPUT: CandidateStore from P1.M1.T2.S1 — phrase accessors are gone, so TypeScript enforces the removal.\n3. LOGIC: Implement PRD §04 (h2.26) + §07 menu item shape (h2.44): rankMatches returns single words only; remove the opts.suppress seam entirely per R1. Rewrite test/query.test.ts: delete describe 'phrase helpers — baked weights and key math' (6 cases) and 'phrase salience + constituent suppression' (11 cases) and the suppress-hook cases; ADD the one-word invariant assertion — feed a store via the real ingest path with chainable text and assert every returned RankedMatch display contains no space; expose the assertion as a reusable helper (consumed by chain tests in P1.M2.T1.S2).\n4. OUTPUT: rankMatches(store, prefix, {limit}) → RankedMatch[] (words only) for the provider normal path (P1.M2.T2.S1 forced top item) and unchanged trigger/threshold flows.\n5. DOCS: none — internal module."
+                  "dependencies": [
+                    "P1.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/core_phrase_layer_map.md §query.ts — delete: 'Phrase gathering' block (~218–233), constituent suppression (~236–253 incl. the BUG-005 successor-bearing exemption), phrase RankedMatch push (~255–262, description literal 'phrase'), phraseSalience (115–131), firstWord (100–104), phraseSuppresses (136–140), PHRASE_MULTIPLIER (86), PHRASE_REPETITION_W (93). RankOptions.suppress (71–78) has NO production caller (tests only). KEEP: rankMatches signature, DEFAULT_LIMIT, compareRankedMatches (153–170).\n2. INPUT: CandidateStore from P1.M1.T2.S1 — phrase accessors are gone, so TypeScript enforces the removal.\n3. LOGIC: Implement PRD §04 (h2.26) + §07 menu item shape (h2.44): rankMatches returns single words only; remove the opts.suppress seam entirely per R1. Rewrite test/query.test.ts: delete describe 'phrase helpers — baked weights and key math' (6 cases) and 'phrase salience + constituent suppression' (11 cases) and the suppress-hook cases; ADD the one-word invariant assertion — feed a store via the real ingest path with chainable text and assert every returned RankedMatch display contains no space; expose the assertion as a reusable helper (consumed by chain tests in P1.M2.T1.S2).\n4. OUTPUT: rankMatches(store, prefix, {limit}) → RankedMatch[] (words only) for the provider normal path (P1.M2.T2.S1 forced top item) and unchanged trigger/threshold flows.\n5. DOCS: none — internal module.",
+                  "prd_selectors": [
+                    "h2.1",
+                    "h2.25",
+                    "h2.26",
+                    "h2.44",
+                    "h2.49"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -66,9 +90,15 @@
                   "title": "debug.ts: strip the phrase dump and its imports",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T2.S1", "P1.M1.T2.S2"],
-                  "prd_selectors": ["h2.48", "h2.52"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/core_phrase_layer_map.md §debug.ts — delete TOP_PHRASES (109), phraseDisplay (114–120), phrasesSection (122–160) and its spread entry (182); imports to remove: firstWord/phraseSalience from ../core/query.js (line 6), PHRASE_CAP from store (8), PhraseEntry type (11). The only successor observability (a topSuccessors sample, lines 154–159) currently lives INSIDE phrasesSection.\n2. INPUT: single-word query API (P1.M1.T2.S2) and phrase-free store (P1.M1.T2.S1).\n3. LOGIC: Implement R1's debug.ts file item: formatAcwordsDump keeps storeSection (size/cap/ordinal/histogram), topSection (top-50 by salience), statsSection (gate rejection counts) ONLY. Do NOT re-add the successor sample here — that is P1.M3.T2.S1 (R5). Update test/debug.test.ts: delete describe 'acwords dump — phrases + successor sample' (4 cases); keep all word-store cases green.\n4. OUTPUT: phrase-free formatAcwordsDump consumed by P1.M3.T2.S1, which appends the successor-index sample section.\n5. DOCS: none — the /acwords README section is refreshed changeset-level in P1.M4.T2.S1 (Mode B), per the PRD R5/R6 split."
+                  "dependencies": [
+                    "P1.M1.T2.S1",
+                    "P1.M1.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/core_phrase_layer_map.md §debug.ts — delete TOP_PHRASES (109), phraseDisplay (114–120), phrasesSection (122–160) and its spread entry (182); imports to remove: firstWord/phraseSalience from ../core/query.js (line 6), PHRASE_CAP from store (8), PhraseEntry type (11). The only successor observability (a topSuccessors sample, lines 154–159) currently lives INSIDE phrasesSection.\n2. INPUT: single-word query API (P1.M1.T2.S2) and phrase-free store (P1.M1.T2.S1).\n3. LOGIC: Implement R1's debug.ts file item: formatAcwordsDump keeps storeSection (size/cap/ordinal/histogram), topSection (top-50 by salience), statsSection (gate rejection counts) ONLY. Do NOT re-add the successor sample here — that is P1.M3.T2.S1 (R5). Update test/debug.test.ts: delete describe 'acwords dump — phrases + successor sample' (4 cases); keep all word-store cases green.\n4. OUTPUT: phrase-free formatAcwordsDump consumed by P1.M3.T2.S1, which appends the successor-index sample section.\n5. DOCS: none — the /acwords README section is refreshed changeset-level in P1.M4.T2.S1 (Mode B), per the PRD R5/R6 split.",
+                  "prd_selectors": [
+                    "h2.48",
+                    "h2.52"
+                  ]
                 }
               ]
             },
@@ -85,9 +115,17 @@
                   "title": "segment.ts: emit token spans on RawToken",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1"],
-                  "prd_selectors": ["h2.22", "h3.3", "h3.6", "h2.29", "h2.38"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/ingest_segment_map.md §1 'CRITICAL' — position info is lost at exactly two points: the tokenize merge (segment.ts ~160–175, out.push({raw, hexish})) and #admitSegment's keys.push (ingest.ts ~394). Internal SpanToken already has start/end.\n2. INPUT: the hardened tokenize from P1.M1.T1.S1 (Unicode-letter rejection already applied).\n3. LOGIC: Additive change only — carry start/end through the two-pointer merge onto RawToken (extend RawToken in src/core/types.ts with start: number; end: number; hexish spans keep their own offsets). No behavior change. test/segment.test.ts: assert offsets are correct and disjoint across base+hexish mixes and that rejected non-ASCII-adjacent runs emit nothing.\n4. OUTPUT: RawToken {raw, hexish, start, end} consumed by P1.M1.T3.S2 (#admitSegment computes adjacency against the segment string).\n5. DOCS: none — internal type extension, no exported user-facing surface."
+                  "dependencies": [
+                    "P1.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/ingest_segment_map.md §1 'CRITICAL' — position info is lost at exactly two points: the tokenize merge (segment.ts ~160–175, out.push({raw, hexish})) and #admitSegment's keys.push (ingest.ts ~394). Internal SpanToken already has start/end.\n2. INPUT: the hardened tokenize from P1.M1.T1.S1 (Unicode-letter rejection already applied).\n3. LOGIC: Additive change only — carry start/end through the two-pointer merge onto RawToken (extend RawToken in src/core/types.ts with start: number; end: number; hexish spans keep their own offsets). No behavior change. test/segment.test.ts: assert offsets are correct and disjoint across base+hexish mixes and that rejected non-ASCII-adjacent runs emit nothing.\n4. OUTPUT: RawToken {raw, hexish, start, end} consumed by P1.M1.T3.S2 (#admitSegment computes adjacency against the segment string).\n5. DOCS: none — internal type extension, no exported user-facing surface.",
+                  "prd_selectors": [
+                    "h2.22",
+                    "h3.3",
+                    "h3.6",
+                    "h2.29",
+                    "h2.38"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -95,9 +133,21 @@
                   "title": "ingest.ts: adjacency runs + onAdmittedTokens contract + break-case suite",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T3.S1", "P1.M1.T2.S1"],
-                  "prd_selectors": ["h2.22", "h2.28", "h2.29", "h2.30", "h2.34", "h2.38", "h3.6", "h2.49"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/ingest_segment_map.md — #admitSegment (src/pi/ingest.ts 336–417) pushes only draft.key today; processText (286–327) holds the raw (masked) segment string and already never crosses newlines or 64 KiB chunk boundaries with an open line. maskSecrets blanks bytes in place BEFORE tokenize — VERIFY it is length-preserving; take all offsets against the masked segment and document that choice in a comment.\n2. INPUT: RawToken spans (P1.M1.T3.S1); store.recordBigramRuns (P1.M1.T2.S1).\n3. LOGIC: Implement PRD §06 h3.6 exactly: per line, collect admitted WHOLE tokens (isSubword false — unchanged admission gates) WITH spans; split the line into adjacency RUNS — a break occurs between consecutive admitted tokens unless segment.slice(prevEnd, nextStart) matches /^[ \\t]+$/. Every enumerated break is a case: clause/punctuation (, ; : . ! ? — – … |), quotes/brackets/backticks (words entering or leaving a quote never chain; `A` `B` has two backticks between), digits/hexish/non-word chars (/ \\ = + & % # * @ - ~ ^; 'v2 release' does not chain), ANY intervening word common or rare (stopword bridging FORBIDDEN: 'United States of America' → runs [united states][america]), newline (unchanged). NO trigrams. Change the onAdmittedTokens contract to emit runs (string[][] per message, one call per message — keep the existing single-callback shape) and re-point src/pi/index.ts wiring to store.recordBigramRuns. Rewrite test/phrases.test.ts as the adjacency-window suite covering every break above plus 'ZorpWibbleEngine, quuxblat' never chains; keep chunk-boundary and repeated-window-count cases (re-pointed).\n4. OUTPUT: onAdmittedTokens(runs) contract + green adjacency suite; feeds the successor index consumed by P1.M2.T1.S1 (chain) and verified by P1.M1.T3.S3.\n5. DOCS: none — internal pipeline contract."
+                  "dependencies": [
+                    "P1.M1.T3.S1",
+                    "P1.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/ingest_segment_map.md — #admitSegment (src/pi/ingest.ts 336–417) pushes only draft.key today; processText (286–327) holds the raw (masked) segment string and already never crosses newlines or 64 KiB chunk boundaries with an open line. maskSecrets blanks bytes in place BEFORE tokenize — VERIFY it is length-preserving; take all offsets against the masked segment and document that choice in a comment.\n2. INPUT: RawToken spans (P1.M1.T3.S1); store.recordBigramRuns (P1.M1.T2.S1).\n3. LOGIC: Implement PRD §06 h3.6 exactly: per line, collect admitted WHOLE tokens (isSubword false — unchanged admission gates) WITH spans; split the line into adjacency RUNS — a break occurs between consecutive admitted tokens unless segment.slice(prevEnd, nextStart) matches /^[ \\t]+$/. Every enumerated break is a case: clause/punctuation (, ; : . ! ? — – … |), quotes/brackets/backticks (words entering or leaving a quote never chain; `A` `B` has two backticks between), digits/hexish/non-word chars (/ \\ = + & % # * @ - ~ ^; 'v2 release' does not chain), ANY intervening word common or rare (stopword bridging FORBIDDEN: 'United States of America' → runs [united states][america]), newline (unchanged). NO trigrams. Change the onAdmittedTokens contract to emit runs (string[][] per message, one call per message — keep the existing single-callback shape) and re-point src/pi/index.ts wiring to store.recordBigramRuns. Rewrite test/phrases.test.ts as the adjacency-window suite covering every break above plus 'ZorpWibbleEngine, quuxblat' never chains; keep chunk-boundary and repeated-window-count cases (re-pointed).\n4. OUTPUT: onAdmittedTokens(runs) contract + green adjacency suite; feeds the successor index consumed by P1.M2.T1.S1 (chain) and verified by P1.M1.T3.S3.\n5. DOCS: none — internal pipeline contract.",
+                  "prd_selectors": [
+                    "h2.22",
+                    "h2.28",
+                    "h2.29",
+                    "h2.30",
+                    "h2.34",
+                    "h2.38",
+                    "h3.6",
+                    "h2.49"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -105,9 +155,20 @@
                   "title": "successors.test.ts rewrite + remaining test-seam pruning",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T3.S2"],
-                  "prd_selectors": ["h2.31", "h2.33", "h2.37", "h2.38", "h3.7", "h2.49", "h2.51", "h2.15"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/core_phrase_layer_map.md 'Cross-file usage of doomed symbols' — remaining seams after P1.M1.T3.S2: test/successors.test.ts (8 cases: top-3 build, eviction cleanup no-backfill, restore replay deep-equal, shared-empty reader), test/chain.test.ts feeds recordPhraseLines (134, 147–148, 372, 466), test/perf-gates.test.ts (33, 282–300: PHRASE_CAP, sweepPhraseDemotions, phraseSize), test/acceptance.test.ts (585, 667), test/adversarial-ingest.test.ts (293–353), test/adversarial-typing.test.ts (444), test/ingest-restore.test.ts (519–676), test/ingest-pipeline.test.ts (355–375).\n2. INPUT: the adjacency-runs pipeline from P1.M1.T3.S2 and the slim bigram store from P1.M1.T2.S1.\n3. LOGIC: Rewrite test/successors.test.ts for strict-adjacency ingest: successor index top-3 per word (count-desc, byte-lex ties) built from runs; 10,000-key bigram cap eviction splices evicted bigrams from the successor index with no backfill; restore replay through the real pipeline → two stores fed the same stream have deep-equal successor indices; unseen word → shared empty constant. Re-point every remaining recordPhraseLines/sweep/phrase-accessor reference to the new surface (recordBigramRuns, bigramSize). Keep perf-gates meaningful: bigram cap replaces phrase cap; confirm h2.15 budgets still hold (ingest 800 KB < 60 ms — span threading must stay O(n); run npm run bench).\n4. OUTPUT: green store/ingest/perf suites; the successor-index contract that P1.M2 (chain) and P1.M3.T2.S1 (/acwords) rely on, and that P1.M4.T1.S1 re-runs.\n5. DOCS: none — tests only."
+                  "dependencies": [
+                    "P1.M1.T3.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/core_phrase_layer_map.md 'Cross-file usage of doomed symbols' — remaining seams after P1.M1.T3.S2: test/successors.test.ts (8 cases: top-3 build, eviction cleanup no-backfill, restore replay deep-equal, shared-empty reader), test/chain.test.ts feeds recordPhraseLines (134, 147–148, 372, 466), test/perf-gates.test.ts (33, 282–300: PHRASE_CAP, sweepPhraseDemotions, phraseSize), test/acceptance.test.ts (585, 667), test/adversarial-ingest.test.ts (293–353), test/adversarial-typing.test.ts (444), test/ingest-restore.test.ts (519–676), test/ingest-pipeline.test.ts (355–375).\n2. INPUT: the adjacency-runs pipeline from P1.M1.T3.S2 and the slim bigram store from P1.M1.T2.S1.\n3. LOGIC: Rewrite test/successors.test.ts for strict-adjacency ingest: successor index top-3 per word (count-desc, byte-lex ties) built from runs; 10,000-key bigram cap eviction splices evicted bigrams from the successor index with no backfill; restore replay through the real pipeline → two stores fed the same stream have deep-equal successor indices; unseen word → shared empty constant. Re-point every remaining recordPhraseLines/sweep/phrase-accessor reference to the new surface (recordBigramRuns, bigramSize). Keep perf-gates meaningful: bigram cap replaces phrase cap; confirm h2.15 budgets still hold (ingest 800 KB < 60 ms — span threading must stay O(n); run npm run bench).\n4. OUTPUT: green store/ingest/perf suites; the successor-index contract that P1.M2 (chain) and P1.M3.T2.S1 (/acwords) rely on, and that P1.M4.T1.S1 re-runs.\n5. DOCS: none — tests only.",
+                  "prd_selectors": [
+                    "h2.31",
+                    "h2.33",
+                    "h2.37",
+                    "h2.38",
+                    "h3.7",
+                    "h2.49",
+                    "h2.51",
+                    "h2.15"
+                  ]
                 }
               ]
             }
@@ -133,9 +194,21 @@
                   "title": "Chain machine + provider armed branch redesign (bare values, threshold 0)",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T3.S2"],
-                  "prd_selectors": ["h2.1", "h2.6", "h2.38", "h2.39", "h2.40", "h2.41", "h2.43", "h2.44", "h3.7"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/pi_layer_map.md §1 — armed branch at src/pi/provider.ts 239–316: the pending one-shot (chain.consumePending() + before.endsWith(armed.word)) returns leading-space values at line 254 (value: ` ${s.next}`) with liveKeyByValue.set(' '+next, …) at ~280; the fragment path (292–316) filters successors at de-facto threshold 1. external_deps.md §2a CONFIRMS: with prefix '' pi-tui splices item.value verbatim at the cursor, so a BARE word after the separating whitespace is correctly word-separated, while a leading-space value would double-space; the plain applyCompletion path adds NO trailing space (the user's separating space is the boundary — 'zero typed chars' means zero chars of the next word).\n2. INPUT: store.topSuccessors (P1.M1.T2.S1), adjacency-fed successor index (P1.M1.T3.S2), single-word rankMatches (P1.M1.T2.S2).\n3. LOGIC: Implement PRD §07 h2.43: retire pending/consumePending and leading-space values. armed(W): (a) cursor at an empty word start (text-before-cursor ends with [ \\t], or line start) → return UNFILTERED topSuccessors(W) items with bare value s.next, label s.next, description 'chain', prefix '' — the successor IS the top result before anything is typed; (b) typed fragment F (≥1 word chars) → filter s.next by case-insensitive prefix, threshold 0 for the whole chain duration; (c) disqualification — non-Tab keys that leave a non-word-start/non-fragment context (escape, punctuation, no successors) → chain.reset() and fall through to the normal path; typing never blocks, it only filters. Tab-accept of a chain item transitions armed(next) via the CHAIN_KEY_PREFIX live-key mechanism (keep); applyCompletion: DELETE the phrase-key arm case; bare whole words still arm; trigger-char completions arm; arming only from hapax's own liveKeyByValue candidates, never path completion. createChainMachine simplifies to armed-only (pending dies; keep arm/reset/state). PRESERVE test/chain.test.ts case (8) semantics — word-less buffer disarm+delegate (pinned by a comment at provider.ts ~265; PRD R4 explicitly keeps it). If real-editor validation contradicts the bare-value separation, document the exact constraint in the task BEFORE choosing a minimal fix; multi-word values remain FORBIDDEN regardless.\n4. OUTPUT: provider chain layer consumed by P1.M2.T2.S1 (forced truncation of armed results); reset wiring in index.ts before_agent_start is unchanged (verify it still resets the simplified machine).\n5. DOCS: none — the usage example is rewritten changeset-level in P1.M4.T2.S1 (Mode B)."
+                  "dependencies": [
+                    "P1.M1.T3.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/pi_layer_map.md §1 — armed branch at src/pi/provider.ts 239–316: the pending one-shot (chain.consumePending() + before.endsWith(armed.word)) returns leading-space values at line 254 (value: ` ${s.next}`) with liveKeyByValue.set(' '+next, …) at ~280; the fragment path (292–316) filters successors at de-facto threshold 1. external_deps.md §2a CONFIRMS: with prefix '' pi-tui splices item.value verbatim at the cursor, so a BARE word after the separating whitespace is correctly word-separated, while a leading-space value would double-space; the plain applyCompletion path adds NO trailing space (the user's separating space is the boundary — 'zero typed chars' means zero chars of the next word).\n2. INPUT: store.topSuccessors (P1.M1.T2.S1), adjacency-fed successor index (P1.M1.T3.S2), single-word rankMatches (P1.M1.T2.S2).\n3. LOGIC: Implement PRD §07 h2.43: retire pending/consumePending and leading-space values. armed(W): (a) cursor at an empty word start (text-before-cursor ends with [ \\t], or line start) → return UNFILTERED topSuccessors(W) items with bare value s.next, label s.next, description 'chain', prefix '' — the successor IS the top result before anything is typed; (b) typed fragment F (≥1 word chars) → filter s.next by case-insensitive prefix, threshold 0 for the whole chain duration; (c) disqualification — non-Tab keys that leave a non-word-start/non-fragment context (escape, punctuation, no successors) → chain.reset() and fall through to the normal path; typing never blocks, it only filters. Tab-accept of a chain item transitions armed(next) via the CHAIN_KEY_PREFIX live-key mechanism (keep); applyCompletion: DELETE the phrase-key arm case; bare whole words still arm; trigger-char completions arm; arming only from hapax's own liveKeyByValue candidates, never path completion. createChainMachine simplifies to armed-only (pending dies; keep arm/reset/state). PRESERVE test/chain.test.ts case (8) semantics — word-less buffer disarm+delegate (pinned by a comment at provider.ts ~265; PRD R4 explicitly keeps it). If real-editor validation contradicts the bare-value separation, document the exact constraint in the task BEFORE choosing a minimal fix; multi-word values remain FORBIDDEN regardless.\n4. OUTPUT: provider chain layer consumed by P1.M2.T2.S1 (forced truncation of armed results); reset wiring in index.ts before_agent_start is unchanged (verify it still resets the simplified machine).\n5. DOCS: none — the usage example is rewritten changeset-level in P1.M4.T2.S1 (Mode B).",
+                  "prd_selectors": [
+                    "h2.1",
+                    "h2.6",
+                    "h2.38",
+                    "h2.39",
+                    "h2.40",
+                    "h2.41",
+                    "h2.43",
+                    "h2.44",
+                    "h3.7"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -143,9 +216,17 @@
                   "title": "chain.test.ts rewrite + integration item 7 (zero additional typed chars)",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M2.T1.S1"],
-                  "prd_selectors": ["h2.42", "h2.43", "h2.49", "h2.50", "h2.54"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/tests_docs_inventory.md — chain.test.ts has 16 cases; cases (3) 'phrase item arms at LAST word' and the describe 'phrase acceptance arms the chain' block DIE with the phrase layer; case (8) is pinned by a comment at provider.ts ~265 and must keep its semantics; the suite currently feeds bigrams via recordPhraseLines (lines 134, 147–148, 372, 466).\n2. INPUT: redesigned chain (P1.M2.T1.S1); bigram feeding via the real ingest/store path (P1.M1.T3.S2 recordBigramRuns); the one-word invariant helper from P1.M1.T2.S2.\n3. LOGIC: Implement PRD §09 (h2.50 item 7, h2.54): rewrite chain.test.ts — zero-char offer at EVERY armed word start (not just the first post-arm query); typed-char filtering from the unfiltered list; one-keypress transitions (Tab inserts exactly ONE word → armed(next)); disqualification transitions (space/escape/punctuation per the redesigned rules); zero matching successors → disarm same call; empty successor index → disarm; accepting a successor re-arms and delegates applyCompletion verbatim; trigger-mode acceptance arms; reset() on before_agent_start (via the index.ts wiring); case (8) word-less buffer keeps disarm+delegate; integration item 7 scripted end-to-end: National → separator → zero word-chars → Renewable is top → Tab → Energy → Tab → Laboratory; assert every chain item is a single word.\n4. OUTPUT: green chain suite; the evidence base for P1.M4.T1.S2's DoD audit (integration item 7 with zero additional typed chars).\n5. DOCS: none — tests only."
+                  "dependencies": [
+                    "P1.M2.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/tests_docs_inventory.md — chain.test.ts has 16 cases; cases (3) 'phrase item arms at LAST word' and the describe 'phrase acceptance arms the chain' block DIE with the phrase layer; case (8) is pinned by a comment at provider.ts ~265 and must keep its semantics; the suite currently feeds bigrams via recordPhraseLines (lines 134, 147–148, 372, 466).\n2. INPUT: redesigned chain (P1.M2.T1.S1); bigram feeding via the real ingest/store path (P1.M1.T3.S2 recordBigramRuns); the one-word invariant helper from P1.M1.T2.S2.\n3. LOGIC: Implement PRD §09 (h2.50 item 7, h2.54): rewrite chain.test.ts — zero-char offer at EVERY armed word start (not just the first post-arm query); typed-char filtering from the unfiltered list; one-keypress transitions (Tab inserts exactly ONE word → armed(next)); disqualification transitions (space/escape/punctuation per the redesigned rules); zero matching successors → disarm same call; empty successor index → disarm; accepting a successor re-arms and delegates applyCompletion verbatim; trigger-mode acceptance arms; reset() on before_agent_start (via the index.ts wiring); case (8) word-less buffer keeps disarm+delegate; integration item 7 scripted end-to-end: National → separator → zero word-chars → Renewable is top → Tab → Energy → Tab → Laboratory; assert every chain item is a single word.\n4. OUTPUT: green chain suite; the evidence base for P1.M4.T1.S2's DoD audit (integration item 7 with zero additional typed chars).\n5. DOCS: none — tests only.",
+                  "prd_selectors": [
+                    "h2.42",
+                    "h2.43",
+                    "h2.49",
+                    "h2.50",
+                    "h2.54"
+                  ]
                 }
               ]
             },
@@ -162,9 +243,19 @@
                   "title": "provider.ts force branch (abort → armed → force-aware returns → normal)",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M2.T1.S1"],
-                  "prd_selectors": ["h2.1", "h2.39", "h2.40", "h2.41", "h2.42", "h3.8", "h2.49"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/external_deps.md §1e + pi_layer_map.md — VERIFIED: options.force is never read in provider.ts today; delegate paths already forward the ORIGINAL options object (identity preserved). pi-tui editor.js:1903: `options.force && options.explicitTab && suggestions.items.length === 1` → applyCompletion applied immediately; items.length > 1 → menu opens in 'force' state (the Tab-opens-menu bug). The editor passes providers only {signal, force} (editor.js:1892 — explicitTab is editor-internal); slash-context Tab routes to a NON-forced path so the fast path cannot fire there.\n2. INPUT: redesigned armed branch (P1.M2.T1.S1); single-word ranked results (P1.M1.T2.S2).\n3. LOGIC: Implement PRD §07 h3.8 mitigation: read `const forced = options.force === true` after the abort check (ordering: abort → armed/pending → force-aware returns → normal). At EVERY hapax-owned return point — armed zero-char offer, armed filtered list, normal threshold/trigger query — when forced, return {items: [items[0]], prefix} (the top-ranked item per §04 ranking; during an armed chain, the top successor). When hapax has NO live fragment (path/slash contexts): delegate `return current.getSuggestions(lines, cursorLine, cursorCol, options)` with the options object passed through UNCHANGED so stock path/file completion keeps native Tab behavior. Empty live set on force → return an empty result; the editor cancels and renders nothing. Add the pinning code comment: this leans on pi-tui's force && explicitTab && items.length === 1 branch (editor.js ~1903, verified against @earendil-works/pi-tui ~0.84.4); if pi-tui changes that contract, the mitigation needs revisit. Extend test/provider.test.ts + test/provider-live.test.ts per §09's new bullet: force:true + live fragment returns exactly ONE item (live top / chain successor); Tab-before-paint completes rather than opening the menu (simulate the {force:true} call, assert items.length === 1); menu appears automatically on the 2nd char of a matching word and the 1st char after the trigger char; Tab never opens/toggles/summons a menu; completion is exactly one keypress.\n4. OUTPUT: provider force contract consumed by P1.M2.T2.S2 (display-layer bypass) and audited by P1.M4.T1.S2.\n5. DOCS: none — the never-hijack README bullet is refreshed in P1.M4.T2.S1 (Mode B)."
+                  "dependencies": [
+                    "P1.M2.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/external_deps.md §1e + pi_layer_map.md — VERIFIED: options.force is never read in provider.ts today; delegate paths already forward the ORIGINAL options object (identity preserved). pi-tui editor.js:1903: `options.force && options.explicitTab && suggestions.items.length === 1` → applyCompletion applied immediately; items.length > 1 → menu opens in 'force' state (the Tab-opens-menu bug). The editor passes providers only {signal, force} (editor.js:1892 — explicitTab is editor-internal); slash-context Tab routes to a NON-forced path so the fast path cannot fire there.\n2. INPUT: redesigned armed branch (P1.M2.T1.S1); single-word ranked results (P1.M1.T2.S2).\n3. LOGIC: Implement PRD §07 h3.8 mitigation: read `const forced = options.force === true` after the abort check (ordering: abort → armed/pending → force-aware returns → normal). At EVERY hapax-owned return point — armed zero-char offer, armed filtered list, normal threshold/trigger query — when forced, return {items: [items[0]], prefix} (the top-ranked item per §04 ranking; during an armed chain, the top successor). When hapax has NO live fragment (path/slash contexts): delegate `return current.getSuggestions(lines, cursorLine, cursorCol, options)` with the options object passed through UNCHANGED so stock path/file completion keeps native Tab behavior. Empty live set on force → return an empty result; the editor cancels and renders nothing. Add the pinning code comment: this leans on pi-tui's force && explicitTab && items.length === 1 branch (editor.js ~1903, verified against @earendil-works/pi-tui ~0.84.4); if pi-tui changes that contract, the mitigation needs revisit. Extend test/provider.test.ts + test/provider-live.test.ts per §09's new bullet: force:true + live fragment returns exactly ONE item (live top / chain successor); Tab-before-paint completes rather than opening the menu (simulate the {force:true} call, assert items.length === 1); menu appears automatically on the 2nd char of a matching word and the 1st char after the trigger char; Tab never opens/toggles/summons a menu; completion is exactly one keypress.\n4. OUTPUT: provider force contract consumed by P1.M2.T2.S2 (display-layer bypass) and audited by P1.M4.T1.S2.\n5. DOCS: none — the never-hijack README bullet is refreshed in P1.M4.T2.S1 (Mode B).",
+                  "prd_selectors": [
+                    "h2.1",
+                    "h2.39",
+                    "h2.40",
+                    "h2.41",
+                    "h2.42",
+                    "h3.8",
+                    "h2.49"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -172,9 +263,17 @@
                   "title": "createDisplayProvider: forced results bypass the 100 ms display debounce",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T2.S1"],
-                  "prd_selectors": ["h2.12", "h2.41", "h3.2", "h3.8", "h2.49"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/pi_layer_map.md — createDisplayProvider (src/pi/provider.ts 583–771) is the hapax-side 100 ms display debounce; it ALWAYS calls base.getSuggestions first (Tab stays instant) and classifies hapax results via base.__hapaxLive() + prefix equality; non-hapax results (delegates, empty) already bypass. Forced requests reach the wrapper with options.force intact because the editor forwards {signal, force} down the provider chain.\n2. INPUT: the force branch from P1.M2.T2.S1 (single-item returns at every hapax-owned point).\n3. LOGIC: Implement PRD §07 h3.8: in createDisplayProvider.getSuggestions, when options.force === true, return the base result UNTOUCHED — no hapax classification, no suppression window, no scheduled pending swap (forced requests are undelayed by design; always the live top item). Leave all non-forced behavior identical (flicker hysteresis, narrowing, close rules). test/provider-display.test.ts: a forced single-item result passes through immediately even inside the 100 ms window; a pending scheduled swap does not leak into or delay a subsequent forced result.\n4. OUTPUT: display-layer contract completing the end-to-end Tab-only-completes behavior verified by P1.M4.T1.S2.\n5. DOCS: none — internal display layer."
+                  "dependencies": [
+                    "P1.M2.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/pi_layer_map.md — createDisplayProvider (src/pi/provider.ts 583–771) is the hapax-side 100 ms display debounce; it ALWAYS calls base.getSuggestions first (Tab stays instant) and classifies hapax results via base.__hapaxLive() + prefix equality; non-hapax results (delegates, empty) already bypass. Forced requests reach the wrapper with options.force intact because the editor forwards {signal, force} down the provider chain.\n2. INPUT: the force branch from P1.M2.T2.S1 (single-item returns at every hapax-owned point).\n3. LOGIC: Implement PRD §07 h3.8: in createDisplayProvider.getSuggestions, when options.force === true, return the base result UNTOUCHED — no hapax classification, no suppression window, no scheduled pending swap (forced requests are undelayed by design; always the live top item). Leave all non-forced behavior identical (flicker hysteresis, narrowing, close rules). test/provider-display.test.ts: a forced single-item result passes through immediately even inside the 100 ms window; a pending scheduled swap does not leak into or delay a subsequent forced result.\n4. OUTPUT: display-layer contract completing the end-to-end Tab-only-completes behavior verified by P1.M4.T1.S2.\n5. DOCS: none — internal display layer.",
+                  "prd_selectors": [
+                    "h2.12",
+                    "h2.41",
+                    "h3.2",
+                    "h3.8",
+                    "h2.49"
+                  ]
                 }
               ]
             }
@@ -201,8 +300,14 @@
                   "status": "Planned",
                   "story_points": 2,
                   "dependencies": [],
-                  "prd_selectors": ["h2.1", "h2.45", "h2.46", "h2.47", "h2.49"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/pi_layer_map.md §2 — HapaxConfig interface (src/pi/config.ts 36–45), DEFAULT_CONFIG (47–53), applyLayer per-key blocks (153–224; the enablePhrases block sits at 197–208); notify is per-field-per-layer via the injected notify callback (index.ts maps it to ctx.ui.notify) — reuse that mechanism for the deprecation warning.\n2. INPUT: none — leaf module (file IO + injected notify only).\n3. LOGIC: Implement PRD §08 (h2.45/h2.46): add enableChaining: boolean, default true, gating the successor-index chain layer ONLY (word completion unaffected either way). Accept enablePhrases as a DEPRECATED alias: resolve per-layer inside applyLayer (read the alias first, then let enableChaining override when present, so enableChaining wins when both keys appear — in the same layer or across layers, since later layers already override earlier ones). Validation unchanged: coerce boolean, repair invalid values to defaults with one notify per field. Optional one-time deprecation notify when only the alias key is present, via the existing repair-notify shape. Rewrite the boolean-field cases in test/config.test.ts: primary key parsed; alias mapped; both-present precedence (enableChaining wins); alias-only deprecation path; defaults fresh-copy semantics.\n4. OUTPUT: HapaxConfig.enableChaining consumed by P1.M3.T1.S2 gate reads.\n5. DOCS: Mode A — update the README.md Configuration table row in THIS subtask (enableChaining, boolean, default true, 'gates chained completion only; deprecated enablePhrases alias accepted'), per PRD R5 which explicitly rides this here rather than in R6."
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/pi_layer_map.md §2 — HapaxConfig interface (src/pi/config.ts 36–45), DEFAULT_CONFIG (47–53), applyLayer per-key blocks (153–224; the enablePhrases block sits at 197–208); notify is per-field-per-layer via the injected notify callback (index.ts maps it to ctx.ui.notify) — reuse that mechanism for the deprecation warning.\n2. INPUT: none — leaf module (file IO + injected notify only).\n3. LOGIC: Implement PRD §08 (h2.45/h2.46): add enableChaining: boolean, default true, gating the successor-index chain layer ONLY (word completion unaffected either way). Accept enablePhrases as a DEPRECATED alias: resolve per-layer inside applyLayer (read the alias first, then let enableChaining override when present, so enableChaining wins when both keys appear — in the same layer or across layers, since later layers already override earlier ones). Validation unchanged: coerce boolean, repair invalid values to defaults with one notify per field. Optional one-time deprecation notify when only the alias key is present, via the existing repair-notify shape. Rewrite the boolean-field cases in test/config.test.ts: primary key parsed; alias mapped; both-present precedence (enableChaining wins); alias-only deprecation path; defaults fresh-copy semantics.\n4. OUTPUT: HapaxConfig.enableChaining consumed by P1.M3.T1.S2 gate reads.\n5. DOCS: Mode A — update the README.md Configuration table row in THIS subtask (enableChaining, boolean, default true, 'gates chained completion only; deprecated enablePhrases alias accepted'), per PRD R5 which explicitly rides this here rather than in R6.",
+                  "prd_selectors": [
+                    "h2.1",
+                    "h2.45",
+                    "h2.46",
+                    "h2.47",
+                    "h2.49"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -210,9 +315,18 @@
                   "title": "Re-point gate reads; enableChaining-inertness suite (ex phrase-gating)",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M3.T1.S1", "P1.M2.T2.S2"],
-                  "prd_selectors": ["h2.38", "h2.43", "h2.45", "h2.46", "h2.49"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/pi_layer_map.md — config.enablePhrases reads to re-point: src/pi/provider.ts:239 (armed-branch gate in getSuggestions) and ~390 (applyCompletion arm gate), src/pi/index.ts:180–188 (ingest wiring gate around onAdmittedTokens → recordBigramRuns). The old test/phrase-gating.test.ts (5 cases) was deleted in P1.M1.T2.S1.\n2. INPUT: enableChaining config surface (P1.M3.T1.S1); the redesigned chain (P1.M2.T1.S1) and force path (P1.M2.T2.S2) already landed, so these are the final gate-read sites.\n3. LOGIC: Implement PRD R5 reads: every gate becomes config.enableChaining — index.ts gates the onAdmittedTokens wiring (successor capture off entirely when false), provider gates the armed branch and applyCompletion arming. Rewrite the inertness suite (new test/phrase-gating.test.ts replacement, e.g. chaining-gating cases folded into chain/config suites or a dedicated file): enableChaining:false → no bigram capture (store bigram map empty after ingest), no chain arming on Tab-accepts, no successor menu items ever, while word completion (threshold + trigger modes) works identically to the ungated case.\n4. OUTPUT: final config surface audited by P1.M4.T1.S2 and documented in P1.M4.T2.S1.\n5. DOCS: none beyond the README table row already landed in P1.M3.T1.S1 (Mode A)."
+                  "dependencies": [
+                    "P1.M3.T1.S1",
+                    "P1.M2.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/pi_layer_map.md — config.enablePhrases reads to re-point: src/pi/provider.ts:239 (armed-branch gate in getSuggestions) and ~390 (applyCompletion arm gate), src/pi/index.ts:180–188 (ingest wiring gate around onAdmittedTokens → recordBigramRuns). The old test/phrase-gating.test.ts (5 cases) was deleted in P1.M1.T2.S1.\n2. INPUT: enableChaining config surface (P1.M3.T1.S1); the redesigned chain (P1.M2.T1.S1) and force path (P1.M2.T2.S2) already landed, so these are the final gate-read sites.\n3. LOGIC: Implement PRD R5 reads: every gate becomes config.enableChaining — index.ts gates the onAdmittedTokens wiring (successor capture off entirely when false), provider gates the armed branch and applyCompletion arming. Rewrite the inertness suite (new test/phrase-gating.test.ts replacement, e.g. chaining-gating cases folded into chain/config suites or a dedicated file): enableChaining:false → no bigram capture (store bigram map empty after ingest), no chain arming on Tab-accepts, no successor menu items ever, while word completion (threshold + trigger modes) works identically to the ungated case.\n4. OUTPUT: final config surface audited by P1.M4.T1.S2 and documented in P1.M4.T2.S1.\n5. DOCS: none beyond the README table row already landed in P1.M3.T1.S1 (Mode A).",
+                  "prd_selectors": [
+                    "h2.38",
+                    "h2.43",
+                    "h2.45",
+                    "h2.46",
+                    "h2.49"
+                  ]
                 }
               ]
             },
@@ -229,9 +343,16 @@
                   "title": "debug.ts successor-index sample section + debug.test.ts update",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T2.S3", "P1.M1.T3.S3"],
-                  "prd_selectors": ["h2.48", "h2.52", "h3.7"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/core_phrase_layer_map.md §debug.ts — the only successor observability today (a topSuccessors sample) lived INSIDE phrasesSection (154–159) and was removed with the phrase dump in P1.M1.T2.S3; store.topSuccessors is the O(1) reader; PRD §09 h2.52 notes no phrase multipliers exist (nothing to dump there).\n2. INPUT: phrase-free formatAcwordsDump (P1.M1.T2.S3); the strict-adjacency successor index verified by P1.M1.T3.S3.\n3. LOGIC: Implement PRD §08 h2.48: add a standalone successor-index sample section to formatAcwordsDump — e.g. the top successors of the top-N salience words, rendered in the established 'national → renewable ×4, license ×1' style (this sample is the tuning signal for chained offers). Keep storeSection, topSection, statsSection unchanged. test/debug.test.ts: assert NO phrase section anywhere in the dump; successor sample present for a populated store; sane '(none)' rendering for an empty/chaining-disabled store; registration behavior unchanged (debug:false registers nothing).\n4. OUTPUT: final /acwords surface documented in P1.M4.T2.S1.\n5. DOCS: none — README Debug section refreshed changeset-level in P1.M4.T2.S1 (Mode B)."
+                  "dependencies": [
+                    "P1.M1.T2.S3",
+                    "P1.M1.T3.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/core_phrase_layer_map.md §debug.ts — the only successor observability today (a topSuccessors sample) lived INSIDE phrasesSection (154–159) and was removed with the phrase dump in P1.M1.T2.S3; store.topSuccessors is the O(1) reader; PRD §09 h2.52 notes no phrase multipliers exist (nothing to dump there).\n2. INPUT: phrase-free formatAcwordsDump (P1.M1.T2.S3); the strict-adjacency successor index verified by P1.M1.T3.S3.\n3. LOGIC: Implement PRD §08 h2.48: add a standalone successor-index sample section to formatAcwordsDump — e.g. the top successors of the top-N salience words, rendered in the established 'national → renewable ×4, license ×1' style (this sample is the tuning signal for chained offers). Keep storeSection, topSection, statsSection unchanged. test/debug.test.ts: assert NO phrase section anywhere in the dump; successor sample present for a populated store; sane '(none)' rendering for an empty/chaining-disabled store; registration behavior unchanged (debug:false registers nothing).\n4. OUTPUT: final /acwords surface documented in P1.M4.T2.S1.\n5. DOCS: none — README Debug section refreshed changeset-level in P1.M4.T2.S1 (Mode B).",
+                  "prd_selectors": [
+                    "h2.48",
+                    "h2.52",
+                    "h3.7"
+                  ]
                 }
               ]
             }
@@ -257,9 +378,31 @@
                   "title": "Full check + M1 regression re-run (never-hijack, perf gates, no-persistence)",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M1.T2.S3", "P1.M1.T3.S1", "P1.M1.T3.S2", "P1.M1.T3.S3", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T2.S1", "P1.M2.T2.S2", "P1.M3.T1.S1", "P1.M3.T1.S2", "P1.M3.T2.S1"],
-                  "prd_selectors": ["h2.15", "h2.42", "h2.49", "h2.51", "h2.53", "h2.54"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/tests_docs_inventory.md — M1 suites that must re-run green: test/provider.test.ts (never-hijack a–g), test/perf-gates.test.ts + test/bench/core.bench.ts (4 gates, 3× CI-variance hard bounds), test/no-persistence.test.ts, test/acceptance.test.ts (integration items 1–6). docs/M1-DoD.md records the prior PASS at c138b5b (24 files / 413 passed / 1 skipped — counts change with this delta). Scripts: npm run check (tsc --noEmit), npm test (vitest --run), npm run bench.\n2. INPUT: all implementing subtasks (dependency list) — the delta is code-complete.\n3. LOGIC: Run and record: npm run check clean; npm test fully green; npm run bench within budgets (20k-candidate query < 1 ms p99; dict load+sweep < 60 ms; ingest 800 KB < 60 ms with yields; steady-state heap < 6 MB — span threading and the slim bigram map must not regress these). Triage any failure to its owning subtask's contract before touching code.\n4. OUTPUT: recorded evidence (suite counts, bench numbers) consumed by P1.M4.T1.S2 and the documentation task.\n5. DOCS: none — evidence only; the docs/M1-DoD.md annotation is P1.M4.T1.S2."
+                  "dependencies": [
+                    "P1.M1.T1.S1",
+                    "P1.M1.T2.S1",
+                    "P1.M1.T2.S2",
+                    "P1.M1.T2.S3",
+                    "P1.M1.T3.S1",
+                    "P1.M1.T3.S2",
+                    "P1.M1.T3.S3",
+                    "P1.M2.T1.S1",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T2.S1",
+                    "P1.M2.T2.S2",
+                    "P1.M3.T1.S1",
+                    "P1.M3.T1.S2",
+                    "P1.M3.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/tests_docs_inventory.md — M1 suites that must re-run green: test/provider.test.ts (never-hijack a–g), test/perf-gates.test.ts + test/bench/core.bench.ts (4 gates, 3× CI-variance hard bounds), test/no-persistence.test.ts, test/acceptance.test.ts (integration items 1–6). docs/M1-DoD.md records the prior PASS at c138b5b (24 files / 413 passed / 1 skipped — counts change with this delta). Scripts: npm run check (tsc --noEmit), npm test (vitest --run), npm run bench.\n2. INPUT: all implementing subtasks (dependency list) — the delta is code-complete.\n3. LOGIC: Run and record: npm run check clean; npm test fully green; npm run bench within budgets (20k-candidate query < 1 ms p99; dict load+sweep < 60 ms; ingest 800 KB < 60 ms with yields; steady-state heap < 6 MB — span threading and the slim bigram map must not regress these). Triage any failure to its owning subtask's contract before touching code.\n4. OUTPUT: recorded evidence (suite counts, bench numbers) consumed by P1.M4.T1.S2 and the documentation task.\n5. DOCS: none — evidence only; the docs/M1-DoD.md annotation is P1.M4.T1.S2.",
+                  "prd_selectors": [
+                    "h2.15",
+                    "h2.42",
+                    "h2.49",
+                    "h2.51",
+                    "h2.53",
+                    "h2.54"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -267,9 +410,16 @@
                   "title": "M2 DoD item-by-item audit + record results",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M4.T1.S1"],
-                  "prd_selectors": ["h2.42", "h2.43", "h2.50", "h2.54"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/system_context.md 'Key decisions' + prd_snapshot h2.54 (rewritten M2 DoD). The prior DoD record lives in docs/M1-DoD.md.\n2. INPUT: the green-suite evidence from P1.M4.T1.S1 and the test artifacts of P1.M1.T3.S2 (adjacency breaks), P1.M2.T1.S2 (integration item 7), P1.M2.T2.S1 (forced single-item).\n3. LOGIC: Audit the M2 DoD checklist exactly: successor-index chaining state machine with ZERO-typed-char successor offers; live successor filtering; chain resets on before_agent_start; the one-word invariant (no multi-word item ever offered — asserted in tests); raw-text-adjacency window breaks all covered and green (commas; quotes/brackets/backticks; digits; non-word characters; intervening words with stopword bridging forbidden; newlines); forced-single-item tests green; integration item 7 (National → Renewable → Energy → Laboratory) with zero additional typed chars. Annotate docs/M1-DoD.md (or append a short M2-DoD section) with the fresh sweep: new suite/file counts after the phrase deletions, bench numbers, and the verification date.\n4. OUTPUT: signed-off DoD record gating P1.M4.T2.S1's 'verify every claim' pass.\n5. DOCS: Mode A — annotate docs/M1-DoD.md with post-delta re-verification results (this is the doc this change touches directly); rides with the work."
+                  "dependencies": [
+                    "P1.M4.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/system_context.md 'Key decisions' + prd_snapshot h2.54 (rewritten M2 DoD). The prior DoD record lives in docs/M1-DoD.md.\n2. INPUT: the green-suite evidence from P1.M4.T1.S1 and the test artifacts of P1.M1.T3.S2 (adjacency breaks), P1.M2.T1.S2 (integration item 7), P1.M2.T2.S1 (forced single-item).\n3. LOGIC: Audit the M2 DoD checklist exactly: successor-index chaining state machine with ZERO-typed-char successor offers; live successor filtering; chain resets on before_agent_start; the one-word invariant (no multi-word item ever offered — asserted in tests); raw-text-adjacency window breaks all covered and green (commas; quotes/brackets/backticks; digits; non-word characters; intervening words with stopword bridging forbidden; newlines); forced-single-item tests green; integration item 7 (National → Renewable → Energy → Laboratory) with zero additional typed chars. Annotate docs/M1-DoD.md (or append a short M2-DoD section) with the fresh sweep: new suite/file counts after the phrase deletions, bench numbers, and the verification date.\n4. OUTPUT: signed-off DoD record gating P1.M4.T2.S1's 'verify every claim' pass.\n5. DOCS: Mode A — annotate docs/M1-DoD.md with post-delta re-verification results (this is the doc this change touches directly); rides with the work.",
+                  "prd_selectors": [
+                    "h2.42",
+                    "h2.43",
+                    "h2.50",
+                    "h2.54"
+                  ]
                 }
               ]
             },
@@ -286,9 +436,36 @@
                   "title": "README.md changeset sweep (features, usage, architecture, invariants, config, debug)",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M1.T2.S3", "P1.M1.T3.S1", "P1.M1.T3.S2", "P1.M1.T3.S3", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T2.S1", "P1.M2.T2.S2", "P1.M3.T1.S1", "P1.M3.T1.S2", "P1.M3.T2.S1", "P1.M4.T1.S2"],
-                  "prd_selectors": ["h2.0", "h2.2", "h2.6", "h2.42", "h2.43", "h2.44", "h2.45", "h2.46", "h2.48", "h2.54"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/tests_docs_inventory.md §3 quotes every stale README passage verbatim with approximate line numbers (features phrase bullet ~49–56; chaining bullet; usage paragraphs ~100–115; architecture store line + phrase-demotion lifecycle sentence; configuration table enablePhrases row; debug section phrase-dump bullets).\n2. INPUT: every implementing subtask (dependency list) plus the DoD record from P1.M4.T1.S2. The Configuration table row for enableChaining was already landed Mode A in P1.M3.T1.S1 — verify, don't duplicate.\n3. LOGIC: Implement PRD R6: README.md — Features: DELETE the phrase-completions bullet; REWRITE the chaining bullet as chained Tab completion (one word per Tab, zero typed chars to see the next word, National → Renewable → Energy → Laboratory). Usage: rewrite the chaining/phrase paragraphs (no multi-word insertion, no enablePhrases prose). Architecture: store description drops the phrase store, keeps the top-3 successor index fed by strict-adjacency bigrams; DELETE the phrase-demotion-sweep lifecycle sentence; keep the before_agent_start chain-reset sentence. Design invariants / never-hijack: add 'Tab only completes — the menu opens by typing only' (2nd threshold char, 1st char after trigger char, zero-char chain offer; no manual open gesture). Configuration: enableChaining row + deprecated alias note (must match what P1.M3.T1.S1 shipped). Debug: drop the phrase-dump description; describe the successor-index sample. Verify EVERY claim against shipped behavior (run the extension/tests as needed); delete anything unimplemented.\n4. OUTPUT: coherent changeset-level documentation; the delta ships with zero stale phrase references (grep README for 'phrase'/'enablePhrases' to confirm only the deprecated-alias note remains).\n5. DOCS: this IS the Mode B documentation task — no further docs subtasks exist."
+                  "dependencies": [
+                    "P1.M1.T1.S1",
+                    "P1.M1.T2.S1",
+                    "P1.M1.T2.S2",
+                    "P1.M1.T2.S3",
+                    "P1.M1.T3.S1",
+                    "P1.M1.T3.S2",
+                    "P1.M1.T3.S3",
+                    "P1.M2.T1.S1",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T2.S1",
+                    "P1.M2.T2.S2",
+                    "P1.M3.T1.S1",
+                    "P1.M3.T1.S2",
+                    "P1.M3.T2.S1",
+                    "P1.M4.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/tests_docs_inventory.md §3 quotes every stale README passage verbatim with approximate line numbers (features phrase bullet ~49–56; chaining bullet; usage paragraphs ~100–115; architecture store line + phrase-demotion lifecycle sentence; configuration table enablePhrases row; debug section phrase-dump bullets).\n2. INPUT: every implementing subtask (dependency list) plus the DoD record from P1.M4.T1.S2. The Configuration table row for enableChaining was already landed Mode A in P1.M3.T1.S1 — verify, don't duplicate.\n3. LOGIC: Implement PRD R6: README.md — Features: DELETE the phrase-completions bullet; REWRITE the chaining bullet as chained Tab completion (one word per Tab, zero typed chars to see the next word, National → Renewable → Energy → Laboratory). Usage: rewrite the chaining/phrase paragraphs (no multi-word insertion, no enablePhrases prose). Architecture: store description drops the phrase store, keeps the top-3 successor index fed by strict-adjacency bigrams; DELETE the phrase-demotion-sweep lifecycle sentence; keep the before_agent_start chain-reset sentence. Design invariants / never-hijack: add 'Tab only completes — the menu opens by typing only' (2nd threshold char, 1st char after trigger char, zero-char chain offer; no manual open gesture). Configuration: enableChaining row + deprecated alias note (must match what P1.M3.T1.S1 shipped). Debug: drop the phrase-dump description; describe the successor-index sample. Verify EVERY claim against shipped behavior (run the extension/tests as needed); delete anything unimplemented.\n4. OUTPUT: coherent changeset-level documentation; the delta ships with zero stale phrase references (grep README for 'phrase'/'enablePhrases' to confirm only the deprecated-alias note remains).\n5. DOCS: this IS the Mode B documentation task — no further docs subtasks exist.",
+                  "prd_selectors": [
+                    "h2.0",
+                    "h2.2",
+                    "h2.6",
+                    "h2.42",
+                    "h2.43",
+                    "h2.44",
+                    "h2.45",
+                    "h2.46",
+                    "h2.48",
+                    "h2.54"
+                  ]
                 }
               ]
             }
