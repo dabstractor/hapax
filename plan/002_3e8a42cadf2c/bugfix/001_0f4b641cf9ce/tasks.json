@@ -1,0 +1,271 @@
+{
+  "backlog": [
+    {
+      "type": "Phase",
+      "id": "P1",
+      "title": "Fix six end-to-end validation defects (BUG-001..BUG-006) and restore spec compliance",
+      "status": "Ready",
+      "description": "Creative validation of hapax against the PRD found six real defects: (1) threshold mode preempts stock slash/@/quoted-path completion and Tab in a slash context opens the hapax menu (violates the acceptance-critical 'Tab never opens the menu' invariant and §09 item 6); (2) the admission-band retune (50/20) rejects national/energy/laboratory making the PRD's M2 acceptance scenario (item 7) unreachable; (3) sub-16-char, <=1-digit fragments of pasted secrets pass every gate and are offered as completions (§09 item 5, 'never embarrass'); (4) astral-plane letters before an ASCII run leak the remainder (𝔘sword -> 'sword', §04 rule 3); (5) an armed chain swallows the trigger char and returns a mis-prefixed successor set (§07 state machine); (6) the bigram map can sit above its 10k hard cap after one large message (§06). This phase fixes all six with research-grounded, test-first changes in src/pi/provider.ts, src/core/score.ts, src/core/shapeGate.ts, src/pi/ingest.ts, src/core/segment.ts, src/core/store.ts, plus regression re-verification and documentation sync. Research findings live in plan/002_3e8a42cadf2c/bugfix/001_0f4b641cf9ce/architecture/. Guardrails: spec/*.md is READ-ONLY (product spec); tests import constants from src, never hard-code; providers must pass the options object through unchanged on delegation.",
+      "milestones": [
+        {
+          "type": "Milestone",
+          "id": "P1.M1",
+          "title": "Provider integration correctness (BUG-001, BUG-005)",
+          "status": "Planned",
+          "description": "Make hapax a strict overlay on stock pi completion: slash-command, @-mention, quoted-path and unquoted-path contexts always delegate to current.getSuggestions with options passed through unchanged (fixing both the typing-path preemption and the Tab-opens-menu path in slash contexts), and the armed chain resets to idle when a non-word-start char (notably the trigger char) precedes the typed fragment so trigger mode wins with the correct consumed prefix.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M1.T1",
+              "title": "Stock-context classifier and delegation in getSuggestions (BUG-001)",
+              "status": "Planned",
+              "description": "Add an exported pure classifier for stock-owned contexts (slash command, @-mention, quoted path, unquoted path) mirroring pi-tui's own detection, and gate createHapaxProvider.getSuggestions on it BEFORE the armed-chain branch, delegating to current.getSuggestions with the options object passed through unchanged. This simultaneously fixes: (a) typing '/re', '@me', '\"src/roun' showing hapax's word menu instead of stock items; (b) the force:false+explicitTab slash-context Tab path returning a multi-item hapax set that OPENS the menu on a single Tab (the pi-tui single-item fast path at editor.js:1902 requires force:true, which slash Tab never sends) and a second Tab corrupting the command line.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T1.S1",
+                  "title": "Implement classifyStockContext pure helper with unit tests",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.0", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See plan/002_3e8a42cadf2c/bugfix/001_0f4b641cf9ce/architecture/provider-tui-integration.md — pi-tui's isInSlashCommandContext (editor.js:1775) is `cursorLine === 0 && before.trimStart().startsWith('/')` and handleTabCompletion (:1812) additionally requires `!before.trimStart().includes(' ')`; stock applyCompletion treats prefixes starting with '\"', '@\"', '/' specially. extractMatchState (src/pi/provider.ts ~110-135) currently has NO context gating.\n2. INPUT: `lines: string[]`, `cursorLine: number`, `cursorCol: number` as received by getSuggestions; src/pi/config.ts HapaxConfig (triggerChar default '#').\n3. LOGIC: Implement PRD §Major Issue 1 (h3.0) recommendation in src/pi/provider.ts: export `classifyStockContext(lines, cursorLine, cursorCol): 'slash' | 'mention' | 'quoted-path' | 'path' | null` — slash: mirror editor.js exactly (cursorLine===0 && before.trimStart().startsWith('/') && !before.trimStart().includes(' ')); mention: trailing identifier fragment immediately preceded by '@' at word start; quoted-path: odd count of '\"' in the text before the cursor on the cursor line (unclosed quote); path: trailing fragment immediately preceded by '/'. Keep extractMatchState itself pure and unchanged (its existing provider-match.test.ts unit tests must stay green). TDD: extend test/provider-match.test.ts with classifier cases — '/re' line 0 => 'slash'; '/model arg re' => null (space present); '@jo' => 'mention'; '\"src/roun' => 'quoted-path'; 'src/roun' => 'path'; plain prose 'renewable en' => null; '#frag' at word start => null (trigger stays hapax's). No mocking needed (pure function).\n4. OUTPUT: Exported classifyStockContext consumed by P1.M1.T1.S2; unit tests in test/provider-match.test.ts.\n5. DOCS: [Mode A] none — internal matching logic, no config/env/API surface change; behavior summary is handled by the final changeset-level docs task (P1.M4.T2)."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T1.S2",
+                  "title": "Wire delegation into getSuggestions before the armed-chain branch",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.0", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/provider-tui-integration.md — createHapaxProvider.getSuggestions flow order is aborted-check -> armed chain branch -> extractMatchState -> rankMatches -> forced single-item mitigation (§07). The stock-context gate must run immediately after the aborted check and BEFORE the armed branch so it covers typing-path, forced Tab, and armed-chain-overlapped contexts.\n2. INPUT: classifyStockContext(lines, cursorLine, cursorCol) from P1.M1.T1.S1; the wrapped `current` provider (AutocompleteProvider from @earendil-works/pi-tui autocomplete.d.ts).\n3. LOGIC: Implement PRD §Major Issue 1 (h3.0): `if (classifyStockContext(lines, cursorLine, cursorCol)) return current.getSuggestions(lines, cursorLine, cursorCol, options);` — options passed through UNCHANGED (existing tests assert the SAME options object identity, never cloned). Keep the §07 force mitigation (single-item when options.force===true) intact for genuine hapax contexts. TDD via the established sentinel convention (test/provider.test.ts, test/provider-live.test.ts, test/calibration.test.ts COMMON_PROBES): vi-mock `current` returning a SENTINEL — assert getSuggestions(['/re'],0,3,{signal:{aborted:false},force:false}) returns the SENTINEL with args identity; same for {force:true}; '@jo', '\"src/roun', 'src/roun' delegate; plain 're' after ingest of a rare word still returns hapax items; armed chain + '/re' delegates (chain left to reset per P1.M1.T2 rules — do not arm on stock items). Mock: only `current` (vi mock); no pi-tui import needed.\n4. OUTPUT: Delegating getSuggestions in src/pi/provider.ts restoring §09 integration item 6 (path/slash/@ identical to stock pi) and the 'Tab never opens the menu' invariant in slash contexts; consumed by P1.M1.T2.S1 and the final regression task.\n5. DOCS: [Mode A] none — no config/env/API surface change; user-facing behavior summary lands in the final changeset-level docs task (P1.M4.T2)."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M1.T2",
+              "title": "Armed-chain trigger-char reset and correct prefix consumption (BUG-005)",
+              "status": "Planned",
+              "description": "While a word is armed, typing the trigger char plus a fragment ('x alphaone #b') must reset the chain to idle and let trigger mode answer with prefix '#b' (trigger char consumed), instead of filtering successors at prefix 'b' which leaves the '#' in the buffer after blind prefix-length deletion.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T2.S1",
+                  "title": "Require word-start fragments in the armed branch; reset + fall through otherwise",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T1.S2"],
+                  "prd_selectors": ["h2.0", "h2.3", "h2.3/h3.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/provider-tui-integration.md — the armed branch (src/pi/provider.ts ~296-330) runs BEFORE extractMatchState; its fragment regex /[A-Za-z][A-Za-z0-9_]*$/ matches 'b' after '#' without requiring a word start, so the chain swallows the trigger char. pi-tui's stock applyCompletion deletes exactly prefix.length chars blindly, so a prefix of 'b' for text '#b' leaves '#betaword'.\n2. INPUT: armed ChainState {word} from createChainMachine(); the delegation gate from P1.M1.T1.S2 already ahead of this branch; config.triggerChar / config.enableChaining.\n3. LOGIC: Implement PRD §Minor Issue 2 (h3.4) recommendation: in the armed-branch fragment path, require the matched fragment to sit at a word start (before.length - frag.length === 0 || /[ \\t]/.test(before[before.length - frag.length - 1])). If NOT at a word start (trigger char, punctuation, '/', etc. glued before the fragment) -> chain.reset() and fall through to the normal path (stock-context gate then extractMatchState) so trigger mode wins with prefix triggerChar+fragment. Zero-typed-char offer (before === '' || /[ \\t]$/) and normal filtering ('x alphaone be') unchanged. TDD in test/chain.test.ts following its existing patterns: session with successors alphaone->betaword/deltaword; arm via applyCompletion; line 'x alphaone #b' => trigger-mode items, prefix '#b', chain.state() null; 'x alphaone be' still filters successors at prefix 'be'; zero-char offer regression. Mock: none beyond the standard store/config fixtures used by chain.test.ts.\n4. OUTPUT: Corrected armed-branch semantics in src/pi/provider.ts consumed by P1.M1.T2.S2 (editor-sim verification).\n5. DOCS: [Mode A] none — internal state-machine fix; no user-facing/config surface beyond behavior already covered by final docs task."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T2.S2",
+                  "title": "Editor-sim integration test: trigger consumption and one-word invariant during chains",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T2.S1"],
+                  "prd_selectors": ["h2.0", "h2.3", "h2.3/h3.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/system_context.md — test/helpers/editor-sim.ts mirrors pi-tui applyCompletion deletion math exactly (blind prefix.length deletion); test/helpers/query-invariants.ts provides assertWordsOnly (§09 M2 one-word invariant).\n2. INPUT: The corrected provider from P1.M1.T2.S1 (trigger-mode answers during former-chain contexts; chain resets on non-word-start fragments).\n3. LOGIC: Add integration coverage per PRD h3.4 Steps to Reproduce: ingest 'alphaone betaword gamma\\nalphaone deltaword epsilon'; accept 'alphaone' to arm; at line 'x alphaone #b' accept the returned item through the editor-sim applyCompletion and assert the resulting buffer is 'x alphaone betaword' — the '#' AND 'b' consumed, no residue; assert every returned item is a single word (assertWordsOnly); assert accepting re-arms the chain on the accepted word. Also re-verify the BUG-001 slash flow end-to-end at the sim level: Tab-equivalent forced call on '/re' returns stock sentinel, never hapax items. Mock: `current` provider only.\n4. OUTPUT: Regression net in test/chain.test.ts (or a sibling integration file following its conventions) locking PRD §07 state machine + prefix contract; consumed by the final regression task P1.M4.T1.S1.\n5. DOCS: [Mode A] none — test-only."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Milestone",
+          "id": "P1.M2",
+          "title": "Admission and secret-defense correctness (BUG-002, BUG-003)",
+          "status": "Planned",
+          "description": "Make the PRD's own M2 acceptance phrase (National -> Renewable -> Energy -> Laboratory at zero typed chars) reachable again without reintroducing common-word menu noise, via a capitalized-occurrence (proper-noun) admission relief band validated by the §09 tuning protocol and pinned in an automated test; and close the secret-fragment leak by lowering the raw-text bare-run mask floor to 32 and propagating whole-token secret rejection to its sub-word drafts, verified against the PRD's paste battery.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M2.T1",
+              "title": "Proper-noun admission relief so the M2 acceptance phrase admits and chains (BUG-002)",
+              "status": "Planned",
+              "description": "The 50/20 band retune rejects national (q=90), energy (q=94), laboratory (q=57) so the NREL phrase never enters the store and integration item 7 is unreachable. A blanket retune (REJECT >= 95) would re-admit lowercase context (51)/posts (47) and break the calibration no-menu suite. Fix: whole-token-only relief band admitting shape-valid capitalized (properName) rank-rejected words below a ceiling constant (default 120: > 94 so the phrase admits, <= 156 so The/This/With/Them stay rejected), validated with the tuning protocol and pinned by an automated end-to-end acceptance test.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T1.S1",
+                  "title": "Implement the proper-noun relief band in admit() with unit tests",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.1", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — src/core/score.ts admit() (109-135): q===null->0; q>=REJECT_COMMON_THRESHOLD(50)->'reject'; q>=MID_FREQ_THRESHOLD(20)->2; else 1; subword clamp min(2, max(result, parentGroup+1)). Shipped dict: national=90, energy=94, laboratory=57, renewable=19; the=240, with=179, this=197, them=156 (must stay rejected), context=51. CandidateDraft.properName = initial-uppercase flag (segment.ts expandCandidates). Bigrams form only between admitted whole tokens (§06), so admission alone restores chaining.\n2. INPUT: CandidateDraft (src/core/segment.ts:198-212), Dictionary (src/core/types.ts), existing exported band constants.\n3. LOGIC: Implement PRD §Major Issue 2 (h3.1) recommendation (recalibration path chosen because a blanket REJECT retune is rejected by calibration.test.ts): add `export const PROPER_NOUN_ADMIT_CEILING = 120 as const` and in admit(), when result==='reject' && !draft.isSubword && draft.properName && q !== null && q < PROPER_NOUN_ADMIT_CEILING -> result = 2 (group 2). Sub-words keep the existing clamp (no relief). TDD in test/score.test.ts with the synthetic dict-writer helper: capitalized 'National' at q=90 admits group 2; lowercase 'national' at q=90 still rejects; capitalized 'The' at q=240 rejects; ceiling boundary q=120 rejects, q=119 admits; subword of a relieved parent still clamped. Use tools/calibrate-bands.mjs to sanity-check the ceiling against the shipped dict before committing to 120 (must stay within (94, 156]).\n4. OUTPUT: New exported constant + modified admit() in src/core/score.ts, consumed by P1.M2.T1.S2 (tuning validation) and P1.M2.T1.S3 (acceptance pin).\n5. DOCS: [Mode A] Update the JSDoc module comment and admit() doc-block in src/core/score.ts to document the relief band, the ceiling rationale (M2 item 7 vs calibration), and the known spec/04 (220/120) drift — spec/*.md itself is READ-ONLY."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T1.S2",
+                  "title": "Re-run tuning protocol: calibration, shipped-dict, and adversarial suites stay green",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M2.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.1", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/spec-acceptance-map.md — §09 tuning protocol: 'change one constant, run the acceptance suite, A/B against a fixed 3-session corpus fixture (test/fixtures/sessions/) checking precision@8'. calibration.test.ts pins COMMON_PROBES (posts q~47 mid-band/menu; thin/firs reject/delegate — all lowercase, unaffected by the capitalized-only relief); shipped-dict.test.ts is its calibration twin; adversarial-ingest/adversarial-typing guard the no-menu guarantees.\n2. INPUT: The relief band from P1.M2.T1.S1 (PROPER_NOUN_ADMIT_CEILING, modified admit()).\n3. LOGIC: Execute the protocol for PRD h3.1: run `npx vitest --run test/calibration.test.ts test/shipped-dict.test.ts test/adversarial-ingest.test.ts test/adversarial-typing.test.ts test/score.test.ts test/acceptance.test.ts`; replay test/fixtures/sessions/prose.jsonl through the real pipeline + shipped dict and confirm common lowercase prose still delegates (sentinel identity + __hapaxLive() null) while capitalized fixture words now store at group 2 without regressing precision@8 vs test/fixtures/sessions/expected.md. If any pin regresses, adjust the ceiling within (94, 156] — one constant only — and re-run; record the final value and the measured A/B in the run notes. Mock: none (real modules + real dict by convention).\n4. OUTPUT: Validated ceiling value + green calibration evidence, consumed by P1.M2.T1.S3 and the final regression task P1.M4.T1.S1.\n5. DOCS: [Mode A] Append the measured calibration numbers (probe words, q values, delegation verdicts) to the score.ts JSDoc note from P1.M2.T1.S1."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T1.S3",
+                  "title": "Pin the M2 acceptance phrase in an automated end-to-end test (integration item 7)",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M2.T1.S1", "P1.M2.T1.S2"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.1", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md + spec-acceptance-map.md — the PRD's repro: ingest the 3-sentence NREL text over the real dict; currently store.get('national'|'energy'|'laboratory') === undefined and topSuccessors('national') === []. acceptance.test.ts already scripts §09 items 1-7 with the real dict and editor-sim; fixtures live in test/fixtures/sessions/.\n2. INPUT: Relief band from P1.M2.T1.S1 with the ceiling validated by P1.M2.T1.S2; CandidateStore.topSuccessors; provider applyCompletion arming; editor-sim helper.\n3. LOGIC: Implement the PRD h3.1 requirement 'pin the phrase in an automated test': add a fixture (e.g. test/fixtures/sessions/nrel-chain.jsonl with the PRD's three sentences 'The National Renewable Energy Laboratory is famous. / ... again. / Visit ... today.') and a test in the acceptance.test.ts pattern: real dict via loadDictionary(resolveDictPath()); ingest; assert store.get for all four words is defined; rankMatches('na') top is National; accept it (arm); at zero typed chars topSuccessors('national') top is renewable; Tab -> energy; Tab -> laboratory — full chain with zero additional typed chars; assertWordsOnly on every item set; chain prefix '' at zero-char offers. Mock: none (real stack per acceptance conventions).\n4. OUTPUT: Automated integration item 7 guarantee consumed by P1.M4.T1.S1 (full-suite regression) — this test is the regression tripwire for any future band change.\n5. DOCS: [Mode A] none — test+fixture only."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M2.T2",
+              "title": "Suppress fragments of pasted secrets (BUG-003)",
+              "status": "Planned",
+              "description": "Sub-16-char, <=1-digit camelCase sub-words of secret-shaped whole tokens (CYEXAMPLEKEY from the 38-char AWS example key) and fragments of npm/glpat/sk_live/Bearer synthetics currently pass every gate and surface in the menu. Fix all three PRD levers: bare-run mask floor 40->32, parent-secret propagation so sub-words of a secret-rejected whole token are never stored, and a conservative synthetic-token battery.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T2.S1",
+                  "title": "Lower the raw-text bare-run mask floor from 40 to 32 chars",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.2", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — SECRET_WINDOW_RES (src/core/shapeGate.ts ~410) ends with the greedy catch-all /[0-9a-zA-Z/+]{40,}/g (no anchor prefilter, last in claim order); the classic AWS secret access key is 38 chars ('wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY') and slips past it, leaving unmasked camelCase fragments for expandCandidates.\n2. INPUT: SECRET_WINDOW_RES array + SECRET_WINDOW_ANCHORS prefilter in src/core/shapeGate.ts; test/mask-secrets.test.ts conventions.\n3. LOGIC: Implement PRD §Major Issue 3 (h3.2) recommendation: introduce a named constant (e.g. BARE_RUN_MIN = 32) and change the catch-all to /[0-9a-zA-Z/+]{32,}/g so the 38-char AWS key is masked pre-segmentation (same-length spaces). TDD in test/mask-secrets.test.ts: the AWS key inside a sentence is fully masked; 31-char runs are NOT masked (boundary); existing 40+ cases unchanged; audit prose fixtures (test/fixtures/sessions/*.jsonl replays) for over-masking — plain prose must not lose legitimate candidates (32+ unbroken [0-9a-zA-Z/+] runs are effectively absent from prose; 32+ hex hashes are secret-shaped by intent).\n4. OUTPUT: Tightened mask constant in src/core/shapeGate.ts consumed by P1.M2.T2.S3 battery; mask-secrets tests green.\n5. DOCS: [Mode A] Update the SECRET_WINDOW_RES entry comment / shapeGate module JSDoc documenting the 32 floor and why (38-char AWS secret class)."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T2.S2",
+                  "title": "Propagate whole-token secret rejection to sub-word drafts in the ingest memo",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.2", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — #computeAdmitMemo (src/pi/ingest.ts ~590-650) gates each CandidateDraft from expandCandidates independently; the ONLY cross-draft state is wholeGroup, set just when the whole token gate-passed AND admitted ('if (!draft.isSubword && result !== \"reject\") wholeGroup ??= result;'). A whole token rejected with GateRejectReason 'secret' leaves no trace, so its sub-words (jalr, femik7, mden, cyexamplekey — all sub-16-char, <=1 digit, defeating rules 6/7) pass. expandCandidates emits the whole draft FIRST, then sub-words — an ordered flag works.\n2. INPUT: GateResult/GateRejectReason from src/core/types.ts ('tooShort'|'tooLong'|'lowEntropy'|'unigramRun'|'secret'|'consonantRun'); expandCandidates draft order; #computeAdmitMemo structure and #replayAdmitMemo counters.\n3. LOGIC: Implement the PRD h3.2 minimum bar 'suppress candidates whose parent token was secret-rejected': in #computeAdmitMemo, when the whole-token draft's passesShape rejects with reason 'secret', mark the token and reject ALL its sub-word drafts for that token (never stored; count them with the existing secret-reject counters). Masked-away text never reaches tokenize (maskSecrets blanks it), so shape-gate-rejected parents are the remaining leak. TDD in test/ingest-pipeline.test.ts or test/adversarial-ingest.test.ts with the real pipeline + synthetic dict: processText('password wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY trailing') -> store.entries() contains NONE of jalr/femik7/mden/cyexamplekey; provider.getSuggestions(['cy'],...) returns no items; sub-words of gate-PASSING parents still admit (regression). Mock: none (real modules; synthetic dict binary via test/helpers/dict-writer.ts).\n4. OUTPUT: Parent-secret-aware memo in src/pi/ingest.ts consumed by P1.M2.T2.S3 battery.\n5. DOCS: [Mode A] Update the #computeAdmitMemo doc-block documenting the parent-secret propagation rule and its rationale (§01 'never embarrass'; §09 item 5)."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T2.S3",
+                  "title": "Synthetic-token paste battery: npm/glpat/sk_live/Bearer fragments never offered",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M2.T2.S1", "P1.M2.T2.S2"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.2", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — PRD h3.2 repro: pasting npm/glpat/sk_live/Bearer-style synthetic tokens admitted fragments 'abcdefghijklmnopqrstuvwxy', 'yz0123456789', 'zabc'. Some parents are NOT caught today: SECRET_PREFIXES has 'glpat_' (underscore) but a 'glpat-...' token (hyphen, zero digits) defeats rules 3/6/7 and the 10 mask regexes; with P1.M2.T2.S1+S2 in place many become either masked (>=32 runs) or secret-rejected parents whose sub-words propagate-reject.\n2. INPUT: Mask floor 32 (P1.M2.T2.S1) and parent-secret propagation (P1.M2.T2.S2); SECRET_PREFIXES and SECRET_WINDOW_RES in src/core/shapeGate.ts.\n3. LOGIC: Build the battery per PRD h3.2 Steps to Reproduce as an automated test (test/adversarial-ingest.test.ts pattern, real pipeline): paste the AWS 38-char key AND representative npm_/glpat-/sk_live_/Bearer synthetics; assert none of the documented fragments appear in store.entries() or in getSuggestions results for their prefixes. Where a synthetic's whole token still passes every gate and is not masked, add CONSERVATIVE rules — extend SECRET_PREFIXES (e.g. 'npm_', 'glpat-', 'sk_live') or targeted mask regexes — each addition must cite the battery case it closes and must not fire on prose/fixtures (re-run calibration + prose fixture replay). Mock: none.\n4. OUTPUT: Battery test locking §09 integration item 5 ('key never appears in suggestions afterwards' — now including recognizable fragments); consumed by P1.M4.T1.S1.\n5. DOCS: [Mode A] Document any added prefixes/rules in the shapeGate JSDoc alongside P1.M2.T2.S1's note."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Milestone",
+          "id": "P1.M3",
+          "title": "Segmentation and store hardening (BUG-004, BUG-006)",
+          "status": "Planned",
+          "description": "Close the two minor spec deviations: astral-plane letters immediately before an ASCII run must disqualify the whole run per §04 rule 3, and the bigram map must never sit above its 10,000-key hard cap after any single message.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M3.T1",
+              "title": "Code-point-correct Unicode boundary guard in tokenize (BUG-004)",
+              "status": "Planned",
+              "description": "isUniLetter reads codePointAt one code unit at a time, so an astral (surrogate-pair) letter immediately BEFORE a match is seen as its lone low surrogate and the run slips through: tokenize('𝔘sword') -> ['sword'] while §04 rule 3 requires nothing.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M3.T1.S1",
+                  "title": "Fix the before-side boundary check to step by full code points at both guard sites",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.3", "h2.3/h3.3", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — isUniLetter (src/core/segment.ts:78-83) takes a code point; guard sites at :130-131 (base pass) and :152-155 (hexish pass) call isUniLetter(text.codePointAt(m.index - 1)). For an astral letter before a match, codePointAt at that offset returns the lone LOW surrogate (0xDC00-0xDFFF), which is not \\p{L}. The AFTER side is already correct (codePointAt at a high surrogate returns the full pair). The function's own JSDoc documents this as an 'Accepted v1 trade-off' — the PRD demotes it to a spec deviation.\n2. INPUT: tokenize(text) in src/core/segment.ts; UNI_LETTER_RE (/\\p{L}/u) and ASCII_LETTER_RE constants; RawToken output shape.\n3. LOGIC: Implement PRD §Minor Issue 1 (h3.3): add a helper (e.g. isUniLetterBefore(text, index)) that, when the code unit at index-1 is a low surrogate, backs up one more unit and tests the combined code point; use it at BOTH before-side guard sites (base and hexish passes); keep the after-side logic unchanged. TDD in test/segment.test.ts: tokenize('𝔘sword') -> []; tokenize('sword𝔘') -> [] (regression, already passing); 'ΩbsidianMirror' -> []; 'Þórhildur' -> []; BMP 'é' adjacency both sides still disqualifies; an astral letter between two ASCII runs kills both; hexish variant with astral prefix. Remove the 'Accepted v1 trade-off' JSDoc limitation note. Mock: none (pure function).\n4. OUTPUT: Correct tokenize() in src/core/segment.ts; consumed by P1.M4.T1.S1 regression and the final docs task (README known-limitations sweep).\n5. DOCS: [Mode A] Replace the isUniLetter/tokenize JSDoc trade-off note with the code-point-correct behavior description (the README 'Known limitations' mention is swept by P1.M4.T2.S1)."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M3.T2",
+              "title": "Drain the bigram map to within cap in the same recordBigramRuns call (BUG-006)",
+              "status": "Planned",
+              "description": "#evictBigramsIfOverCap pops at most BIGRAM_EVICT_BATCH=256 victims per recordBigramRuns call (once per message), so one message with >10,256 distinct bigrams leaves the map over the documented 10,000-key hard cap indefinitely.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M3.T2.S1",
+                  "title": "Loop the batched eviction until the map is within BIGRAM_CAP",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.3", "h2.3/h3.5", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/core-engine-findings.md — src/core/store.ts: BIGRAM_CAP=10_000 (:59, not exported), BIGRAM_EVICT_BATCH=256 (:66); recordBigramRuns (:452) upserts pairs then calls #evictBigramsIfOverCap() once; that method early-returns when within cap and evicts `while (over cap && batch-- > 0)` using the lazy min-heap #bigramEvictHeap (bigramSortKey = log(count) + lastSeenOrdinal/50, byte-lex tiebreak), re-pushing stale nodes, calling #dropSuccessorFor per evicted key, wholesale heap rebuild when heap.length > 2*size+64. Measured: one 11,000-bigram message left bigramSize at 10,714.\n2. INPUT: recordBigramRuns(runs: readonly string[][]) and #evictBigramsIfOverCap() internals in src/core/store.ts; bigramSize getter; test/bigrams.test.ts cap-test conventions.\n3. LOGIC: Implement PRD §Minor Issue 3 (h3.5) recommendation (code fix, not spec documentation): wrap the 256-pop batch in a do/while (or equivalent) so #evictBigramsIfOverCap returns only when this.#bigrams.size <= BIGRAM_CAP — keep the inner batch constant for heap pacing and stale-node hygiene. TDD in test/bigrams.test.ts: build text of 11,000 distinct rare-pair lines ('v<i>a v<i>b'), one processText through the real pipeline, assert store.bigramSize <= 10_000 IMMEDIATELY (no further messages); assert eviction still uses the standard policy (lowest bigramSortKey first — reuse existing assertions); perf sanity: ingest-time budget for the 11k case stays far under the 3x perf-gate ceiling. Mock: none.\n4. OUTPUT: Cap-guaranteeing eviction in src/core/store.ts consumed by P1.M4.T1.S1 regression.\n5. DOCS: [Mode A] Update the recordBigramRuns/#evictBigramsIfOverCap JSDoc to state the same-call cap guarantee (replacing any batch-bounded wording)."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Milestone",
+          "id": "P1.M4",
+          "title": "Cross-cutting regression verification and documentation sync",
+          "status": "Planned",
+          "description": "Re-verify the whole changeset against the 636-test suite, tsc, the §09 integration items (esp. 5, 6, 7) and perf gates, update the DoD evidence record, and sweep changeset-level documentation (README, DoD bugfix record) so no stale trade-off statements survive.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M4.T1",
+              "title": "Full-suite regression and acceptance re-verification",
+              "status": "Planned",
+              "description": "Run the complete verification gauntlet over the combined changeset and repair any fallout, proving all six fixes coexist: npm test (vitest --run), npm run check (tsc --noEmit), and the §09 acceptance items touched by this bugfix (5 secrets, 6 path/slash/@ stock parity, 7 NREL chaining) with re-measured evidence.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M4.T1.S1",
+                  "title": "Run npm test + npm run check; fix cross-fix fallout; re-measure acceptance evidence",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": ["P1.M1.T2.S2", "P1.M2.T1.S3", "P1.M2.T2.S3", "P1.M3.T1.S1", "P1.M3.T2.S1"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.3", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/system_context.md + spec-acceptance-map.md — commands: `npm test` (vitest --run), `npm run check` (tsc --noEmit, the DoD substitute for pi --check). Suites most likely to interact: calibration/shipped-dict (relief band), acceptance (items 5/6/7), adversarial-ingest/typing (mask floor + parent-secret), provider/chain (delegation + reset), segment/bigrams/store, perf-gates (3x budgets). Known recorded gap 'successorIndex eviction cleanup' in docs/M1-DoD.md is OUT OF SCOPE — do not expand it.\n2. INPUT: All implementing subtasks P1.M1.T1.S1..P1.M3.T2.S1 (their code + tests are in the tree).\n3. LOGIC: Execute the PRD Testing Summary closure: full `npm test` green (636+ tests incl. all new pins), `npm run check` clean; investigate and fix any test that legitimately conflicts with a fix (prefer fixing the fix, not weakening a spec-derived test; document any judgment call); re-run perf-gates and spot-check query latency ~0.1ms/20k-store class budgets; capture the re-measured evidence for §09 items 5 (secret paste battery), 6 (stock parity sentinel checks), 7 (NREL chain) as re-runnable command + result pairs. Mock: none — this is the real-stack gauntlet.\n4. OUTPUT: Green suite + tsc evidence and any fallout fixes, consumed by P1.M4.T2.S1/S2 (docs cite these numbers).\n5. DOCS: [Mode A] Update docs/M1-DoD.md's existing item 5/6/7 re-verification sections with the new measured evidence and commands (this is the touched per-feature evidence doc; the changeset-level summary is P1.M4.T2.S2)."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M4.T2",
+              "title": "Sync changeset-level documentation",
+              "status": "Planned",
+              "description": "Final Mode B catch-all: sweep README.md and the DoD record so the whole six-fix delta is coherently surfaced and no stale limitation/trade-off statements survive (astral 'accepted trade-off', secret-fragment non-goal, band retune notes, bigram transient overshoot if mentioned).",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M4.T2.S1",
+                  "title": "README.md sweep: features, known limitations, reference",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M4.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.3", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/spec-acceptance-map.md — README.md headings: Features / Quick start / Usage / Architecture / Design invariants / Known limitations / Non-goals / Reference / Development. Statements to retire: any astral-trade-off or secret-fragment 'accepted non-goal' wording (fixed by P1.M3.T1.S1 / P1.M2.T2.*); any wording implying hapax completes inside slash/@/quoted-path contexts (now delegated, P1.M1.T1.*); admission-band descriptions needing the proper-noun relief band (P1.M2.T1.*); bigram cap wording must state the same-call guarantee (P1.M3.T2.S1).\n2. INPUT: Final behaviors + measured evidence from P1.M4.T1.S1; per-file JSDoc updates already landed with each fix (Mode A).\n3. LOGIC: Update README.md sections to reflect the complete delta: stock-context delegation (path/slash/@ identical to stock pi), proper-noun admission relief (capitalized mid-frequency words admit; lowercase common words still reject), secret-fragment suppression (32-char mask floor + parent-secret propagation + battery), code-point-correct Unicode boundaries, bigram cap guarantee. Keep the existing voice/structure; do not touch spec/*.md (READ-ONLY product spec) and do not modify .gitignore or source code.\n4. OUTPUT: Updated README.md consistent with the shipped behavior; no code changes.\n5. DOCS: [Mode B] This IS the changeset-level docs subtask for README.md."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M4.T2.S2",
+                  "title": "Append the bugfix-001 re-verification record to docs/M1-DoD.md",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M4.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.3", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See architecture/spec-acceptance-map.md — docs/M1-DoD.md is the evidence-record convention (quoted DoD, re-runnable commands, measured numbers, triage log). It already carries per-item updates from P1.M4.T1.S1 (Mode A); this subtask adds the changeset-level summary.\n2. INPUT: Evidence pairs from P1.M4.T1.S1; the six PRD issues (h3.0-h3.5) and recommendations (h2.5) as the checklist.\n3. LOGIC: Append a 'Bugfix 001 re-verification' section to docs/M1-DoD.md: one entry per bug (BUG-001..BUG-006) with root cause (one line, citing the architecture/ doc), the fix (subtask IDs), the locking test(s), and the re-run command + measured result; explicitly record the admission-relief ceiling value and the spec/04 drift note (spec stays 220/120 by owner decision; code documents 50/20 + relief); explicitly record that the prior 'successorIndex eviction cleanup' known gap remains out of scope.\n4. OUTPUT: Self-contained evidence record for the whole changeset in docs/M1-DoD.md.\n5. DOCS: [Mode B] This IS the changeset-level docs subtask for the DoD record."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
