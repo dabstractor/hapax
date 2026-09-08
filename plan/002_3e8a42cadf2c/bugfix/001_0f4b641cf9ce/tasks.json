@@ -18,7 +18,7 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Stock-context classifier and delegation in getSuggestions (BUG-001)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Add an exported pure classifier for stock-owned contexts (slash command, @-mention, quoted path, unquoted path) mirroring pi-tui's own detection, and gate createHapaxProvider.getSuggestions on it BEFORE the armed-chain branch, delegating to current.getSuggestions with the options object passed through unchanged. This simultaneously fixes: (a) typing '/re', '@me', '\"src/roun' showing hapax's word menu instead of stock items; (b) the force:false+explicitTab slash-context Tab path returning a multi-item hapax set that OPENS the menu on a single Tab (the pi-tui single-item fast path at editor.js:1902 requires force:true, which slash Tab never sends) and a second Tab corrupting the command line.",
               "subtasks": [
                 {
@@ -40,7 +40,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "Wire delegation into getSuggestions before the armed-chain branch",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -66,7 +66,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "Require word-start fragments in the armed branch; reset + fall through otherwise",
-                  "status": "Researching",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S2"

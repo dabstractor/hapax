@@ -38,7 +38,8 @@
  * context pi's built-in completion owns (slash command, @-mention,
  * quoted path, unquoted path), mirroring pi-tui editor.js exactly. A
  * non-null StockContext means hapax MUST delegate; S2 (P1.M1.T1.S2)
- * wires it into getSuggestions ahead of extractMatchState.
+ * supplies the classifier and P1.M1.T1.S2 (BUG-001 wiring) gates
+ * getSuggestions with it ahead of extractMatchState.
  */
 
 import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
@@ -198,9 +199,14 @@ export type HapaxProvider = AutocompleteProvider & {
  *
  *   1. options.signal.aborted → delegate, original arguments untouched
  *      (never signal.throwIfAborted() — delegate, don't throw).
- *   2. extractMatchState returns null → delegate (never-hijack rules:
+ *   2. classifyStockContext fires (slash / @-mention / quoted path /
+ *      path) → delegate VERBATIM (BUG-001: pi's stock menus keep working
+ *      exactly as before — before the armed branch and the force read,
+ *      so stock contexts win even while a chain is armed and under a
+ *      forced Tab).
+ *   3. extractMatchState returns null → delegate (never-hijack rules:
  *      pi's path/slash completion stays exactly as before).
- *   3. rankMatches returns [] → clear the live cache, then delegate
+ *   4. rankMatches returns [] → clear the live cache, then delegate
  *      (zero candidates never render a menu).
  *
  * P1.M2.T1.S1 (plan 002, PRD §07 h2.43 redesign) keeps TWO chain
@@ -232,7 +238,9 @@ export type HapaxProvider = AutocompleteProvider & {
  * via __hapaxLive / __hapaxKey.
  *
  * `chain` (P2.M2.T2.S1) is the Tab-armed successor-chaining machine:
- * getSuggestions consults it AFTER the aborted check — while armed it
+ * getSuggestions consults it AFTER the aborted and stock-context checks
+ * (a stock-context call delegates before the armed branch is reached —
+ * BUG-001) — while armed it
  * swaps the suggestion set for the armed word's successors (zero-typed-
  * char word-start offer, then threshold-0 live fragment filtering) — and
  * applyCompletion arms through it as a side-effect BEFORE delegating
@@ -261,6 +269,15 @@ export function createHapaxProvider(
       if (options.signal.aborted) {
         return current.getSuggestions(lines, cursorLine, cursorCol, options);
       }
+      // 1.2 Stock-context gate (BUG-001): the cursor sits in a context pi's
+      // built-in completion owns (slash / @-mention / quoted path / path —
+      // see classifyStockContext above). Delegate VERBATIM, before the armed
+      // branch and the force read, so typing-path, forced Tab, and
+      // armed-chain-overlapped stock contexts all delegate. Options are the
+      // ORIGINAL object — never cloned (existing tests assert identity).
+      if (classifyStockContext(lines, cursorLine, cursorCol)) {
+        return current.getSuggestions(lines, cursorLine, cursorCol, options);
+      }
       // 1.1 Force read (PRD §07 h3.8 Tab-opens-menu mitigation). pi-tui's
       // editor Tab-with-no-menu path calls getSuggestions with force:true,
       // then applies a single-item result IMMEDIATELY — its fast path is
@@ -275,9 +292,10 @@ export function createHapaxProvider(
       // needs revisit (the zero-char chain offer and auto-open rules are
       // unaffected). Strict === true — force is optional and foreign
       // callers may pass truthy non-booleans that must not fire the
-      // branch. Branch order is the contract: abort → armed → force-aware
-      // returns → normal; aborted + force:true still delegated above
-      // (force never outranks abort).
+      // branch. Branch order is the contract: abort → stock context →
+      // armed → force-aware returns → normal; aborted and stock-context
+      // calls still delegate above (force never outranks abort, and stock
+      // menus are never answered from hapax — the Tab-opens-menu fix).
       const forced = options.force === true;
       // 1.5 Tab-armed chaining (PRD §07 h2.43, redesigned in plan 002
       // P1.M2.T1.S1): while a word W is armed, the chain answers INSTEAD

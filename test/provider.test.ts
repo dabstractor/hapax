@@ -453,3 +453,114 @@ describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", 
     expect(result?.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
   });
 });
+// ── stock-context delegation (BUG-001) ──────────────────────────────────────
+
+describe("stock-context delegation (BUG-001)", () => {
+  /** Sentinel pi's stock completion returns in slash/mention/path contexts. */
+  const STOCK_SENTINEL: AutocompleteSuggestions = {
+    items: [{ value: "/resume", label: "/resume", description: "stock" }],
+    prefix: "/re",
+  };
+
+  /** Store holding a rare word whose prefix collides with the stock probes
+   *  ("renewable" matches fragment "re"): proves the GATE, not candidate
+   *  absence, drives the delegating cases. */
+  const reStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    put(s, "renewable", 2, 4);
+    return s;
+  };
+
+  it("'/re' (slash command, force:false) delegates with args by identity", async () => {
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { inner, provider } = makeStack(reStore(), current);
+    const lines = ["/re"];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 3, options);
+
+    expect(result).toBe(STOCK_SENTINEL); // identity — pi's menu, not a copy
+    expectUntouchedArgs(current, lines, 0, 3, options);
+    expect(inner.__hapaxLive()).toBeNull(); // no hapax menu ever painted
+  });
+
+  it("'/re' with force:true STILL delegates (stock gate outranks the force read — Tab-opens-menu fix)", async () => {
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { inner, provider } = makeStack(reStore(), current);
+    const lines = ["/re"];
+    const options = { signal: new AbortController().signal, force: true };
+
+    const result = await provider.getSuggestions(lines, 0, 3, options);
+
+    expect(result).toBe(STOCK_SENTINEL);
+    expectUntouchedArgs(current, lines, 0, 3, options);
+    expect(inner.__hapaxLive()).toBeNull();
+  });
+
+  it("'@jo' (mention) delegates", async () => {
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { provider } = makeStack(new CandidateStore(), current);
+    const lines = ["@jo"];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 3, options);
+
+    expect(result).toBe(STOCK_SENTINEL);
+    expectUntouchedArgs(current, lines, 0, 3, options);
+  });
+
+  it("'\"src/roun' (quoted path) delegates", async () => {
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { provider } = makeStack(new CandidateStore(), current);
+    const lines = ['"src/roun'];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 9, options);
+
+    expect(result).toBe(STOCK_SENTINEL);
+    expectUntouchedArgs(current, lines, 0, 9, options);
+  });
+
+  it("'src/roun' (path) delegates", async () => {
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { provider } = makeStack(new CandidateStore(), current);
+    const lines = ["src/roun"];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 8, options);
+
+    expect(result).toBe(STOCK_SENTINEL);
+    expectUntouchedArgs(current, lines, 0, 8, options);
+  });
+
+  it("'/model arg re' does NOT delegate (classifier no-space clause) — hapax answers with the store word", async () => {
+    // Slash WITH a spaced argument is not a stock menu context (the
+    // classifier's no-space clause returns null), so the plain threshold
+    // word-completion path stays hapax's — even after the '/'.
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { inner, provider } = makeStack(reStore(), current);
+    const lines = ["/model arg re"];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 13, options);
+
+    expect(current.getSuggestions).not.toHaveBeenCalled();
+    expect(result).not.toBe(STOCK_SENTINEL);
+    expect(result?.items.map((i) => i.value)).toContain("renewable");
+    expect(inner.__hapaxLive()).not.toBeNull(); // hapax owns this menu
+  });
+
+  it("plain 're' (prose fragment) after ingest → hapax items, gate silent on prose", async () => {
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { inner, provider } = makeStack(reStore(), current);
+    const lines = ["re"];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 2, options);
+
+    expect(current.getSuggestions).not.toHaveBeenCalled();
+    expect(result).not.toBe(STOCK_SENTINEL);
+    expect(result?.items.map((i) => i.value)).toContain("renewable");
+    expect(inner.__hapaxLive()).not.toBeNull();
+  });
+});

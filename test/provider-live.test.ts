@@ -420,3 +420,44 @@ describe("forced single-item returns (PRD §07 h3.8)", () => {
     expect(result!.prefix).toBe("b"); // the raw typed fragment
   });
 });
+describe("armed chain + stock context (BUG-001)", () => {
+  /** Arm "alpha" via the ONLY production path — a live menu + Tab
+   *  acceptance (same recipe as the forced-single-item suite). */
+  const armAlpha = async (
+    store: CandidateStore,
+    provider: ReturnType<typeof createHapaxProvider>,
+  ): Promise<void> => {
+    put(store, "alpha", 3, 5);
+    const menu = await provider.getSuggestions(["alpha"], 0, 5, opts());
+    expect(menu!.items.map((i) => i.value)).toContain("alpha");
+    provider.applyCompletion(
+      ["alpha"],
+      0,
+      5,
+      { value: "alpha", label: "alpha" },
+      "alpha",
+    );
+  };
+
+  it("'/re' while a chain is armed delegates to current (stock gate precedes the armed branch)", async () => {
+    const sentinel = {
+      items: [{ value: "/resume", label: "/resume", description: "stock" }],
+      prefix: "/re",
+    };
+    const current = mockCurrent({ getSuggestions: vi.fn(async () => sentinel) });
+    const store = new CandidateStore();
+    const provider = createHapaxProvider(store, cfg(), current);
+    await armAlpha(store, provider); // chain now armed on "alpha"
+
+    const lines = ["/re"];
+    const options = opts();
+    const result = await provider.getSuggestions(lines, 0, 3, options);
+
+    expect(result).toBe(sentinel); // stock context wins over the armed branch
+    expect(current.getSuggestions).toHaveBeenCalledOnce();
+    expect(current.getSuggestions.mock.calls[0][0]).toBe(lines); // same array
+    expect(current.getSuggestions.mock.calls[0][3]).toBe(options); // same object
+    // Deliberately NOT asserting chain reset here — P1.M1.T2 owns the
+    // armed-state-after-stock-delegation rules; this pins delegation only.
+  });
+});
