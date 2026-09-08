@@ -178,7 +178,7 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Completion UI — zero-char chaining + Tab-only-completes (R4, R3)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Redesign the chain machine to offer the top successor at zero typed chars with threshold 0 and bare one-word values, then add the forced single-item branch so a Tab keypress with a live set completes instead of opening the menu.",
           "tasks": [
             {
@@ -234,7 +234,7 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "Forced single-item Tab completion — Tab only ever completes (R3)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "When options.force is true and a hapax fragment is live, getSuggestions returns exactly one item (the live top / chain successor) so pi-tui's single-item fast path applies it in the same keypress; forced returns bypass the 100 ms display debounce; non-hapax contexts delegate with options untouched.",
               "subtasks": [
                 {
@@ -261,7 +261,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S2",
                   "title": "createDisplayProvider: forced results bypass the 100 ms display debounce",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T2.S1"
@@ -290,14 +290,14 @@
               "type": "Task",
               "id": "P1.M3.T1",
               "title": "Config enableChaining + deprecated enablePhrases alias (R5)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Primary key enableChaining (default true) gates the successor-index chain layer only; the alias maps onto it with per-layer precedence; validation/repair/notify shape unchanged.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T1.S1",
                   "title": "config.ts: primary key, alias mapping, precedence, config.test.ts rewrite",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/002_3e8a42cadf2c/architecture/pi_layer_map.md §2 — HapaxConfig interface (src/pi/config.ts 36–45), DEFAULT_CONFIG (47–53), applyLayer per-key blocks (153–224; the enablePhrases block sits at 197–208); notify is per-field-per-layer via the injected notify callback (index.ts maps it to ctx.ui.notify) — reuse that mechanism for the deprecation warning.\n2. INPUT: none — leaf module (file IO + injected notify only).\n3. LOGIC: Implement PRD §08 (h2.45/h2.46): add enableChaining: boolean, default true, gating the successor-index chain layer ONLY (word completion unaffected either way). Accept enablePhrases as a DEPRECATED alias: resolve per-layer inside applyLayer (read the alias first, then let enableChaining override when present, so enableChaining wins when both keys appear — in the same layer or across layers, since later layers already override earlier ones). Validation unchanged: coerce boolean, repair invalid values to defaults with one notify per field. Optional one-time deprecation notify when only the alias key is present, via the existing repair-notify shape. Rewrite the boolean-field cases in test/config.test.ts: primary key parsed; alias mapped; both-present precedence (enableChaining wins); alias-only deprecation path; defaults fresh-copy semantics.\n4. OUTPUT: HapaxConfig.enableChaining consumed by P1.M3.T1.S2 gate reads.\n5. DOCS: Mode A — update the README.md Configuration table row in THIS subtask (enableChaining, boolean, default true, 'gates chained completion only; deprecated enablePhrases alias accepted'), per PRD R5 which explicitly rides this here rather than in R6.",
@@ -313,7 +313,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T1.S2",
                   "title": "Re-point gate reads; enableChaining-inertness suite (ex phrase-gating)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T1.S1",

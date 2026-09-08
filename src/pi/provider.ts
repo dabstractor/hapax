@@ -528,6 +528,18 @@ export interface DisplayProviderOptions {
  *   1. base.getSuggestions runs on EVERY call, before any suppression
  *      decision — the inner provider and its live cache are never gated,
  *      so Tab (which resolves against __hapaxLive) stays instant (rule 1).
+ *   1.5. Forced requests (options.force === true — pi-tui's Tab path,
+ *      editor.js forwards {signal, force} down the chain) return the
+ *      base result UNTOUCHED, immediately after rule 1's base call and
+ *      BEFORE any classification: no __hapaxLive() consult, no
+ *      suppression window, no paint, no reset, no pending bookkeeping
+ *      (PRD §07 h3.8 — forced requests are undelayed by design; the base
+ *      layer already narrowed forced hapax returns to the single live
+ *      top item, P1.M2.T2.S1, so classifying here would swallow the
+ *      single-item result into the debounce machine and re-serve a
+ *      stale multi-item set). Forced calls are invisible to the
+ *      scheduler: displayed/pending state and timers are left exactly
+ *      as the surrounding non-forced keystrokes left them.
  *   2. The result is a HAPAX result iff __hapaxLive() is non-null AND the
  *      inner result carries the live prefix. The prefix check is not
  *      paranoia: S2 does NOT clear its live cache on the null-match-state
@@ -668,6 +680,22 @@ export function createDisplayProvider(
       // 1. ALWAYS query the inner provider first — it (and Tab's live
       // cache) is never gated by the display layer.
       const result = await base.getSuggestions(lines, cursorLine, cursorCol, options);
+
+      // 1.5. Forced requests (pi-tui Tab path, editor.js ~1892 forwards
+      // {signal, force}) are undelayed BY DESIGN (PRD §07 h3.8): return
+      // the base result untouched — no classification, no suppression
+      // window, no pending swap scheduling. The base layer already
+      // narrowed forced hapax returns to the single live top item
+      // (P1.M2.T2.S1); re-serving a displayed/pending set here would
+      // resurrect the stale multi-item set pi-tui's single-item fast
+      // path is meant to consume. Forced calls do NOT touch scheduler
+      // state: displayed* stays as-is and any pending swap stays
+      // scheduled for the next NON-forced query (supersede semantics
+      // unchanged). Strict === true — force is optional and foreign
+      // callers may pass truthy non-booleans that must not fire the
+      // branch.
+      if (options.force === true) return result;
+
       const live = base.__hapaxLive();
 
       // 2–3. Close / delegate / defensively-empty: classify AFTER the inner

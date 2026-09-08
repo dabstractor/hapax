@@ -97,6 +97,14 @@ const reproStore = (): CandidateStore => {
 /** Fresh { signal } per call. */
 const opts = (): { signal: AbortSignal } => ({ signal: new AbortController().signal });
 
+/** Fresh { signal, force: true } per call — pi-tui's Tab-path options
+ *  shape (editor.js forwards {signal, force} to providers). Strictly
+ *  additive: existing opts() call sites are untouched. */
+const forcedOpts = (): { signal: AbortSignal; force: true } => ({
+  signal: new AbortController().signal,
+  force: true,
+});
+
 type MockedCurrent = AutocompleteProvider & {
   getSuggestions: Mock;
   applyCompletion: Mock;
@@ -520,5 +528,156 @@ describe("prefix-anchor invalidation (BUG-002)", () => {
     const landed = await type(wrapper, "ze");
     expect(landed!.items.map((i) => i.value)).toEqual(["Zendesk", "Zesty", "zephyr"]);
     expect(landed!.prefix).toBe("ze");
+  });
+});
+
+describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
+  /** Forced wrapper query typing `line` verbatim — pi-tui's Tab path
+   *  ({signal, force: true}). Returns the raw pi response for shape and
+   *  identity assertions. */
+  const forcedQuery = (
+    wrapper: ReturnType<typeof createDisplayProvider>,
+    line: string,
+  ): Promise<AutocompleteSuggestions | null> =>
+    wrapper.getSuggestions([line], 0, line.length, forcedOpts());
+
+  /** Forced variant of the harness emit(): types the query with pi-tui's
+   *  Tab options and logs the emission exactly like emit() does (same
+   *  "<delegate>" collapse for null/empty results). */
+  const forcedEmit = async (
+    h: ReturnType<typeof harness>,
+    fragment: string,
+  ): Promise<Emission> => {
+    const line = "#" + fragment;
+    const result = await h.wrapper.getSuggestions([line], 0, line.length, forcedOpts());
+    const e: Emission =
+      !result || result.items.length === 0
+        ? "<delegate>"
+        : result.items.map((i) => i.value);
+    h.emissions.push(e);
+    return e;
+  };
+
+  it("forced mid-window → the base live result itself (single item), not the displayed set", async () => {
+    const { store, wrapper, emissions, emit } = harness();
+
+    await emit("ze"); // t=0 → ZE painted (3 items)
+    vi.advanceTimersByTime(30);
+    // Ingest changes membership mid-window: a NON-forced identical-prefix
+    // query would now be suppressed (re-served ZE with its old anchor).
+    put(store, "zesty", 2, 9, { display: "Zesty" });
+
+    const forced = await forcedQuery(wrapper, "#ze");
+
+    // Untouched base result — S1's forced contract narrows the hapax set
+    // to the single live top item for the CURRENT store: never the
+    // displayed 3-item ZE set, never a pending set.
+    expect(forced).not.toBeNull();
+    expect(forced!.items).toHaveLength(1);
+    expect(forced!.items[0]!.value).toBe("Zendesk"); // live top (9.35)
+    expect(forced!.prefix).toBe("#ze"); // prefix unchanged under force
+    expect(emissions).toEqual([ZE]); // the forced query logged nothing extra
+  });
+
+  it("forced delegate result passes through by identity; the scheduler is not reset", async () => {
+    const sentinel = {
+      items: [{ value: "src/index.ts", label: "src/index.ts" }],
+      prefix: "/",
+    };
+    const { base, store, wrapper, emit } = harness();
+
+    await emit("ze"); // t=0 → ZE painted
+    vi.advanceTimersByTime(50);
+    put(store, "zesty", 2, 9, { display: "Zesty" });
+    await emit("ze"); // suppressed → pending armed, displayed stays ZE
+    expect(vi.getTimerCount()).toBe(1);
+
+    vi.spyOn(base, "getSuggestions").mockResolvedValueOnce(sentinel);
+    const forced = await forcedQuery(wrapper, "/s");
+
+    expect(forced).toBe(sentinel); // identity pass-through — no classification
+    // No reset happened: the armed swap timer survives the forced call.
+    expect(vi.getTimerCount()).toBe(1);
+
+    // The following non-forced query still sees the untouched scheduler:
+    // identical prefix "#ze", still inside the window → re-serves the
+    // DISPLAYED set, not a fresh post-reset paint of the 4-item store.
+    vi.advanceTimersByTime(20); // t=70 < 0+100
+    expect(await emit("ze")).toEqual(ZE);
+  });
+
+  it("a pending scheduled swap neither leaks into the forced result nor breaks promotion", async () => {
+    const { store, wrapper, emit } = harness();
+
+    await emit("ze"); // t=0 → ZE painted
+    vi.advanceTimersByTime(50);
+    put(store, "zesty", 2, 9, { display: "Zesty" });
+    await emit("ze"); // suppressed → pending=[Ze,ZeA,Zesty,zephyr], swap armed
+    expect(vi.getTimerCount()).toBe(1);
+
+    // Forced reads nothing from pending*/displayed*: one live item, not
+    // the 3-item displayed set and not the 4-item pending set.
+    const forced = await forcedQuery(wrapper, "#ze");
+    expect(forced!.items).toHaveLength(1);
+    expect(forced!.items[0]!.value).toBe("Zendesk");
+
+    // The swap timer was untouched by the forced call and still fires.
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(100); // t=150 ≥ 50+100 → promotes pending
+    expect(vi.getTimerCount()).toBe(0);
+
+    // The next NON-forced query observes the promoted 4-item set —
+    // supersede/promote semantics unchanged by the forced interlude.
+    expect(await emit("ze")).toEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]);
+  });
+
+  it("forced calls never paint — the window composes on the ORIGINAL paint timestamp", async () => {
+    const { store, wrapper, emit } = harness();
+
+    await emit("ze"); // t=0 → ZE painted, lastPaintAt=0
+    vi.advanceTimersByTime(100);
+    await forcedQuery(wrapper, "#ze"); // bypass — must NOT advance lastPaintAt
+
+    // t=100, fresh identical-prefix set change. Against the ORIGINAL
+    // timestamp (t=0) the window has elapsed → immediate paint of the new
+    // set. Had the forced call painted, lastPaintAt would be 100 and this
+    // query would be suppressed (re-serving 3-item ZE instead).
+    put(store, "zesty", 2, 9, { display: "Zesty" });
+    expect(await emit("ze")).toEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]);
+    expect(vi.getTimerCount()).toBe(0); // immediate paint — no swap left armed
+  });
+
+  it("forced zero-candidate query → pass-through delegate emission, scheduler untouched", async () => {
+    const h = harness();
+
+    await h.emit("ze"); // t=0 → ZE painted
+    vi.advanceTimersByTime(50);
+    put(h.store, "zesty", 2, 9, { display: "Zesty" });
+    await h.emit("ze"); // suppressed → swap armed for the earlier keystroke
+    expect(vi.getTimerCount()).toBe(1);
+
+    // Forced "#zzz": the base clears its live cache and delegates (S1);
+    // the wrapper passes the delegate through WITHOUT reset — the armed
+    // swap stays scheduled for the next non-forced query.
+    expect(await forcedEmit(h, "zzz")).toEqual("<delegate>");
+    expect(vi.getTimerCount()).toBe(1);
+
+    vi.advanceTimersByTime(100); // t=150: pending promotes as usual
+    expect(await h.emit("ze")).toEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]);
+  });
+
+  it("non-forced regression pin: the same mid-window sequence still suppresses", async () => {
+    const { store, emissions, emit } = harness();
+
+    await emit("ze"); // t=0 → ZE painted
+    vi.advanceTimersByTime(30);
+    put(store, "zesty", 2, 9, { display: "Zesty" });
+
+    // Identical shape to the forced case above, but WITHOUT force:
+    // suppression holds — the displayed set is re-served, the fresh set
+    // is parked as pending.
+    expect(await emit("ze")).toEqual(ZE);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(emissions).toEqual([ZE, ZE]);
   });
 });
