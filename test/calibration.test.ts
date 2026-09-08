@@ -122,6 +122,9 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
           await real(text, fromUser);
           if (++done === total) resolve();
         },
+        // BUG-006 (P1.M3.T2.S1) widened the Pick; the tail sweep is out
+        // of scope here — no-op keeps this replay behavior identical.
+        sweepPhrases: () => {},
       },
       asSessionManager(entries) as unknown as RestoreSessionManager,
     );

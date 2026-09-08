@@ -19,6 +19,7 @@ import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { rankMatches } from "../src/core/query.js";
 import { CandidateStore } from "../src/core/store.js";
+import type { Dictionary } from "../src/core/types.js";
 import {
   IngestPipeline,
   restoreFromHistory,
@@ -152,8 +153,9 @@ const fakeSm = (opts: FakeSmOptions = {}) => ({
   }),
 });
 
-/** Pipeline double satisfying Pick<IngestPipeline, "processText"> that
- *  records (text, fromUser) in exact call order. */
+/** Pipeline double satisfying Pick<IngestPipeline, "processText" |
+ *  "sweepPhrases"> (BUG-006) that records (text, fromUser) in exact call
+ *  order plus every tail-sweep call. */
 const fakePipeline = () => {
   const calls: { text: string; fromUser: boolean }[] = [];
   return {
@@ -161,6 +163,7 @@ const fakePipeline = () => {
     processText: vi.fn(async (text: string, fromUser: boolean) => {
       calls.push({ text, fromUser });
     }),
+    sweepPhrases: vi.fn(),
   };
 };
 
@@ -323,7 +326,7 @@ describe("restoreFromHistory — PRD §05 h2.31/h2.33", () => {
         if (calls.length === 0) await gate;
         calls.push(text);
       });
-      const result = restoreFromHistory({ processText }, sm);
+      const result = restoreFromHistory({ processText, sweepPhrases: () => {} }, sm);
       expect(result).toBeUndefined(); // void — never a promise
       expect(calls).toEqual([]); // first message still in flight
       release();
@@ -343,7 +346,7 @@ describe("restoreFromHistory — PRD §05 h2.31/h2.33", () => {
           if (n === 2) throw new Error("boom mid-replay"); // e2 fails
           seen.push(text);
         });
-        restoreFromHistory({ processText }, sm);
+        restoreFromHistory({ processText, sweepPhrases: () => {} }, sm);
         await settle(() => expect(n).toBe(3)); // e3 was still attempted
         expect(seen).toEqual(["alpha", "gamma"]); // per-entry catch continued
         // let any stray rejection surface on the macrotask queue
@@ -368,13 +371,18 @@ describe("restoreFromHistory — dictionary-failure abort (BUG-004)", () => {
       calls.push({ text, fromUser });
       disabled = true; // "dictionary died" after the first message
     });
-    restoreFromHistory({ processText }, sm, () => disabled);
+    const sweepPhrases = vi.fn();
+    restoreFromHistory({ processText, sweepPhrases }, sm, () => disabled);
     await settle(() => expect(calls).toHaveLength(1));
     // Drain the macrotask queue: the replay must have RETURNED at the top
     // of entry 2 — a `continue` here would keep scanning and replaying.
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(calls.map((c) => c.text)).toEqual(["alpha"]);
+    // BUG-006 work-item contract: an ABORTED replay must never sweep —
+    // the store was never fully populated, so the "40 subsequent
+    // ordinals" of the partial history never accrued.
+    expect(sweepPhrases).not.toHaveBeenCalled();
   });
 
   it("predicate true before the first entry → zero processText calls", async () => {
@@ -481,5 +489,190 @@ describe("restoreFromHistory — dictionary-failure abort (BUG-004)", () => {
     expect(store.get("this")).toBeUndefined();
     expect(store.get("another")).toBeUndefined();
     expect(store.get("here")).toBeUndefined();
+  });
+});
+// ── Demotion tail sweep (BUG-006, P1.M3.T2.S1) ──────────────────────────────
+
+/** All-rare dictionary: every lookup is null → every admitted word is
+ *  rankGroup 0 (dictionary-absent) → all-rare n-grams pass the fast path
+ *  (PRD §06 h3.7). Self-contained; deliberately NOT the pipeline suite's
+ *  stubDict (its COMMON/MIDFREQ words would block the fast path). */
+const rareDict = (): Dictionary => ({
+  lookup: () => null,
+  version: 1,
+  entryCount: 0,
+});
+
+/** Production-shaped harness (mirrors test/perf-gates.test.ts gate e):
+ *  real pipeline + real store with onAdmittedTokens/onSweepPhrases wired
+ *  to the store exactly like src/pi/index.ts's session_start. The sweeps
+ *  counter makes the tail sweep an observable completion probe. */
+const makePhrasePipeline = () => {
+  const store = new CandidateStore();
+  let sweeps = 0;
+  const pipeline = new IngestPipeline({
+    store,
+    dictionary: rareDict(),
+    yieldFn: async () => {},
+    onAdmittedTokens: (lines) =>
+      store.recordPhraseLines(lines, store.currentOrdinal()),
+    onSweepPhrases: () => {
+      sweeps++;
+      store.sweepPhraseDemotions();
+    },
+  });
+  return { pipeline, store, sweeps: () => sweeps };
+};
+
+const FILLER = "filler zephyr quartz vortex";
+// Control phrase rides two of the filler messages: first sight fast-path
+// admits it, second sight reaches count ≥ 2 → sticky → NEVER demoted.
+const CONTROL = "darla voss zephyr quartz vortex";
+
+describe("restoreFromHistory — demotion tail sweep (BUG-006, P1.M3.T2.S1)", () => {
+  it("runs exactly one sweepPhrases at the tail of a completed replay", async () => {
+    const sm = fakeSm({ branch: [e3, e2, e1] });
+    const pipe = fakePipeline();
+    restoreFromHistory(pipe, sm);
+    await settle(() => expect(pipe.calls).toHaveLength(3));
+    expect(pipe.sweepPhrases).toHaveBeenCalledTimes(1); // once per replay
+  });
+
+  it("aborted replay (predicate true up front) skips the tail sweep", async () => {
+    const sm = fakeSm({ branch: [e3, e2, e1] });
+    const pipe = fakePipeline();
+    restoreFromHistory(pipe, sm, () => true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(pipe.processText).not.toHaveBeenCalled();
+    expect(pipe.sweepPhrases).not.toHaveBeenCalled();
+  });
+
+  it("empty history completes normally → exactly one (no-op) tail sweep", async () => {
+    // Documented semantics: empty history "completes normally", so the
+    // tail sweep runs — a harmless no-op on an empty store (see
+    // restoreFromHistory's JSDoc demotion-tail paragraph).
+    const sm = fakeSm({ branch: [], entries: [] });
+    const pipe = fakePipeline();
+    restoreFromHistory(pipe, sm);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(pipe.processText).not.toHaveBeenCalled();
+    expect(pipe.sweepPhrases).toHaveBeenCalledTimes(1);
+  });
+
+  it("a throwing sweep hook never surfaces as an unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const store = new CandidateStore();
+      const pipeline = new IngestPipeline({
+        store,
+        dictionary: rareDict(),
+        yieldFn: async () => {},
+        onSweepPhrases: () => {
+          throw new Error("sweep boom");
+        },
+      });
+      const sm = fakeSm({
+        branch: [msgEntry("m1", null, userMsg("zephyr quartz"))],
+      });
+      restoreFromHistory(pipeline, sm);
+      // The replay itself completed (the hook only throws at the tail)…
+      await settle(() => expect(store.size).toBeGreaterThan(0));
+      // …and the tail sweep's swallowed throw never escaped the
+      // fire-and-forget IIFE (vitest fails this test on unhandled
+      // rejections; the macrotask drains let any stray one surface).
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+});
+
+describe("BUG-006 — demotion cadence after restore replay (PRD §06 h3.7 repro)", () => {
+  /** PRD repro step 1: the LIVE path admits "zorblat quuxified mumblewords"
+   *  — all three words are rare (null lookups) → both bigrams (and the
+   *  trigram) fast-path admit as candidates at store ordinal 1. */
+  const admitZorblatPhrases = async (
+    h: ReturnType<typeof makePhrasePipeline>,
+  ): Promise<void> => {
+    h.pipeline.onMessageEnd(userMsg("zorblat quuxified mumblewords"));
+    await h.pipeline.flush(); // live path: drain → once-per-flush sweep
+    // (that sweep is a no-op here: ordinal 1 − firstSeen 1 = 0 < 40)
+    const keys = h.store.phraseCandidateKeys();
+    expect(keys).toContain("zorblat quuxified");
+    expect(keys).toContain("quuxified mumblewords");
+    expect(h.store.isFastPathPhrase("zorblat quuxified")).toBe(true);
+    expect(h.store.isFastPathPhrase("quuxified mumblewords")).toBe(true);
+  };
+
+  it("PRD repro: 45 direct processText calls leave the phrases stale; public sweepPhrases() demotes them", async () => {
+    const h = makePhrasePipeline();
+    await admitZorblatPhrases(h);
+
+    // Steps 2–3: restore-style DIRECT processText calls — no queue, no
+    // drain, no once-per-flush sweep. 45 messages = ordinals 2..46; the
+    // control phrase repeats in two of them (count ≥ 2 → confirmed).
+    for (let i = 1; i <= 45; i++) {
+      await h.pipeline.processText(
+        i === 5 || i === 6 ? CONTROL : FILLER,
+        true,
+      );
+    }
+
+    // The bug's precondition, verbatim: WITHOUT a sweep the stale
+    // candidates survive 45 subsequent ordinals (46 − 1 = 45 ≥ 40 by now).
+    expect(h.store.isFastPathPhrase("zorblat quuxified")).toBe(true);
+    expect(h.store.phraseCandidateKeys()).toContain("zorblat quuxified");
+    expect(h.store.phraseCandidateKeys()).toContain("quuxified mumblewords");
+
+    // Step 4: the fix's public seam, invoked exactly as the restore tail.
+    h.pipeline.sweepPhrases();
+
+    // Step 5: demoted — candidacy + fast-path provenance gone for the
+    // one-shot phrases (counts/ordinals kept for later re-promotion).
+    const keys = h.store.phraseCandidateKeys();
+    expect(keys).not.toContain("zorblat quuxified");
+    expect(keys).not.toContain("quuxified mumblewords");
+    expect(keys).not.toContain("zorblat quuxified mumblewords"); // trigram too
+    expect(h.store.isFastPathPhrase("zorblat quuxified")).toBe(false);
+    expect(h.store.getPhrase("zorblat quuxified")).toBeDefined(); // count kept
+    // Control: the repetition-confirmed (count ≥ 2, sticky) phrase survives.
+    expect(keys).toContain("darla voss");
+    expect(h.store.getPhrase("darla voss")!.count).toBe(2);
+  });
+
+  it("end to end: restoreFromHistory's own tail sweep demotes stale phrases after a 45-message replay", async () => {
+    const h = makePhrasePipeline();
+    await admitZorblatPhrases(h);
+
+    // The 45 filler messages replayed by the REAL restore path — each is
+    // one awaited processText (ordinals 2..46), the control phrase rides
+    // entries 5 and 6, and the TAIL sweep fires once after the loop.
+    const fillers: SessionEntry[] = [];
+    for (let i = 1; i <= 45; i++) {
+      fillers.push(
+        msgEntry(
+          `f${i}`,
+          i === 1 ? null : `f${i - 1}`,
+          userMsg(i === 5 || i === 6 ? CONTROL : FILLER),
+        ),
+      );
+    }
+    const sm = fakeSm({ branch: [], entries: fillers }); // oldest → newest
+    restoreFromHistory(h.pipeline, sm);
+
+    // Deterministic completion probe: the tail sweep is the LAST thing
+    // the replay does, and the live flush above already spent sweep #1.
+    await settle(() => expect(h.sweeps()).toBe(2));
+    expect(h.store.currentOrdinal()).toBe(46); // 1 + 45 replayed messages
+
+    const keys = h.store.phraseCandidateKeys();
+    expect(keys).not.toContain("zorblat quuxified");
+    expect(keys).not.toContain("quuxified mumblewords");
+    expect(h.store.isFastPathPhrase("zorblat quuxified")).toBe(false);
+    expect(keys).toContain("darla voss"); // count ≥ 2 control survives
   });
 });

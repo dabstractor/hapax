@@ -96,6 +96,9 @@ async function ingestFixture(path: string): Promise<{ store: CandidateStore; pip
         await real(text, fromUser);
         if (++done === total) resolve();
       },
+      // BUG-006 (P1.M3.T2.S1) widened the Pick; the tail sweep is out of
+      // scope for these journeys — no-op keeps replay behavior identical.
+      sweepPhrases: () => {},
     },
     asSessionManager(entries) as unknown as RestoreSessionManager,
   );
@@ -535,6 +538,8 @@ async function replayEntries(
         await real(text, fromUser);
         if (++done === total) resolve();
       },
+      // BUG-006 (P1.M3.T2.S1): no-op sweep — see ingestFixture.
+      sweepPhrases: () => {},
     },
     asSessionManager(entries) as unknown as RestoreSessionManager,
   );
@@ -605,6 +610,8 @@ async function replayNrel(
         await real(text, fromUser);
         if (++done === total) resolve();
       },
+      // BUG-006 (P1.M3.T2.S1): no-op sweep — see ingestFixture.
+      sweepPhrases: () => {},
     },
     asSessionManager(entries) as unknown as RestoreSessionManager,
   );

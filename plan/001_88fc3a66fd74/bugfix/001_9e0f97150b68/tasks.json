@@ -166,7 +166,7 @@
           "type": "Milestone",
           "id": "P1.M3",
           "title": "Restore-path contracts (BUG-004, BUG-006)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Honor the disable-on-bad-dictionary contract during session restore replay and run the 40-ordinal phrase demotion sweep at restore completion.",
           "tasks": [
             {
@@ -215,14 +215,14 @@
               "type": "Task",
               "id": "P1.M3.T2",
               "title": "Phrase demotion sweep after restore replay",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Run sweepPhraseDemotions once when the restore replay completes so stale fast-path phrases from ancient history do not survive resume as completion candidates.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T2.S1",
                   "title": "Public sweepPhrases() on IngestPipeline called at restore tail",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M3.T1.S2"
@@ -250,14 +250,14 @@
               "type": "Task",
               "id": "P1.M4.T1",
               "title": "Never re-serve a stale prefix from the display provider",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Add a prefix-change-invalidates-the-anchor exception mirroring the existing completionSincePaint fix, so pi-tui's applyCompletion can never replace the wrong span during a suppression window.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M4.T1.S1",
                   "title": "Prefix-anchor invalidation in createDisplayProvider + faithful editor-sim regression",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See system_context.md BUG-002 and external_deps.md §4. Rule 4d (src/pi/provider.ts:674-682) returns copyOf(displayedItems) with the STALE displayedPrefix while the buffer holds more characters. pi-tui stores suggestions.prefix from every rendered response (editor.js:1925-26) and Tab (editor.js:540-551; also single-item force-apply 1903-1912) calls applyCompletion which deletes exactly prefix.length chars before the cursor verbatim (autocomplete.js:265-267: slice(0, cursorCol - prefix.length)) with NO re-verification at Tab time. The 4c-exception (completionSincePaint, provider.ts:659-673, flag at 556/590, set in applyCompletion wrapper 690) is the established pattern for exactly this hazard class. isHapax classification (step 2-3, provider.ts:634-642) already guarantees result.prefix === live.prefix computed from the CURRENT buffer, so any freshly painted result is anchor-safe.\n2. INPUT: None from other subtasks — self-contained within createDisplayProvider (provider.ts:626-695).\n3. LOGIC: Insert a new exception branch BEFORE rule 4d (mirroring 4c's structure and comment style): if result.prefix !== displayedPrefix, paint(items, result.prefix) immediately and return the fresh set — suppression may only re-serve a displayed set whose prefix still suffix-matches the current buffer. Identical-prefix narrowing (set changes, prefix unchanged) keeps the existing suppression behavior (no flicker regression). State the hard invariant in a comment: the provider never returns a prefix that is not the exact suffix of the current line at the cursor. Build a NEW faithful applyCompletion test helper (existing provider-display.test.ts mocks do NOT model deletion): mirror autocomplete.js slice semantics — `before = line.slice(0, col - prefix.length); after = line.slice(col); return before + item.value + after`. Regression test = the PRD repro: store with zendesk+zephyr; type 'z' (delegate), 'e' → paints {zendesk,zephyr}@'ze'; type 'p' within 100ms (fake timers per existing harness) → provider must NOT return prefix 'ze'; Tab-apply must yield 'zephyr'-family text, never 'zzendesk'. Also cover Tab after a pause (no new keystroke) following the suppressed one. Mock: base provider mock as in test/provider-display.test.ts:78-90 but extended with the faithful deletion math.\n4. OUTPUT: createDisplayProvider incapable of returning a stale prefix; the editor-sim helper exported from the test for reuse by P1.M5.T1.S1 probes.\n5. DOCS: [Mode A] Comment block on the new exception mirroring the 4c-exception's documentation (why stale anchors destroy text). No user-facing/config/API surface change.",
@@ -282,7 +282,7 @@
                   "type": "Subtask",
                   "id": "P1.M4.T2.S1",
                   "title": "Successor-aware constituent-suppression exemption in rankMatches",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See system_context.md BUG-005. phraseSalience (src/core/query.ts:112: 1.2·Σ constituents + 2.0·log2(1+count) when count>=2, PHRASE_MULTIPLIER=1.2 at L83) mathematically always exceeds the first word's own salience, and phraseSuppresses (L133: phraseSal >= wordSal, tie→phrase) therefore ALWAYS removes the bare word from every menu once a phrase starting with it exists (suppression loop query.ts ~L222-232). Store API store.topSuccessors(word) (store.ts:856, O(1), frozen NO_SUCCESSORS on miss) is the ready-made has-successors predicate. CRITICAL: test/acceptance.test.ts:606-610 currently PINS the bug (`expect(menu.map(m=>m.description)).toEqual(['phrase','phrase'])` after nrel.jsonl replay) and the fixture-phase comment at L498-514 works around it — both must be updated to the fixed behavior, and test/chain.test.ts L17-22 documents the same 'seeding order gotcha'.\n2. INPUT: None from other subtasks — self-contained in src/core/query.ts rankMatches.\n3. LOGIC: In the constituent-suppression loop, skip removing the bare first word when store.topSuccessors(firstWord).length > 0 (the word can arm the chain, so it must stay acceptable; it co-presents BELOW the phrase since salience sorts it after). Words without successors keep today's suppression (spec §06 behavior preserved where it is harmless). With enablePhrases=false the successor index is empty → behavior identical to today. Unit tests: full NREL-style replay (or test/fixtures/sessions/nrel.jsonl) then rankMatches(store,'natio') MUST contain the bare 'national' word item alongside phrase items; 'na' probe likewise; words without successors still suppressed; compareRankedMatches ordering unchanged (phrase first). Update acceptance.test.ts item 7 and chain.test.ts gotcha comment to the new invariant. Mock nothing — real store + pipeline per existing test/chain.test.ts harness.\n4. OUTPUT: rankMatches behavior where successor-bearing bare words survive suppression, for consumption by P1.M4.T2.S2 (arming) and P1.M5.T1.S1 (chain post-restore probe).\n5. DOCS: [Mode A] Update the suppression-loop comment in query.ts and the spec-referencing comments in the tests. No config surface change.",
