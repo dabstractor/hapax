@@ -66,6 +66,10 @@
   (≤ maxWaitMs); settled gate is pure pass-through; a rejected replay
   promise never wedges it; restoreFromHistory's onSettled fires
   exactly once (finish, abort, empty).
+- Chain one-shot grant (test/chain.test.ts): typing through the granted
+  offer disarms at the next word boundary (normal gated path answers);
+  same-word narrowing (incl. backspace) keeps the chain; acceptance
+  re-arms with a fresh grant.
 - Zero candidates → delegate/empty, never a menu.
 - Debounce: two rapid set updates → only one swap at +100 ms; Tab mid-debounce
   resolves the live (undebounced) top item.

@@ -252,6 +252,15 @@ armed(W):
     top-3, ranked by count). No trigger char, no threshold, no typed
     fragment needed — the successor IS the top result before the user
     types anything. This is the entire meaning of "phrase completion".
+  - ONE-SHOT GRANT (2026-09): the immediate offer is granted for exactly
+    ONE word per acceptance. Typing through that offer without accepting
+    disarms at the next word boundary — the normal path (under the
+    hesitation gate) answers from there. Rationale: chain results carry
+    the display layer's intent bypass, so an indefinitely-armed chain
+    popped immediate menus at EVERY word start for the rest of the
+    message after a single Tab (live-reproduced; fixed same day).
+    Acceptance re-arms with a fresh grant: Tab→offer→Tab→offer flows
+    exactly as before.
   - typed chars filter the live successor list (prefix,
     case-insensitive, as usual); threshold stays 0 for the duration of
     the chain

@@ -265,6 +265,11 @@ export function createHapaxProvider(
   // each keystroke is answered fresh from the store.
   let lastLive: LiveResult | null = null;
   const liveKeyByValue = new Map<string, string>(); // item.value → RankedMatch.key
+  // One-shot chain tracker (2026-09): words answered per arming + the
+  // last answered armed prefix (word-boundary detection). Reset on
+  // every acceptance (applyCompletion below).
+  let chainWordsSeen = 0;
+  let chainLastArmedPrefix: string | null = null;
 
   // Identifier trigger chars: pi-tui only auto-requests suggestions
   // on plain-letter keystrokes when the char is a registered trigger
@@ -363,6 +368,61 @@ export function createHapaxProvider(
       const armed = chain.state();
       if (armed && config.enableChaining) {
         const before = lines[cursorLine]?.slice(0, cursorCol) ?? "";
+
+        // ONE-SHOT CHAIN OFFERS (2026-09 fix, "menus show immediately
+        // forever after one acceptance"): an acceptance grants exactly
+        // ONE immediate successor offer — the next word. If the user
+        // types through that offer without accepting, the chain
+        // DISARMS at the next word boundary; the normal gated path
+        // answers from there. Without this, the armed chain re-offered
+        // at EVERY word start for the rest of the message, and chain
+        // results carry the display layer's intent bypass — menus
+        // popped immediately at full speed indefinitely after a single
+        // Tab (live-reproduced and instrumented). Word detection: a NEW
+        // word is an armed-branch query whose prefix neither extends
+        // nor is-extended-by the previously answered one (same-word
+        // narrowing, including backspace, keeps the chain). Acceptance
+        // re-arms (applyCompletion → chain.arm) and resets the tracker,
+        // so chained acceptance flows Tab→offer→Tab→offer exactly as
+        // before.
+        const curArmedPrefix =
+          before === "" || /[ \t]$/.test(before)
+            ? ""
+            : (before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0] ?? null);
+        if (curArmedPrefix !== null) {
+          // Word-boundary detection, empty-prefix asymmetry and all:
+          //   - first armed answer of this arming → the GRANTED word
+          //     (counts as word 1)
+          //   - "" → non-empty = typing INTO the granted offer (same word)
+          //   - non-empty → "" = moved past a typed-through word (new word)
+          //   - two non-empties with no prefix relation = different words;
+          //     mutual prefix relation (incl. backspace) = same word
+          const isNewWord =
+            chainLastArmedPrefix === null
+              ? false
+              : curArmedPrefix === "" && chainLastArmedPrefix !== ""
+                ? true
+                : curArmedPrefix !== "" &&
+                    chainLastArmedPrefix !== "" &&
+                    !curArmedPrefix.startsWith(chainLastArmedPrefix) &&
+                    !chainLastArmedPrefix.startsWith(curArmedPrefix);
+          if (chainLastArmedPrefix === null) {
+            chainWordsSeen = 1; // the granted offer's word
+          } else if (isNewWord) {
+            chainWordsSeen += 1;
+          }
+          if (chainWordsSeen >= 2) {
+            // Typed through the granted offer without accepting → idle.
+            // Fall through: the normal path (under the hesitation gate)
+            // answers this SAME keystroke.
+            chain.reset();
+            chainWordsSeen = 0;
+            chainLastArmedPrefix = null;
+          } else {
+            chainLastArmedPrefix = curArmedPrefix;
+          }
+        }
+        if (chain.state() !== null) {
 
         // Publish an armed successor set through the SAME lastLive seam
         // as the normal path so S3's classification (result.prefix ===
@@ -466,6 +526,7 @@ export function createHapaxProvider(
           // Forced: single-item return; lastLive above keeps the full set.
           return forced ? { items: [r.items[0]], prefix: r.prefix } : r;
         }
+        } // end still-armed (one-shot check passed)
       }
       // 2. No hapax match state (S1 null) → pi's completion stays in charge.
       // AUTO-OPEN (PRD §07 live-editor reality): pi-tui's handleChar fires
@@ -545,13 +606,18 @@ export function createHapaxProvider(
         const key = liveKeyByValue.get(item.value);
         if (key !== undefined) {
           if (key.startsWith(CHAIN_KEY_PREFIX)) {
-            // A chain successor was accepted → armed(next).
+            // A chain successor was accepted → armed(next); fresh one-shot
+            // grant (the immediate offer for the NEXT word).
             chain.arm(key.slice(CHAIN_KEY_PREFIX.length));
+            chainWordsSeen = 0;
+            chainLastArmedPrefix = null;
           } else {
             // Whole-word candidate: word keys are single tokens. The
             // successor index is lowercase (h2.27) — arm the lowercase
-            // form so topSuccessors() finds it.
+            // form so topSuccessors() finds it. Fresh one-shot grant.
             chain.arm(item.value.toLowerCase());
+            chainWordsSeen = 0;
+            chainLastArmedPrefix = null;
           }
         }
         // Not in the map (path completion / stale value) → never arms.

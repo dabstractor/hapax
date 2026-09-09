@@ -321,6 +321,38 @@ describe("chain machine — armed successor chaining (PRD §07 h2.43, plan 002 S
     expect(chain.state()).toEqual({ word: "beta" }); // still armed
   });
 
+  it("ONE-SHOT offer (2026-09): typing through the granted offer disarms at the next word boundary", async () => {
+    const store = seedStore();
+    const ed = editingCurrent(["al"], 2);
+    const { chain, inner } = makeStack(store, ed);
+    await armViaTab(inner, chain, store, "alpha", "al");
+
+    // Word 1 — the granted immediate offer.
+    ed.typeSpace();
+    const offer = await suggest(inner, ed.state.lines, 0, ed.state.cursorCol);
+    expect(offer?.prefix).toBe("");
+    expect(offer?.items.map((i) => i.value)).toEqual(["beta", "bravo"]);
+
+    // The user TYPES THROUGH without accepting: same-word narrowing
+    // queries keep the chain (each prefix extends the last)…
+    for (const c of ["b", "e", "t", "a"]) {
+      ed.type(c);
+      const narrowing = await suggest(inner, ed.state.lines, 0, ed.state.cursorCol);
+      expect(narrowing?.items.some((i) => i.description === "chain")).toBe(true);
+    }
+    expect(chain.state()).toEqual({ word: "alpha" }); // still armed within the word
+
+    // …but the NEXT word boundary (space, zero-char query) disarms and
+    // falls through: the normal path answers (no fragment → delegate),
+    // and the chain is idle — no more intent-bypass offers at every
+    // word start for the rest of the message.
+    ed.typeSpace();
+    expect(ed.state.lines).toEqual(["alpha beta "]);
+    const after = await suggest(inner, ed.state.lines, 0, ed.state.cursorCol);
+    expect(chain.state()).toBeNull();
+    expect(after).toBeNull(); // delegated (zero fragment) — NOT a chain offer
+  });
+
   it("1-char fragment offers at chain threshold 0; past-match fragment disarms + delegates on the SAME call (h2.43)", async () => {
     const current = makeCurrent();
     const store = seedStore();
@@ -659,6 +691,14 @@ function editingCurrent(initial: string[] = ["natio"], cursorCol = 5) {
       const lines = [...state.lines];
       lines[state.cursorLine] =
         line.slice(0, state.cursorCol) + " " + line.slice(state.cursorCol);
+      state.lines = lines;
+      state.cursorCol += 1;
+    },
+    type(ch: string): void {
+      const line = state.lines[state.cursorLine] ?? "";
+      const lines = [...state.lines];
+      lines[state.cursorLine] =
+        line.slice(0, state.cursorCol) + ch + line.slice(state.cursorCol);
       state.lines = lines;
       state.cursorCol += 1;
     },
