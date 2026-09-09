@@ -2,8 +2,10 @@
 
 Two independent scores, deliberately conflated nowhere:
 
-- **Global commonness** — static, from the dictionary. Drives **admission**.
-- **Session salience** — dynamic, from store stats. Drives **ranking**.
+- **Global commonness** — static, from the dictionary. Drives **admission**
+  (plus the conjugation guard below).
+- **Session salience** — dynamic, from store stats. Drives **eviction**
+  (06); it never orders the menu.
 
 ## Segmentation (`src/core/segment.ts`)
 
@@ -84,24 +86,54 @@ absent from the table enters here or not at all.
 
 ## Admission decision (`src/core/score.ts`)
 
-Let `q = dictionary.lookup(lowercase)` (null when absent). Whole-token
-candidates admit when:
+Let `q = dictionary.lookup(lowercase)` (null when absent), and `R` be the
+reject band — default 50, runtime-tunable via the `rejectCommonness`
+config (see 08). Whole-token candidates admit when:
 
 | Condition | Result |
 |---|---|
-| `q !== null && q >= 220` | **Reject** — very common word (`the`, `context`) |
-| `q !== null && 120 <= q < 220` | **Admit, rank group 2** — mid-frequency (`tokenizer`) |
-| `q !== null && q < 120` | **Admit, rank group 1** — rare-but-attested |
+| `q !== null && q >= R` | **Reject** — very common word (`the`, `context`, `code`) |
+| `q !== null && 20 <= q < R` | **Admit, rank group 2** — mid-frequency |
+| `q !== null && q < 20` | **Admit, rank group 1** — rare-but-attested |
 | `q === null` (absent) | **Admit, rank group 0** — rare-by-default (post shape gate) |
 
-Sub-word candidates require their own admission (same table) but never rank
-above rank group +1 of their parent whole token.
+The bands (reject 50, mid 20) are baked constants calibrated against the
+shipped artifact with `tools/calibrate-bands.mjs`, which doubles as a
+word probe: `node tools/calibrate-bands.mjs lists deleted` prints a
+word's `q` and its verdict (lowercase and capitalized).
 
-Constants 220/120 are the only tuning surface; see 09 for the tuning protocol.
+**Proper-noun relief.** A capitalized whole token (properName hint) whose
+table result is reject admits at group 2 when `q < 95`: sentence-case
+names (`National`, `Laboratory`, `Andrews`) complete while lowercase
+everyday prose (`context`, `data`) stays rejected. The ceiling 95 is
+calibrated so ordinary capitalized words (`Guard`, `Books`, `Water`)
+still reject.
 
-## Salience formula (ranking)
+**Conjugation guard.** An inflection whose STEM is a common word rejects
+too, whatever its own `q`. The dictionary ranks inflections separately
+(`delete` q=51 rejects; `deleted` q=45 would admit; absent `deletes`
+would admit as "rarest"), which leaked everyday verbs, adverbs, and
+plurals into the menu. Stems are one-level strips of `-s -es -ed -d
+-ing -ly`, with e-restoration (`typing`→`type`, `caching`→`cache`) and
+doubled-consonant undo (`stopped`→`stop`). Two tiers:
 
-Computed at query time from store stats. For candidate `c`:
+- stem `q >= R` → reject (any `q` of the word itself);
+- word absent AND stem `q >= 20` → reject (absent inflections of
+  attested mid-band stems: `uploads` → `upload` q=38).
+
+Capitalized (properName) candidates skip the guard — casing evidence
+outranks morphology, so relief-admitted names are never stem-rejected.
+hapax targets proper nouns and identifiers, not verb/adverb/plural
+morphology. Derivational suffixes (`-tion`, `-ment`, `-er`) are
+deliberately NOT stripped: `deletion` is a distinct lexeme.
+
+Sub-word candidates require their own admission (same table, plus the
+guard) but never rank above rank group +1 of their parent whole token.
+
+## Salience formula (eviction)
+
+Computed at query time from store stats; consumed only by the eviction
+score (06). For candidate `c`:
 
 ```
 salience(c) =
@@ -120,13 +152,22 @@ salience(c) =
 - Weights are baked constants. **Not configurable.** Tuning happens in the
   codebase via 09's protocol, not at user runtime.
 
-## Query ranking (final order)
+## Query ranking (final menu order)
 
-1. Salience descending.
-2. Ties → shorter candidate first.
-3. Ties → lexicographic (byte order on lowercase key).
+Menu order is **content-derived and stable** — deliberately independent of
+salience and of everything that changes during a session:
 
-Return top **8** items (menu height). Under the trigger char, same rules.
+1. Shorter candidate key first.
+2. Ties → lexicographic (byte order on the lowercase key).
+
+Rationale: a menu whose order depends on recency or frequency reshuffles
+between keystrokes and between sessions, defeating the muscle memory
+completion exists to build. The same fragment must always yield the same
+list (editor/shell convention). Salience decides membership — admission
+and eviction — never menu position.
+
+Return top **8** items (menu height; `maxSuggestions` config, 1–20). Under
+the trigger char, same rules.
 
 ## Case handling
 

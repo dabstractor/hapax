@@ -88,6 +88,83 @@ describe("admit — baked thresholds (PRD §04/§08)", () => {
   });
 });
 
+describe("admit — conjugation guard (2026-09, 'deleted' leak)", () => {
+  it("attested inflection under the band still rejects when its stem is reject-common (deleted: q=45, delete: q≥REJECT)", () => {
+    expect(admit(draft("deleted"), dict({ deleted: 45, delete: REJECT_COMMON_THRESHOLD }))).toBe(
+      "reject",
+    );
+  });
+
+  it("absent inflection rejects via a reject-common stem (deletes → delete)", () => {
+    expect(admit(draft("deletes"), dict({ delete: REJECT_COMMON_THRESHOLD }))).toBe("reject");
+  });
+
+  it("absent inflection rejects via an ATTESTED MID-BAND stem (uploads → upload q=38)", () => {
+    expect(
+      admit(draft("uploads"), dict({ upload: MID_FREQ_THRESHOLD + 18 })),
+    ).toBe("reject");
+  });
+
+  it("e-restoration stems match (typing → type, caching → cache)", () => {
+    expect(admit(draft("typing"), dict({ type: REJECT_COMMON_THRESHOLD }))).toBe("reject");
+    expect(admit(draft("caching"), dict({ cache: MID_FREQ_THRESHOLD + 10 }))).toBe("reject");
+  });
+
+  it("doubled-consonant stems match (stopped → stop, running → run)", () => {
+    expect(admit(draft("stopped"), dict({ stop: REJECT_COMMON_THRESHOLD }))).toBe("reject");
+    expect(admit(draft("running"), dict({ run: REJECT_COMMON_THRESHOLD }))).toBe("reject");
+  });
+
+  it("adverb -ly stems match (badly → bad)", () => {
+    expect(admit(draft("badly"), dict({ bad: REJECT_COMMON_THRESHOLD }))).toBe("reject");
+  });
+
+  it("subwords are guarded too (typed as a subword of typedFlag)", () => {
+    expect(admit(draft("typed", true), dict({ type: REJECT_COMMON_THRESHOLD }), 2)).toBe(
+      "reject",
+    );
+  });
+
+  it("properName drafts SKIP the guard — casing evidence outranks morphology (Andrews)", () => {
+    // Table: andrews attested at q≥REJECT → reject; relief (properName,
+    // q < ceiling) → group 2; the stem guard would have rejected it too
+    // (andrew ≥ REJECT) but never runs — casing wins.
+    expect(
+      admit(
+        draft("andrews", false, { display: "Andrews", properName: true }),
+        dict({ andrews: REJECT_COMMON_THRESHOLD, andrew: REJECT_COMMON_THRESHOLD }),
+      ),
+    ).toBe(2); // relief admits it
+    // The SAME dictionary admits nothing for the lowercase draft — the
+    // guard applies there (stem andrew is reject-common).
+    expect(
+      admit(draft("andrews"), dict({ andrews: REJECT_COMMON_THRESHOLD, andrew: REJECT_COMMON_THRESHOLD })),
+    ).toBe("reject");
+  });
+
+  it("stem below the mid band does NOT reject absent jargon (zephyrs → zephyr q< MID stays admitted... unless attested mid+)", () => {
+    // zephyr at q = MID−1 (rare-attested): an absent plural of a RARE
+    // word is still jargon-shaped — admit at group 0.
+    expect(admit(draft("zephyrs"), dict({ zephyr: MID_FREQ_THRESHOLD - 1 }))).toBe(0);
+  });
+
+  it("word with no inflection suffix is untouched (lwlock-style jargon)", () => {
+    expect(admit(draft("lwlock"), dict({ delete: 255 }))).toBe(0);
+  });
+
+  it("rejectCommonness knob governs the stem comparison too", () => {
+    // Word attested at q=40 (table: group 2); stem 'list' at q=45.
+    // Default band (50): stem misses → admit. Tightened to 40: the stem
+    // clears the bar → reject.
+    expect(admit(draft("lists"), dict({ lists: 40, list: 45 }))).toBe(2);
+    expect(
+      admit(draft("lists"), dict({ lists: 40, list: 45 }), undefined, {
+        rejectCommonness: 40,
+      }),
+    ).toBe("reject");
+  });
+});
+
 describe("admit — whole-token bands (PRD §04 h2.24)", () => {
   it("dictionary-absent word (q === null) → group 0, rare-by-default", () => {
     expect(admit(draft("zzqv"), dict({}))).toBe(0);

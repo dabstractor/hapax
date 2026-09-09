@@ -66,7 +66,7 @@ const put = (
 };
 
 /** Store with ze* narrowing fixture — ordering verified against rankMatches:
- * salience desc → zendesk ×4 (9.35) > zendeskagent ×3 (8.7) > zephyr ×1 (6.7);
+ * content-derived (shortest → byte-lex): zephyr(6) < zendesk(7) < zendeskagent(12);
  * alpha ×2 sits older (ordinal 5) and never enters ze* queries. */
 const zeStore = (): CandidateStore => {
   const s = new CandidateStore();
@@ -129,7 +129,7 @@ const mockCurrent = (over: Partial<AutocompleteProvider> = {}): MockedCurrent =>
 type Emission = string[] | "<delegate>";
 
 /** Fixture values — derived from the store via rankMatches ordering above. */
-const ZE = ["Zendesk", "ZendeskAgent", "zephyr"]; // fragment "ze"
+const ZE = ["zephyr", "Zendesk", "ZendeskAgent"]; // fragment "ze" (shortest → byte-lex)
 const ZEND = ["Zendesk", "ZendeskAgent"]; // fragment "zend"
 const ZENDESKA = ["ZendeskAgent"]; // fragment "zendeska" — strict subset of ZEND
 
@@ -224,13 +224,13 @@ describe("suppression window", () => {
     expect(await emit("ze")).toEqual(ZE); // suppressed — Zesty not shown yet
 
     vi.advanceTimersByTime(60); // t=170: 170−60 ≥ 100 → pending promoted
-    // zeStore membership: Zendesk 9.35 > ZendeskAgent 8.70 > Zesty 7.87 > zephyr 6.70
-    expect(await emit("ze")).toEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]);
+    // zeStore membership (content-derived order): zesty(5) < zephyr(6) < zendesk(7) < zendeskagent(12)
+    expect(await emit("ze")).toEqual(["Zesty", "zephyr", "Zendesk", "ZendeskAgent"]);
     expect(emissions).toEqual([
       ZE,
       ZE,
       ZE,
-      ["Zendesk", "ZendeskAgent", "Zesty", "zephyr"],
+      ["Zesty", "zephyr", "Zendesk", "ZendeskAgent"],
     ]);
   });
 });
@@ -283,11 +283,11 @@ describe("superseded pending", () => {
     vi.advanceTimersByTime(100); // t=170: timer promotes the newest membership
     // zeStore ordering: Zendesk 9.35 > ZendeskAgent 8.70 > Zesty/Zeta 7.87
     // (tie → byte-lex "zeta" < "zesty") > zephyr 6.70.
-    const newest = ["Zendesk", "ZendeskAgent", "Zeta", "Zesty", "zephyr"];
+    const newest = ["Zeta", "Zesty", "zephyr", "Zendesk", "ZendeskAgent"];
     expect(await emit("ze")).toEqual(newest); // sig === displayed → held
 
     expect(emissions).toEqual([ZE, ZE, ZE, newest]);
-    expect(emissions).not.toContainEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]); // set1 never painted
+    expect(emissions).not.toContainEqual(["Zesty", "zephyr", "Zendesk", "ZendeskAgent"]); // set1 never painted
   });
 });
 
@@ -420,7 +420,7 @@ describe("dispose", () => {
     // timer that would have auto-promoted it is gone.
     expect(await emit("zend")).toEqual(ZEND);
     expect(emissions).toEqual([ZE, ZE, ZEND]);
-    expect(emissions).not.toContainEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]);
+    expect(emissions).not.toContainEqual(["Zesty", "zephyr", "Zendesk", "ZendeskAgent"]);
   });
 });
 
@@ -443,12 +443,12 @@ describe("prefix-anchor invalidation (BUG-002)", () => {
     // 'z' — auto-open contract (effective threshold 1): pi-tui only
     // asks at word start, so the first letter already paints.
     const z = await type(wrapper, "z");
-    expect(z!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(z!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
     expect(z!.prefix).toBe("z");
 
     // 'e' — buffer "ze": first qualifying query → immediate paint of both.
     const ze = await type(wrapper, "ze");
-    expect(ze!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(ze!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
     expect(ze!.prefix).toBe("ze");
 
     // 'p' typed 50 ms later, inside the suppression window: the fresh
@@ -503,14 +503,14 @@ describe("prefix-anchor invalidation (BUG-002)", () => {
     vi.advanceTimersByTime(50);
     put(store, "zesty", 2, 9, { display: "Zesty" }); // membership change only
     const held = await type(wrapper, "ze"); // identical prefix → suppressed
-    expect(held!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(held!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
     expect(held!.prefix).toBe("ze"); // anchor-safe: buffer still "ze"
 
     vi.advanceTimersByTime(100); // pending swap promotes internally
     // Tab with NO further keystroke: pi applies the last RESPONSE (the
     // held set). Its prefix matches the unchanged buffer — safe splice.
     const completed = editorApplyCompletion("ze", 2, held!.items[0]!.value, held!.prefix);
-    expect(completed).toBe("Zendesk");
+    expect(completed).toBe("zephyr");
   });
 
   it("suppression preserved: identical prefix + differing set (ingest membership) → displayed set held, swap lands later", async () => {
@@ -526,13 +526,13 @@ describe("prefix-anchor invalidation (BUG-002)", () => {
     // Prefix identical ("ze"), set differs → suppression must hold (the
     // 4d branch below the anchor exception is untouched).
     const held = await type(wrapper, "ze");
-    expect(held!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(held!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
     expect(held!.prefix).toBe("ze");
     expect(vi.getTimerCount()).toBe(1); // swap armed
 
     vi.advanceTimersByTime(100); // t=150 ≥ 50+100 → promote
     const landed = await type(wrapper, "ze");
-    expect(landed!.items.map((i) => i.value)).toEqual(["Zendesk", "Zesty", "zephyr"]);
+    expect(landed!.items.map((i) => i.value)).toEqual(["Zesty", "zephyr", "Zendesk"]);
     expect(landed!.prefix).toBe("ze");
   });
 });
@@ -580,7 +580,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
     // displayed 3-item ZE set, never a pending set.
     expect(forced).not.toBeNull();
     expect(forced!.items).toHaveLength(1);
-    expect(forced!.items[0]!.value).toBe("Zendesk"); // live top (9.35)
+    expect(forced!.items[0]!.value).toBe("Zesty"); // live top (shortest: zesty 5 < zephyr 6)
     expect(forced!.prefix).toBe("#ze"); // prefix unchanged under force
     expect(emissions).toEqual([ZE]); // the forced query logged nothing extra
   });
@@ -625,7 +625,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
     // the 3-item displayed set and not the 4-item pending set.
     const forced = await forcedQuery(wrapper, "#ze");
     expect(forced!.items).toHaveLength(1);
-    expect(forced!.items[0]!.value).toBe("Zendesk");
+    expect(forced!.items[0]!.value).toBe("Zesty"); // live top (zesty 5 < zephyr 6)
 
     // The swap timer was untouched by the forced call and still fires.
     expect(vi.getTimerCount()).toBe(1);
@@ -634,7 +634,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
 
     // The next NON-forced query observes the promoted 4-item set —
     // supersede/promote semantics unchanged by the forced interlude.
-    expect(await emit("ze")).toEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]);
+    expect(await emit("ze")).toEqual(["Zesty", "zephyr", "Zendesk", "ZendeskAgent"]);
   });
 
   it("forced calls never paint — the window composes on the ORIGINAL paint timestamp", async () => {
@@ -649,7 +649,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
     // set. Had the forced call painted, lastPaintAt would be 100 and this
     // query would be suppressed (re-serving 3-item ZE instead).
     put(store, "zesty", 2, 9, { display: "Zesty" });
-    expect(await emit("ze")).toEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]);
+    expect(await emit("ze")).toEqual(["Zesty", "zephyr", "Zendesk", "ZendeskAgent"]);
     expect(vi.getTimerCount()).toBe(0); // immediate paint — no swap left armed
   });
 
@@ -669,7 +669,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
     expect(vi.getTimerCount()).toBe(1);
 
     vi.advanceTimersByTime(100); // t=150: pending promotes as usual
-    expect(await h.emit("ze")).toEqual(["Zendesk", "ZendeskAgent", "Zesty", "zephyr"]);
+    expect(await h.emit("ze")).toEqual(["Zesty", "zephyr", "Zendesk", "ZendeskAgent"]);
   });
 
   it("non-forced regression pin: the same mid-window sequence still suppresses", async () => {
@@ -685,5 +685,102 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
     expect(await emit("ze")).toEqual(ZE);
     expect(vi.getTimerCount()).toBe(1);
     expect(emissions).toEqual([ZE, ZE]);
+  });
+});
+
+describe("hesitation gate (menuDelayMs — first-paint delay)", () => {
+  /** Store: one candidate family so word-start queries have items. */
+  const gateStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    put(s, "zendesk", 3, 9, { display: "Zendesk" });
+    put(s, "zephyr", 1, 9);
+    return s;
+  };
+
+  /** Wrapper with the gate armed (150 ms) and an intent predicate that
+   *  mirrors index.ts: trigger-char prefixes and chain items bypass. */
+  const gated = () => {
+    const base = createHapaxProvider(gateStore(), cfg(), mockCurrent());
+    const wrapper = createDisplayProvider(base, {
+      firstPaintDelayMs: 150,
+      isIntentResult: (r) => r.prefix.startsWith("#") || r.items.some((i) => i.description === "chain"),
+    });
+    return { wrapper };
+  };
+
+  /** Type one keystroke at time t. */
+  const key = (wrapper: ReturnType<typeof createDisplayProvider>, line: string, t: number) => {
+    vi.setSystemTime(t);
+    return wrapper.getSuggestions([line], 0, line.length, opts());
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("full-speed typing (gaps < 150 ms) never opens the menu", async () => {
+    const { wrapper } = gated();
+    // First keystroke ever at t=0: no previous keystroke → allowed... but
+    // suppress it too by giving a prior keystroke via a non-matching query.
+    await key(wrapper, "zz", 0); // closes/neutral — establishes lastKeystrokeAt
+    expect(await key(wrapper, "ze", 100)).toEqual({ items: [], prefix: "ze" }); // gap 100 < 150
+    expect(await key(wrapper, "zep", 200)).toEqual({ items: [], prefix: "zep" }); // gap 100
+  });
+
+  it("hesitation (gap ≥ 150 ms) opens the menu; it then self-sustains", async () => {
+    const { wrapper } = gated();
+    await key(wrapper, "zz", 0);
+    vi.setSystemTime(300); // 300 ms pause before the word's first letter
+    const open = await wrapper.getSuggestions(["ze"], 0, 2, opts());
+    expect(open!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
+    // Menu open → updates flow through the normal swap rules, no gate.
+    vi.setSystemTime(350);
+    const narrowed = await wrapper.getSuggestions(["zep"], 0, 3, opts());
+    expect(narrowed!.items.map((i) => i.value)).toEqual(["zephyr"]);
+  });
+
+  it("first keystroke of the session (no prior key) paints immediately", async () => {
+    const { wrapper } = gated();
+    const open = await key(wrapper, "ze", 0);
+    expect(open!.items).toHaveLength(2); // no previous keystroke → nothing to gate
+  });
+
+  it("explicit intent bypasses the gate: trigger-char prefix shows immediately", async () => {
+    const { wrapper } = gated();
+    await key(wrapper, "zz", 0);
+    const open = await key(wrapper, "#ze", 50); // gap 50 < 150 — intent wins
+    expect(open!.items).toHaveLength(2);
+    expect(open!.prefix).toBe("#ze");
+  });
+
+  it("forced (Tab) requests bypass the gate entirely (rule 1.5 ordering)", async () => {
+    const { wrapper } = gated();
+    await key(wrapper, "zz", 0);
+    vi.setSystemTime(50);
+    const forced = await wrapper.getSuggestions(["ze"], 0, 2, {
+      signal: new AbortController().signal,
+      force: true,
+    });
+    expect(forced!.items).toHaveLength(1); // single live top — no gate on force
+  });
+
+  it("gate disabled (0) → immediate first paint, pre-2026-09 behavior", async () => {
+    const base = createHapaxProvider(gateStore(), cfg(), mockCurrent());
+    const wrapper = createDisplayProvider(base, { firstPaintDelayMs: 0 });
+    await key(wrapper, "zz", 0);
+    const open = await key(wrapper, "ze", 10); // gap 10 — would suppress at 150
+    expect(open!.items).toHaveLength(2);
+  });
+
+  it("suppressed returns carry NO anchor (empty items never apply a prefix)", async () => {
+    const { wrapper } = gated();
+    await key(wrapper, "zz", 0);
+    const out = await key(wrapper, "ze", 100);
+    expect(out!.items).toEqual([]);
+    expect(out!.prefix).toBe("ze"); // pi-tui ignores prefix on empty sets
   });
 });

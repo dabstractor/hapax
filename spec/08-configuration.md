@@ -18,8 +18,26 @@ defaults, continue running. Missing files are normal.
 {
   "triggerChar": "#",        // single non-alphanumeric char; "" disables
                               // trigger mode entirely
-  "threshold": 2,            // chars before threshold matching: 1 | 2 | 3
+  "threshold": 2,            // RETAINED BUT INERT in the live editor:
+                              // pi-tui only requests at word starts, so
+                              // matching is effectively 1 char (see 07).
+                              // Kept for schema compatibility. 1 | 2 | 3.
   "maxSuggestions": 8,       // 1–20
+  "rejectCommonness": 50,    // 1–255: dictionary quantile at/above which
+                              // a word is rejected from the store (higher
+                              // = looser). Governs admission AND the
+                              // conjugation guard's stem comparison. Probe
+                              // any word first: node tools/calibrate-bands.mjs
+                              // <words...> prints q + verdict (lowercase and
+                              // Capitalized). Default: the baked constant
+                              // in src/core/score.ts.
+  "menuDelayMs": 150,        // 0–2000: hesitation gate for the menu's
+                              // first appearance. Word-completions paint
+                              // only when a keystroke arrives ≥ this many
+                              // ms after the previous one — full-speed
+                              // typing never pops the menu. Trigger-char
+                              // and Tab-chain results bypass it. 0 =
+                              // always immediate.
   "enableChaining": true,    // M2 flag; gates the successor-index chain
                               // layer only. "enablePhrases" is accepted as a
                               // deprecated alias for this key. Word
@@ -30,15 +48,19 @@ defaults, continue running. Missing files are normal.
 
 Validation: clamp/repair invalid values to defaults (log when repaired).
 `triggerChar` must match `/^[^\w\s]$/` or be empty. `threshold` clamped to
-1–3. `maxSuggestions` clamped 1–20.
+1–3. `maxSuggestions` clamped 1–20. `rejectCommonness` clamped 1–255.
+`menuDelayMs` clamped 0–2000.
 
 ## Not configurable (by settled decision)
 
-- Salience weights, admission bands (220/120), shape-gate secret rules,
-  eviction cap, debounce intervals, popup timing. These are internal tuning
-  constants — the tuning protocol lives in 09, not in user config. Exposing
-  them invites unsupported states; if a future version learns better values,
-  ship new constants.
+- Salience weights, the mid-frequency band (20), the proper-noun relief
+  ceiling (95), shape-gate secret rules, the conjugation-guard suffix
+  set, eviction cap, debounce intervals, popup timing. These are
+  internal tuning constants — the tuning protocol lives in 09, not in
+  user config. The reject band is the one deliberate exception
+  (`rejectCommonness`): everyday-word leakage is an ongoing dial the
+  owner tunes against real sessions, and a code edit per tweak would
+  defeat that.
 
 ## Debug command (`/acwords`, registered when `debug: true`)
 

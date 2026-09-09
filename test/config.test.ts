@@ -93,6 +93,8 @@ describe("defaults — no config files (PRD §08)", () => {
       triggerChar: "#",
       threshold: 2,
       maxSuggestions: 8,
+      rejectCommonness: DEFAULT_CONFIG.rejectCommonness,
+      menuDelayMs: DEFAULT_CONFIG.menuDelayMs,
       enableChaining: true,
       debug: false,
     });
@@ -129,6 +131,8 @@ describe("layer precedence — defaults → user → project, later wins", () =>
     triggerChar: "%",
     threshold: 3,
     maxSuggestions: 20,
+    rejectCommonness: 49,
+    menuDelayMs: 200,
     // Written under the deprecated alias KEY — still accepted, mapped
     // onto enableChaining with one deprecation notify (h2.46). The
     // resolved object carries only enableChaining (no mirror field,
@@ -140,6 +144,8 @@ describe("layer precedence — defaults → user → project, later wins", () =>
     triggerChar: "%",
     threshold: 3,
     maxSuggestions: 20,
+    rejectCommonness: 49,
+    menuDelayMs: 200,
     enableChaining: false,
     debug: true,
   };

@@ -8,26 +8,30 @@ Standard autocomplete cannot suggest these because it only knows files and
 commands.
 
 hapax watches what enters the context window, extracts the rare and
-useful words, and completes them from 2 typed characters (or 1 character after
-the trigger char, default `#`).
+useful words, and completes them from the 1st typed character of a
+matching word (or the 1st character after the trigger char, default `#`).
 
 ## Core definitions
 
 - **Candidate** — a word admitted to the session store, available for completion.
 - **Admission** — the decision that a segmented word is worth storing (global
   commonness + shape gates).
-- **Salience** — the dynamic per-session ranking score (frequency, recency,
-  source, rarity).
+- **Salience** — the dynamic per-session retention score (frequency,
+  recency, source, rarity). Drives store eviction, never menu order.
 - **Trigger char** — a configurable character (default `#`) that initiates
   lookup from the first character after it.
-- **Threshold matching** — prefix lookup after N characters of a word
-  (default N=2, configurable 1–3), firing everywhere the user types.
+- **Word matching** — prefix lookup from the first character of a word,
+  firing everywhere the user types. (The `threshold` config value, 1–3,
+  is retained for schema compatibility but inert in the live editor —
+  see 07.)
 
 ## Goals (M1)
 
 1. Extract uncommon words from user prompts and final assistant output.
 2. Admit them via a static common-words dictionary + shape gates.
-3. Rank them via session salience.
+3. Order the menu content-derived (shortest match first, then
+   lexicographic — stable and predictable); salience governs retention
+   and eviction only.
 4. Complete them through pi's built-in autocomplete menu with zero typing
    interference.
 5. Total memory < 6 MB steady state; query latency < 1 ms; ingest of a

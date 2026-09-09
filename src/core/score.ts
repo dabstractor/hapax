@@ -137,6 +137,48 @@ export const PROPER_NOUN_ADMIT_CEILING = 95 as const;
  *  or 'reject' (never enters the store). */
 export type AdmissionResult = RankGroup | "reject";
 
+/** Options for admit(). `rejectCommonness` lets the runtime (pi config,
+ *  2026-09) tighten or loosen the reject band WITHOUT a code edit —
+ *  words kept leaking in ("lists", q = 49 < 50), and band tuning is an
+ *  ongoing dial, not a settled constant. Default: the baked
+ *  REJECT_COMMON_THRESHOLD (all pre-2026-09 callers behave identically). */
+export interface AdmissionOptions {
+  /** reject at/above this commonness quantile; default
+   *  REJECT_COMMON_THRESHOLD. Higher → more words admitted (looser);
+   *  lower → fewer (stricter). */
+  rejectCommonness?: number;
+}
+
+/** English inflection suffixes stripped by the conjugation guard
+ *  (2026-09, "deleted" leak). Deliberately a CONSERVATIVE set — verb/
+ *  adverb/plural morphology only; derivational suffixes (-tion, -ment,
+ *  -er, -ness, …) are NOT stripped: "deletion"-class words are distinct
+ *  lexemes with their own dictionary entries when common. Baked. */
+const INFLECTION_SUFFIXES = ["s", "es", "ed", "d", "ing", "ly"] as const;
+
+/** Candidate stems for the conjugation guard: every one-level strip of
+ *  an inflection suffix, plus e-restoration ("typing" → "type",
+ *  "caching" → "cache") and doubled-consonant undo ("stopped" → "stop",
+ *  "running" → "run"). Stems shorter than 3 chars are dropped. Pure;
+ *  never returns the word itself. */
+function inflectionStems(word: string): string[] {
+  const out = new Set<string>();
+  for (const suf of INFLECTION_SUFFIXES) {
+    if (!word.endsWith(suf)) continue;
+    const base = word.slice(0, -suf.length);
+    if (base.length < 3) continue;
+    out.add(base);
+    if (suf === "ed" || suf === "ing") {
+      out.add(base + "e"); // e-restoration: typed→type, caching→cache
+      const last = base[base.length - 1]!;
+      if (base.length >= 4 && last === base[base.length - 2] && !/[aeiou]/.test(last)) {
+        out.add(base.slice(0, -1)); // doubled consonant: stopped→stop
+      }
+    }
+  }
+  return [...out];
+}
+
 /**
  * Admission decision for one shape-gated candidate draft (PRD §04 h2.24).
  *
@@ -208,6 +250,8 @@ export type AdmissionResult = RankGroup | "reject";
  * @param dictionary quantized commonness dictionary (0–255 rank or null)
  * @param parentGroup the already-admitted parent whole token's group;
  *   required for subwords by the ingest pipeline, omitted for whole tokens
+ * @param opts { rejectCommonness } band override (pi config knob);
+ *   omitted → the baked constant
  * @returns the admission rank group, or 'reject' when the word is too
  *   common to store
  */
@@ -215,11 +259,13 @@ export function admit(
   draft: CandidateDraft,
   dictionary: Dictionary,
   parentGroup?: RankGroup,
+  opts: AdmissionOptions = {},
 ): AdmissionResult {
+  const rejectAt = opts.rejectCommonness ?? REJECT_COMMON_THRESHOLD;
   const q = dictionary.lookup(draft.key);
   let result: AdmissionResult;
   if (q === null) result = 0;
-  else if (q >= REJECT_COMMON_THRESHOLD) result = "reject";
+  else if (q >= rejectAt) result = "reject";
   else if (q >= MID_FREQ_THRESHOLD) result = 2;
   else result = 1;
 
@@ -237,6 +283,32 @@ export function admit(
     q < PROPER_NOUN_ADMIT_CEILING
   ) {
     result = 2;
+  }
+
+  // Conjugation guard (2026-09, "deleted" leak): an inflection whose
+  // STEM is reject-common rejects too, whatever its own q — the corpus
+  // ranks inflections separately (delete=51, deleted=45) and the
+  // rare-by-default hole admitted absent forms outright (deletes,
+  // caching, uploads → group 0 + rarity bonus). Hapax is for proper
+  // nouns and identifiers, not verb/adverb/plural morphology: skip the
+  // guard when properName is set (casing evidence — "Andrews",
+  // "Sanders" — outranks morphology, mirroring the relief's philosophy).
+  // ONE stripping level, no recursion; subwords are guarded as well
+  // ("typedFlag" → subword "typed" is still a conjugation). Two tiers:
+  //   - stem ≥ rejectAt → reject (conjugation of a COMMON word), any q;
+  //   - word ABSENT (q = null) + stem ≥ MID_FREQ_THRESHOLD → reject
+  //     ("uploads": upload=38, "caching": cache=30 — absent inflections
+  //     of attested mid-band stems are the same noise class).
+  // The rejectCommonness knob governs the stem comparisons too.
+  if (result !== "reject" && !draft.properName) {
+    for (const stem of inflectionStems(draft.key)) {
+      const qs = dictionary.lookup(stem);
+      if (qs === null) continue;
+      if (qs >= rejectAt || (q === null && qs >= MID_FREQ_THRESHOLD)) {
+        result = "reject";
+        break;
+      }
+    }
   }
 
   if (result === "reject") return result;
@@ -324,6 +396,12 @@ export function evictionScore(c: Candidate, currentOrdinal: number): number {
  *  1. salience descending (higher salience first)
  *  2. tie → shorter key first
  *  3. tie → lexicographic byte order on the lowercase key
+ *
+ * NOT the menu order since the 2026-09 redesign (query.ts doc): the
+ * completion menu sorts content-derived (shorter key → byte-lex) and
+ * uses salience ONLY for membership/eviction. compareCandidates remains
+ * exported as the salience-order reference (and for any future
+ * salience-ranked surface); query.ts no longer mirrors it.
  *
  * @returns standard comparator number: negative → a first, positive →
  *   b first, 0 → identical keys and stats. Never NaN.

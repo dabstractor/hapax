@@ -161,34 +161,34 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     },
   );
 
-  it("posts/thin/firs: measured mid-band and rejected-prefix behavior, pinned", async () => {
-    // MEASURED against the shipped artifact (2026-09 Issue-1 retune):
-    //   lookup('posts') = 47  → mid band (MID ≤ q < REJECT) → ADMITS
+  it("posts/thin/firs: mid-band inflection now delegates (conjugation guard), rejected prefixes stay rejected", async () => {
+    // MEASURED against the shipped artifact (2026-09 Issue-1 retune +
+    // the 2026-09 conjugation guard):
+    //   lookup('posts') = 47  → mid band in the DICT, but its STEM
+    //                          'post' = 85 sits in the REJECT band → the
+    //                          guard rejects the inflection: hapax is for
+    //                          proper nouns and identifiers, not prose
+    //                          verb/plural morphology
     //   lookup('thin')  = 76  → ≥ REJECT_COMMON_THRESHOLD    → rejected
     //   lookup('first') = 144 → ≥ REJECT_COMMON_THRESHOLD    → rejected
-    // 'posts' occurs in prose.jsonl and is a legitimate mid-frequency
-    // completion: mid-band words are SUPPOSED to open menus — only the
-    // common band carries the no-menu contract. ('thin' opened menus
-    // under the pre-retune bands at q=76; the retune moved the reject
-    // boundary to q ≥ 50 precisely so that everyday words like it — and
-    // the PRD's named example 'context' at q=51 — never do.)
-    // Band membership is asserted relative to the IMPORTED constants, so
-    // this pin survives band retunes: it says "posts sits in the mid
-    // band", not "posts equals any particular value".
+    // The dict-band facts are still asserted relative to the IMPORTED
+    // constants — the guard layers on top of the band table, it does not
+    // replace it.
     const postsQ = dict.lookup("posts");
     expect(postsQ, "shipped dict lost 'posts'").not.toBeNull();
     expect(postsQ!).toBeGreaterThanOrEqual(MID_FREQ_THRESHOLD);
     expect(postsQ!).toBeLessThan(REJECT_COMMON_THRESHOLD);
-    expect(rankMatches(store, "posts").map((m) => m.display)).toEqual(["posts"]);
+    const postQ = dict.lookup("post");
+    expect(postQ, "shipped dict lost 'post' (guard stem)").not.toBeNull();
+    expect(postQ!).toBeGreaterThanOrEqual(REJECT_COMMON_THRESHOLD);
+    expect(rankMatches(store, "posts")).toEqual([]); // guard: stem is common
 
-    // Provider path pins the same measured behavior: a single-item menu.
+    // Provider path pins the same measured behavior: delegation, no menu.
     const postsCurrent = mockCurrent(SENTINEL);
     const postsProvider = createHapaxProvider(store, cfg(), postsCurrent);
     const menu = await postsProvider.getSuggestions(["posts"], 0, 5, opts());
-    expect(menu).not.toBe(SENTINEL); // menu, not delegation
-    expect(menu!.items.map((i) => i.value)).toEqual(["posts"]);
-    expect(menu!.prefix).toBe("posts");
-    expect(postsProvider.__hapaxLive()).not.toBeNull();
+    expect(menu).toBe(SENTINEL); // delegated — the guard rejected 'posts'
+    expect(postsProvider.__hapaxLive()).toBeNull();
 
     // 'thin' and 'firs' are top-corpus words (measured q=76 and q=144,
     // both in the REJECT band), so they were rejected at admission and
@@ -216,22 +216,22 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     expect(firsProvider.__hapaxLive()).toBeNull();
   });
 
-  it("positive control: post → posts opens a real menu (store is alive)", async () => {
+  it("positive control: fenc → Fences opens a real menu (store is alive)", async () => {
     // Guards this file against vacuous no-menu results: the SAME store
-    // DOES answer fragments of admitted mid/rare words through the same
-    // provider path. 'posts' (measured q=47, mid band) occurs in
-    // prose.jsonl. (The former controls 'wate'→'Water' and 'garde'→
-    // 'garden' are obsolete under the 2026-09-recalibrated bands: measured
-    // water q=121 and garden q=86 land in the REJECT band, so 'wate' and
-    // 'garde' now yield [] — rejection there is CORRECT, not a dead
-    // store. This is exactly the acceptance suite's canary.)
-    expect(rankMatches(store, "post").map((m) => m.display)).toEqual(["posts"]);
+    // DOES answer fragments of admitted words through the same provider
+    // path. 2026-09 conjugation guard: the former control 'posts'
+    // (mid-band inflection, stem post=85) no longer stores — the live
+    // control is the proper-noun-relieved 'Fences' (capitalized in
+    // prose.jsonl; properName drafts skip the guard, mirroring the
+    // relief). (The even older controls 'wate'→'Water' and 'garde'→
+    // 'garden' are obsolete under the 2026-09-recalibrated bands.)
+    expect(rankMatches(store, "fenc").map((m) => m.display)).toEqual(["Fences"]);
     const current = mockCurrent(SENTINEL);
     const provider = createHapaxProvider(store, cfg(), current);
-    const result = await provider.getSuggestions(["post"], 0, 4, opts());
+    const result = await provider.getSuggestions(["fenc"], 0, 4, opts());
     expect(result).not.toBe(SENTINEL); // menu, not delegation
-    expect(result!.items.map((i) => i.value)).toEqual(["posts"]);
-    expect(result!.prefix).toBe("post");
+    expect(result!.items.map((i) => i.value)).toEqual(["Fences"]);
+    expect(result!.prefix).toBe("fenc");
     expect(provider.__hapaxLive()).not.toBeNull();
   });
 });

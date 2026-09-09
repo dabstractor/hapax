@@ -169,18 +169,16 @@ describe('acceptance item 1 — session jargon completes (zendesk-lwlock.jsonl)'
     expect(current.getSuggestions).not.toHaveBeenCalled(); // hapax answers, no delegation
   });
 
-  it('trigger "#l" → trigger mode, top-1 display "lwlock", prefix "#l"', async () => {
+  it('trigger "#l" → trigger mode, top display "lwlock" ("logs" guard-rejected), prefix "#l"', async () => {
     const { store } = await ingestFixture(`${FIXTURES}/zendesk-lwlock.jsonl`);
     const state = extractMatchState(["#l"], 0, 2, cfg());
     expect(state).toEqual({ mode: "trigger", fragment: "l", prefix: "#l" });
     const matches = rankMatches(store, "l");
-    expect(matches[0]!.display).toBe("lwlock"); // exact cased insertion string
-    // expected.md label for "#l" (lwlock must out-rank incidental l-words;
-    // the tail order follows the real-corpus rank groups under the
-    // 2026-09-recalibrated bands — look=157, long=138, loses=62 and
-    // locks=58 all sit in the REJECT band (≥50) and never reach the
-    // store; logs=49 admits as group 2):
-    expect(matches.map((m) => m.display)).toEqual(["lwlock", "logs"]);
+    expect(matches[0]!.display).toBe("lwlock"); // the only l-word left standing
+    // 2026-09 conjugation guard: logs (stem log=67) rejects alongside
+    // look=157, long=138, loses=62, locks=58 — hapax keeps identifiers
+    // (lwlock), not prose plurals.
+    expect(matches.map((m) => m.display)).toEqual(["lwlock"]);
 
     const provider = createHapaxProvider(store, cfg(), mockCurrent());
     const result = await provider.getSuggestions(["#l"], 0, 2, opts());
@@ -267,17 +265,18 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     }
   });
 
-  it("positive control: a stored word fragment DOES open a hapax menu (post → posts)", async () => {
+  it("positive control: a stored word fragment DOES open a hapax menu (fenc → Fences)", async () => {
     const { store } = await ingestFixture(`${FIXTURES}/prose.jsonl`);
     const provider = createHapaxProvider(store, cfg(), mockCurrent(SENTINEL));
-    const result = await provider.getSuggestions(["post"], 0, 4, opts());
+    const result = await provider.getSuggestions(["fenc"], 0, 4, opts());
     expect(result).not.toBe(SENTINEL); // menu, not delegation — the harness can tell the difference
-    // 'posts' (corpus q=47, mid-frequency group 2) is stored and answers
-    // the fragment; the former control word 'garden' (q=86) joined the
-    // REJECT band in the 2026-09 Issue-1 retune and never reaches the
-    // store (as did 'water', q=121, before it).
-    expect(result!.items.map((i) => i.value)).toEqual(["posts"]);
-    expect(result!.prefix).toBe("post");
+    // 2026-09 conjugation guard: the former control 'posts' (mid-band
+    // inflection, stem post=85) no longer stores — hapax is for proper
+    // nouns and identifiers. The live control is the proper-noun-relieved
+    // 'Fences' (capitalized in prose.jsonl; properName drafts skip the
+    // guard, mirroring the relief).
+    expect(result!.items.map((i) => i.value)).toEqual(["Fences"]);
+    expect(result!.prefix).toBe("fenc");
     expect(provider.__hapaxLive()).not.toBeNull();
   });
 
@@ -386,7 +385,9 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     // final band: the two normal-mid controls plus the ONE re-labeled
     // row (fresh; see the ladder record above — expected.md is the
     // authority, this pins its current state).
-    expect(rankMatches(store, "post").map((m) => m.display)).toEqual(["posts"]);
+    // 2026-09 conjugation guard: 'posts' (mid-band inflection of the
+    // common stem post=85) no longer stores — [] is the correct new pin.
+    expect(rankMatches(store, "post")).toEqual([]);
     expect(rankMatches(store, "fenc").map((m) => m.display)).toEqual(["Fences"]);
     expect(rankMatches(store, "fresh").map((m) => m.display)).toEqual(["Fresh"]);
     const freshMenu = await provider.getSuggestions(["fresh"], 0, 5, opts());

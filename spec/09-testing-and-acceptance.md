@@ -17,12 +17,25 @@
   base64 ≥ 24 mixed.
 
 **score.test.ts**
-- Admission bands: quant 250 → reject; quant 150 → group 2; quant 80 →
-  group 1; absent → group 0.
-- Salience arithmetic: construct store entries, assert exact ordering for
-  hand-computed cases (frequency beats rare-once; recency decay at τ=20;
-  userTyped flips a tie).
-- Ranking tiebreaks: salience equal → shorter, then lexicographic.
+- Admission bands (asserted relative to the imported constants, not
+  absolute quants): q ≥ REJECT → reject; MID ≤ q < REJECT → group 2;
+  q < MID → group 1; absent → group 0.
+- Proper-noun relief: capitalized whole token with REJECT ≤ q < 95 →
+  group 2; at/above the ceiling stays rejected.
+- Conjugation guard: inflection whose stem is reject-common rejects
+  (any q of the word); absent word + mid-band stem rejects; e-restoration
+  and doubled-consonant stems match; properName drafts skip the guard;
+  the rejectCommonness override governs the stem comparison.
+- Salience arithmetic: construct store entries, assert exact values for
+  hand-computed cases (frequency term, recency decay at τ=20, sticky
+  userTyped, properName, rarity bonus).
+- Eviction ordering (salience × slower τ=50 decay) — menu ordering is
+  NOT salience (see below).
+
+**query.test.ts**
+- Menu order is content-derived: shorter key first, ties byte-lex;
+  salience stats (count, recency, userTyped, rarity) never reorder;
+  ordinal advances leave order unchanged.
 
 **store.test.ts**
 - Upsert merge semantics (count, ordinals, sticky flags, rankGroup min).
@@ -39,14 +52,20 @@
 **provider.test.ts**
 - Trigger regex: `#`, `#ze`, mid-line `foo #ze`, `foo#ze` (no match — needs
   start/whitespace), two `##` → no match.
-- Threshold: fragment of 1 char with threshold 2 → delegate; 2 chars →
-  match; case-insensitive `nrel` → `NREL` insertion casing.
+- Word matching: 1-char fragment answers (auto-open contract — pi-tui
+  only asks at word starts, effective threshold 1); case-insensitive
+  `nrel` → `NREL` insertion casing.
+- Enter-submits proxy (test/editor-enter.test.ts): Enter + open word
+  menu → cancel then delegate exactly once; slash menus, closed menus,
+  non-submit keys untouched; the inner instance is NEVER mutated (v1
+  recursion regression pin); proxy get/set/has forwarding and the
+  thenable guard.
 - Zero candidates → delegate/empty, never a menu.
 - Debounce: two rapid set updates → only one swap at +100 ms; Tab mid-debounce
   resolves the live (undebounced) top item.
 - Tab-only-completes: Tab with a live set completes the selected (or top)
   item and never opens/toggles a menu; the menu appears automatically on
-  the 2nd char of a matching word and on the 1st char after the trigger
+  the 1st char of a matching word and on the 1st char after the trigger
   char, with no manual open gesture of any kind; completion is exactly one
   keypress. Includes the forced path: `getSuggestions` with
   `force: true` + live fragment MUST return exactly one item (the live
@@ -86,11 +105,17 @@ Benchmarks run with a synthetic dictionary fixture; numbers asserted loosely
 
 ## Tuning protocol
 
-The only tuning surfaces: admission bands (220/120), salience weights
-(2.0/3.0/1.5/0.8/1.0), no phrase multipliers exist (M2 successor index has none). Protocol: change one constant,
-run the acceptance suite, A/B against a fixed 3-session corpus fixture
+Tuning surfaces: the runtime `rejectCommonness` config knob (08), and
+the baked constants — admission bands (reject 50 / mid 20), relief
+ceiling 95, conjugation-guard suffix set, salience weights
+(2.0/3.0/1.5/0.8/1.0). No phrase multipliers exist (the M2 successor
+index has none). Protocol: change one constant (or the knob), run the
+acceptance suite, A/B against a fixed 3-session corpus fixture
 (`test/fixtures/sessions/`) checking precision@8 by hand-labeled expected
-completions. No telemetry exists; tuning is fixture-driven by design.
+completions. `tools/calibrate-bands.mjs` is the measurement probe — word
+verdicts, band populations, drift assertions; run it after any retune
+or dictionary regen. No telemetry exists; tuning is fixture-driven by
+design.
 
 ## Definition of done — M1
 

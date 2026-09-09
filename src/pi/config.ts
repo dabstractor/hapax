@@ -24,15 +24,19 @@
  * transitional mirror field was removed by P1.M3.T1.S2, which re-pointed
  * the last gate reads).
  *
- * This module imports ONLY node builtins — zero pi imports — so the
- * loader is trivially unit-testable: notify, cwd, projectTrusted and
- * homeDir are all injected. src/pi/index.ts (P1.M3.T5) wires them to
- * ctx.ui.notify(...) and ctx.isProjectTrusted().
+ * This module imports only node builtins plus one pure constant
+ * (REJECT_COMMON_THRESHOLD from ../core/score.js — the config default
+ * and the baked band stay one number, never two) — zero pi imports —
+ * so the loader is trivially unit-testable: notify, cwd, projectTrusted
+ * and homeDir are all injected. src/pi/index.ts (P1.M3.T5) wires them
+ * to ctx.ui.notify(...) and ctx.isProjectTrusted().
  */
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { REJECT_COMMON_THRESHOLD } from "../core/score.js";
 
 /**
  * Extension settings — deliberately tiny (PRD §08). Never extend this
@@ -43,10 +47,28 @@ import { join } from "node:path";
 export interface HapaxConfig {
   /** single non-word non-space char, or "" to disable trigger mode */
   triggerChar: string;
-  /** chars before threshold matching: 1 | 2 | 3 */
+  /** chars before threshold matching: 1 | 2 | 3. NOTE (2026-09):
+   *  inert in the live editor — pi-tui only requests suggestions at a
+   *  word start, so the provider clamps the effective threshold to 1
+   *  (see provider.ts). Kept for schema compatibility. */
   threshold: number;
   /** 1–20 */
   maxSuggestions: number;
+  /** Commonness quantile at/above which a word is REJECTED from the
+   *  store (1–255; higher = looser). Default: score.ts's baked
+   *  REJECT_COMMON_THRESHOLD (50). This is the ongoing dial for "too
+   *  many common words in the menu" — e.g. "lists" sits at q = 49,
+   * one notch below the default, so setting 49 rejects it. Probe any
+   * word's q with: node tools/calibrate-bands.mjs <word...> */
+  rejectCommonness: number;
+  /** Hesitation gate for the menu's first appearance (ms; 0–2000).
+   *  While the menu is closed, a word-completion paints only when the
+   *  keystroke arrived ≥ this many ms after the previous one — typing
+   *  full speed never pops the menu; hesitating does. Trigger-char and
+   *  Tab-chain results bypass the gate (explicit intent). Default 150
+   *  (full-speed gaps run ~60–120 ms; 100 is borderline-loose).
+   *  0 = always immediate (pre-2026-09 behavior). */
+  menuDelayMs: number;
   /** PRIMARY chaining flag (PRD §08 h2.46): gates the successor-index
    *  chain layer ONLY — word completion is unaffected either way. The
    *  deprecated `enablePhrases` alias KEY remains accepted and writes
@@ -60,6 +82,8 @@ export const DEFAULT_CONFIG: HapaxConfig = {
   triggerChar: "#",
   threshold: 2,
   maxSuggestions: 8,
+  rejectCommonness: REJECT_COMMON_THRESHOLD,
+  menuDelayMs: 150,
   enableChaining: true,
   debug: false,
 };
@@ -201,6 +225,30 @@ function applyLayer(
     } else {
       notify(
         `hapax: invalid maxSuggestions in ${filePath}, using ${formatValue(current.maxSuggestions)}`,
+        "warning",
+      );
+    }
+  }
+
+  if ("rejectCommonness" in raw) {
+    const v = raw.rejectCommonness;
+    if (typeof v === "number") {
+      next.rejectCommonness = clampNumber(v, 1, 255);
+    } else {
+      notify(
+        `hapax: invalid rejectCommonness in ${filePath}, using ${formatValue(current.rejectCommonness)}`,
+        "warning",
+      );
+    }
+  }
+
+  if ("menuDelayMs" in raw) {
+    const v = raw.menuDelayMs;
+    if (typeof v === "number") {
+      next.menuDelayMs = clampNumber(v, 0, 2000);
+    } else {
+      notify(
+        `hapax: invalid menuDelayMs in ${filePath}, using ${formatValue(current.menuDelayMs)}`,
         "warning",
       );
     }

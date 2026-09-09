@@ -389,7 +389,7 @@ describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", 
 
     expect(current.getSuggestions).not.toHaveBeenCalled(); // hapax answered
     expect(result?.items).toHaveLength(1);
-    expect(result?.items[0].value).toBe("Zendesk");
+    expect(result?.items[0].value).toBe("zephyr");
     expect(result?.prefix).toBe("ze");
   });
 
@@ -450,7 +450,7 @@ describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", 
       force: false,
     });
 
-    expect(result?.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(result?.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
   });
 });
 // ── stock-context delegation (BUG-001) ──────────────────────────────────────

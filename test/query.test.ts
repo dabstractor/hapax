@@ -62,13 +62,22 @@ const put = (
   }
 };
 
-/** Oracle: expected key order per score.ts's compareCandidates — the
- *  same math rankMatches must apply, applied independently here. */
+/** Oracle: expected key order per the CONTENT-DERIVED menu order
+ *  (shorter key → byte-lex) — the same math rankMatches must apply,
+ *  applied independently here. Salience is NOT a sort key. */
 const expectedOrder = (s: CandidateStore, prefix: string): string[] =>
   s
     .entries()
     .filter((c) => c.key.startsWith(prefix))
-    .sort((a, b) => compareCandidates(a, b, s.currentOrdinal()))
+    .sort((a, b) =>
+      a.key.length !== b.key.length
+        ? a.key.length - b.key.length
+        : a.key < b.key
+          ? -1
+          : a.key > b.key
+            ? 1
+            : 0,
+    )
     .map((c) => c.key);
 
 describe("rankMatches — empty results (PRD §04)", () => {
@@ -153,60 +162,60 @@ describe("rankMatches — result shape (work-item contract)", () => {
   });
 });
 
-describe("rankMatches — ordering (PRD §04 h2.26 / §09)", () => {
-  it("salience desc: higher sessionCount first at equal recency", () => {
+describe("rankMatches — ordering (content-derived: shorter key → byte-lex)", () => {
+  it("length is the ONLY primary key: salience stats never reorder", () => {
     const s = new CandidateStore();
-    put(s, "zaghigh", 3);
-    put(s, "zagmid", 2);
+    put(s, "zaghigh", 3); // most salient by count — still sorts by text
     put(s, "zaglow", 1);
+    put(s, "zagmid", 2);
     expect(rankMatches(s, "zag").map((m) => m.key)).toEqual([
-      "zaghigh",
-      "zagmid",
-      "zaglow",
+      "zaglow", // len 6, byte l
+      "zagmid", // len 6, byte m
+      "zaghigh", // len 7 — longest despite top salience
     ]);
   });
 
-  it("userTyped beats plain at equal counts (sticky 1.5 bonus)", () => {
+  it("userTyped/sticky flags never reorder either — equal length → byte-lex", () => {
     const s = new CandidateStore();
     s.upsert(sighting({ key: "zagtyped", display: "zagtyped", fromUser: true }));
     s.upsert(sighting({ key: "zagplain", display: "zagplain" }));
     expect(rankMatches(s, "zag").map((m) => m.key)).toEqual([
-      "zagtyped",
       "zagplain",
+      "zagtyped",
     ]);
   });
 
-  it("deliberate exact salience tie → shorter key first: 'fix' before 'fixpoint'", () => {
+  it("shorter key first: 'fix' before 'fixpoint'", () => {
     const s = new CandidateStore();
     put(s, "fixpoint"); // upserted first on purpose — order must not care
-    put(s, "fix");
+    put(s, "fix", 1, 1, { rankGroup: 0 }); // rarest + highest salience — still just shorter
     expect(rankMatches(s, "fi").map((m) => m.key)).toEqual(["fix", "fixpoint"]);
   });
 
   it("equal-length tie → byte-lex: 'cod' before 'cow'", () => {
     const s = new CandidateStore();
-    put(s, "cow");
-    put(s, "cod"); // reverse insertion — byte order must still win
+    put(s, "cow", 9);
+    put(s, "cod", 1); // reverse insertion + far lower salience — byte order still wins
     expect(rankMatches(s, "co").map((m) => m.key)).toEqual(["cod", "cow"]);
   });
 
-  it("hand-computed mixed board sorts salience desc, then length, then bytes", () => {
+  it("hand-computed mixed board sorts purely by (length, bytes)", () => {
     const s = new CandidateStore();
-    put(s, "abstract"); // 5 — loses every length tie
-    put(s, "abort"); // 5 — len 5 beats len 8
-    put(s, "zzqv", 1, 1, { rankGroup: 0 }); // 2 + 3 + 1 = 6
-    s.upsert(sighting({ key: "meridian", display: "meridian", fromUser: true })); // 6.5
-    put(s, "verdant", 8); // 2·log2(9) + 3 ≈ 9.34
-    put(s, "cod"); // 5, len 3
-    put(s, "cow"); // 5, len 3
+    put(s, "abstract"); // len 8
+    put(s, "abort"); // len 5
+    put(s, "zzqv", 1, 1, { rankGroup: 0 }); // len 4 — most salient, sorts 3rd
+    s.upsert(sighting({ key: "meridian", display: "meridian", fromUser: true })); // len 8
+    put(s, "verdant", 8); // len 7 — top salience, sorts mid-list
+    put(s, "cod"); // len 3
+    put(s, "cow"); // len 3
     expect(rankMatches(s, "").map((m) => m.key)).toEqual([
-      "verdant", // 9.34
-      "meridian", // 6.5
-      "zzqv", // 6
-      "cod", // 5: len 3, byte c-o-d
-      "cow", // 5: len 3, byte c-o-w
-      "abort", // 5: len 5
-      "abstract", // 5: len 8
+      "cod", // 3: c-o-d
+      "cow", // 3: c-o-w
+      "zzqv", // 4
+      "abort", // 5
+      "verdant", // 7
+      "abstract", // 8: a-b…
+      "meridian", // 8: m-e…
     ]);
   });
 
@@ -271,15 +280,15 @@ describe("rankMatches — limits (PRD §04 h2.26: top 8)", () => {
   });
 });
 
-describe("rankMatches — ordinal interplay (recency re-ranking)", () => {
-  it("after nextOrdinal advances + a fresh sighting, recency flips the order", () => {
+describe("rankMatches — ordinal interplay (salience carried, never sorted)", () => {
+  it("after nextOrdinal advances + a fresh sighting, menu order is UNCHANGED (content-derived)", () => {
     const s = new CandidateStore();
-    put(s, "oldnews", 3, 1); // 2·log2(4) + 3 ≈ 7 @ ord 1
-    put(s, "fresh", 1, 1); // 2 + 3 = 5 @ ord 1
-    expect(rankMatches(s, "").map((m) => m.key)).toEqual(["oldnews", "fresh"]);
+    put(s, "oldnews", 3, 1);
+    put(s, "fresh", 1, 1);
+    expect(rankMatches(s, "").map((m) => m.key)).toEqual(["fresh", "oldnews"]);
     for (let i = 0; i < 80; i++) s.nextOrdinal(); // now = 81
-    s.upsert(sighting({ key: "fresh", display: "fresh", ordinal: 81 })); // Δ = 0 → 6.17
-    // oldnews decays: 2·log2(4) + 3·e^-4 ≈ 4.06 < 6.17.
+    s.upsert(sighting({ key: "fresh", display: "fresh", ordinal: 81 }));
+    // Recency/counts no longer reorder the menu: stable text order.
     expect(rankMatches(s, "").map((m) => m.key)).toEqual(["fresh", "oldnews"]);
   });
 

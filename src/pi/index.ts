@@ -44,6 +44,7 @@ import { CandidateStore } from "../core/store.js";
 import type { Dictionary } from "../core/types.js";
 import { loadConfig } from "./config.js";
 import { registerAcwordsCommand } from "./debug.js";
+import { isEnterSubmitWrapper, wrapEditorFactory } from "./editor.js";
 import { IngestPipeline, restoreFromHistory } from "./ingest.js";
 import { resolveDictPath } from "./paths.js";
 import {
@@ -159,6 +160,10 @@ export default function hapax(pi: ExtensionAPI): void {
     pipeline = new IngestPipeline({
       store: sessionStore,
       dictionary: lazyDict,
+      // Ongoing commonness dial (2026-09): flows the user/project
+      // config's reject band straight into admission — "lists" (q = 49)
+      // et al. stop leaking once the user sets rejectCommonness ≤ 49.
+      rejectCommonness: config.rejectCommonness,
       // Sticky dict-failure flag → ingestion gate (BUG-004): stops
       // admissions the instant a lookup observes the failed load —
       // covering the message drain AND restoreFromHistory replay (both
@@ -193,10 +198,31 @@ export default function hapax(pi: ExtensionAPI): void {
     ctx.ui.addAutocompleteProvider((current) => {
       const p = createDisplayProvider(
         createHapaxProvider(store!, config, current, sessionChain),
+        {
+          // Hesitation gate (2026-09 menuDelayMs): full-speed typing
+          // never pops the menu. Explicit intent bypasses: trigger-char
+          // prefixes and armed-chain successor sets (description
+          // "chain") always show immediately.
+          firstPaintDelayMs: config.menuDelayMs,
+          isIntentResult: (r) =>
+            (config.triggerChar !== "" && r.prefix.startsWith(config.triggerChar)) ||
+            r.items.some((i) => i.description === "chain"),
+        },
       );
       displayProvider = p;
       return p;
     });
+
+    // Enter-submits guard (2026-09, src/pi/editor.ts): with menus
+    // auto-opening on typing, pi-tui's Enter-accepts-word-menu behavior
+    // would insert candidates instead of submitting. Wrap whatever
+    // editor factory an extension set (pi-vim etc.) — capture-previous
+    // composition per the extension docs. Idempotent across reloads
+    // (a factory that is already ours is not re-wrapped).
+    const editorFactory = ctx.ui.getEditorComponent?.();
+    if (editorFactory && !isEnterSubmitWrapper(editorFactory)) {
+      ctx.ui.setEditorComponent?.(wrapEditorFactory(editorFactory));
+    }
 
     // /acwords only in debug mode (PRD §08 h2.48): the command must not
     // exist in normal runs.

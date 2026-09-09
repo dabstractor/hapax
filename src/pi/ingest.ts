@@ -222,6 +222,12 @@ export interface IngestPipelineOptions {
    *  sticky dictionary-failure flag; tests wire it to a mutable boolean.
    *  NOT config — internal wiring (PRD §08 surface unchanged). */
   isDisabled?: () => boolean;
+  /** Commonness reject band override (2026-09 pi-config knob): passed
+   *  straight through to admit()'s opts.rejectCommonness so the menu's
+   *  word-exclusion strictness is tunable per user/project without a
+   *  code edit. Default: score.ts's baked REJECT_COMMON_THRESHOLD
+   *  (identical to pre-2026-09 behavior). */
+  rejectCommonness?: number;
   /** trailing-debounce window; default 300 (PRD §05 h2.29, baked) */
   debounceMs?: number;
   /** slice size in chars; default 65_536 (PRD §05 h2.30, baked) */
@@ -267,6 +273,8 @@ export class IngestPipeline {
   #chunkBytes: number;
   #yieldFn: YieldFn;
   #onAdmittedTokens?: (runs: string[][]) => void;
+  /** Commonness reject band override — see IngestPipelineOptions. */
+  #rejectCommonness?: number;
   /** Optional disable gate (BUG-004) — see IngestPipelineOptions. */
   #isDisabled?: () => boolean;
   /** Admission memo (2026-09 Issue 4): distinct raw token → computed
@@ -299,6 +307,7 @@ export class IngestPipeline {
     this.#chunkBytes = options.chunkBytes ?? 65_536;
     this.#yieldFn = options.yieldFn ?? defaultYield;
     this.#onAdmittedTokens = options.onAdmittedTokens;
+    this.#rejectCommonness = options.rejectCommonness;
     this.#isDisabled = options.isDisabled;
   }
 
@@ -548,6 +557,9 @@ export class IngestPipeline {
         draft,
         this.#dictionary,
         draft.isSubword ? wholeGroup : undefined,
+        this.#rejectCommonness === undefined
+          ? undefined
+          : { rejectCommonness: this.#rejectCommonness },
       );
       // NEW-001: admit()'s lookup is the only call that can trigger (and
       // fail) the lazy dictionary load. If the failure is observed here,

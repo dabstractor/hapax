@@ -248,7 +248,18 @@ const PROSE_PROBES: readonly ProseProbe[] = [
       expected: "delegate",
     }),
   ),
-  { fragment: "posts", full: "posts", title: "menu ['posts'] (mid band)", expected: ["posts"] },
+  {
+    fragment: "posts",
+    full: "post",
+    title: "delegate (stem 'post' REJECT band — conjugation guard)",
+    expected: "delegate",
+  },
+  {
+    fragment: "fenc",
+    full: "fences",
+    title: "menu ['Fences'] (relief; guard skips properName)",
+    expected: ["Fences"],
+  },
   {
     fragment: "firs",
     full: "first",
@@ -323,19 +334,20 @@ describe("adversarial Probe A — prose no-menu (BUG-001)", () => {
     }
   });
 
-  it("positive control: post → posts opens a real menu on the SAME store", async () => {
+  it("positive control: fenc → Fences opens a real menu on the SAME store", async () => {
     // Guards this file against vacuous no-menu results: the SAME store
-    // DOES answer fragments of admitted mid-band words through the same
-    // provider path ('posts' occurs in prose.jsonl — calibration control;
-    // 'garden', the former control, joined the reject band in the
-    // 2026-09 Issue-1 retune).
-    expect(rankMatches(store, "post").map((m) => m.display)).toEqual(["posts"]);
+    // DOES answer fragments of admitted words through the same provider
+    // path. 2026-09 conjugation guard: prose inflections of common stems
+    // ('posts', stem post=85) no longer store — the live control is now
+    // the proper-noun-relieved 'Fences' (capitalized in prose.jsonl;
+    // properName drafts skip the guard, mirroring the relief).
+    expect(rankMatches(store, "fenc").map((m) => m.display)).toEqual(["Fences"]);
     const current = mockCurrent(SENTINEL);
     const provider = createHapaxProvider(store, cfg(), current);
-    const result = await provider.getSuggestions(["post"], 0, 4, opts());
+    const result = await provider.getSuggestions(["fenc"], 0, 4, opts());
     expect(result).not.toBe(SENTINEL);
-    expect(result!.items.map((i) => i.value)).toEqual(["posts"]);
-    expect(result!.prefix).toBe("post");
+    expect(result!.items.map((i) => i.value)).toEqual(["Fences"]);
+    expect(result!.prefix).toBe("fenc");
     expect(provider.__hapaxLive()).not.toBeNull();
   });
 });
@@ -365,14 +377,14 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     // 'z' — auto-open contract (effective threshold 1): the word-start
     // request already publishes the live set.
     expect((await type(wrapper, "z"))!.items.map((i) => i.value)).toEqual([
-      "Zendesk",
       "zephyr",
+      "Zendesk",
     ]);
     expect(base.__hapaxLive()).not.toBeNull();
 
     // 'e' — first qualifying keystroke paints {Zendesk, zephyr} @"ze".
     const ze = await type(wrapper, "ze");
-    expect(ze!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(ze!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
     expect(
       prefixIsAnchorSafe("ze", 2, ze!.prefix),
       "'ze' response prefix must be the buffer's exact suffix",
@@ -404,7 +416,7 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     const wrapper = createDisplayProvider(base);
 
     const ze = await type(wrapper, "ze"); // paints {Zendesk, zephyr} @"ze" at t=0
-    expect(ze!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(ze!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
 
     vi.advanceTimersByTime(50);
     const zep = await type(wrapper, "zep"); // immediate paint @"zep" (anchor moved)

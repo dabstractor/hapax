@@ -228,7 +228,7 @@ describe("M1 DoD: no persistence", () => {
       fragment: "l",
       prefix: "#l",
     });
-    expect(rankMatches(store, "l")[0]!.display).toBe("lwlock");
+    expect(rankMatches(store, "l")[0]!.display).toBe("lwlock"); // "logs" guard-rejected (stem log=67)
 
     const delegate = {
       getSuggestions: vi.fn(async () => null),

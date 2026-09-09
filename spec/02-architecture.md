@@ -98,8 +98,9 @@ build script uses only node stdlib). Do not add dependencies.
 
 1. Provider's `getSuggestions` receives editor lines + cursor.
 2. Extract the current word fragment before the cursor (or trigger-char run).
-3. If fragment length ≥ threshold (default 2) or trigger char active: prefix
-   search the store, score-sort, return top 8 items.
+3. If a word fragment is live (1 char; see 07) or the trigger char is
+   active: prefix search the store, sort content-derived (04), return
+   top 8 items.
 4. This must complete in < 1 ms. No allocation-heavy work; the store's prefix
    index is maintained at ingest time.
 

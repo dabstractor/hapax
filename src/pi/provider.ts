@@ -659,6 +659,27 @@ export interface DisplayProviderOptions {
    * "The menu thus updates at most every 100 ms"). Default 100.
    */
   debounceMs?: number;
+  /**
+   * Hesitation gate for the menu's FIRST appearance (2026-09,
+   * `menuDelayMs` config): a closed menu only paints on a word-start
+   * query arriving at least this many ms after the PREVIOUS keystroke —
+   * typing full speed (gaps under the threshold) never pops the menu,
+   * hesitating mid-sentence does. Platform constraint (see provider
+   * module doc / spec 07): pi-tui asks the provider exactly once per
+   * word (at its first letter) — a suppressed first paint cannot be
+   * recovered mid-word — so the gate measures inter-keystroke gaps at
+   * the word boundary, not fragment age. 0 disables the gate
+   * (immediate first paint, the pre-2026-09 behavior). Default 0 here;
+   * index.ts wires the config value (default 150).
+   */
+  firstPaintDelayMs?: number;
+  /**
+   * Intent test: results that BYPASS the hesitation gate — explicit
+   * completion intent (trigger-char prefix, armed-chain successors)
+   * must always show immediately. Called with the fresh hapax result
+   * after classification; default: nothing bypasses.
+   */
+  isIntentResult?: (result: { items: AutocompleteItem[]; prefix: string }) => boolean;
 }
 
 /**
@@ -741,6 +762,8 @@ export function createDisplayProvider(
   opts: DisplayProviderOptions = {},
 ): AutocompleteProvider & { dispose: () => void } {
   const debounceMs = opts.debounceMs ?? 100;
+  const firstPaintDelayMs = opts.firstPaintDelayMs ?? 0;
+  const isIntentResult = opts.isIntentResult ?? (() => false);
 
   // PopupScheduler state (PRD §07 rules 2–3) — all closure-private.
   // displayed* is what pi was last told to paint; pending* is the swap
@@ -749,6 +772,10 @@ export function createDisplayProvider(
   let displayedItems: AutocompleteItem[] = [];
   let displayedPrefix = "";
   let lastPaintAt = 0; // Date.now() of the last visible-set change
+  // Hesitation gate (2026-09 menuDelayMs): Date.now() of the previous
+  // non-forced getSuggestions call — each such call IS a keystroke in
+  // pi-tui's pull model. Null before the first call.
+  let lastKeystrokeAt: number | null = null;
   // True once applyCompletion has run since the last paint: the buffer
   // changed underneath the displayed set, so its prefix anchor is stale
   // and must never be re-served (rule 4's acceptance exception).
@@ -842,6 +869,13 @@ export function createDisplayProvider(
       // branch.
       if (options.force === true) return result;
 
+      // Hesitation-gate bookkeeping: this call is a keystroke. Record
+      // the gap to the PREVIOUS one before overwriting (the gate below
+      // reads the pre-call value). Forced calls are invisible here —
+      // same as everywhere in the scheduler.
+      const prevKeystrokeAt = lastKeystrokeAt;
+      lastKeystrokeAt = Date.now();
+
       const live = base.__hapaxLive();
 
       // 2–3. Close / delegate / defensively-empty: classify AFTER the inner
@@ -858,6 +892,27 @@ export function createDisplayProvider(
 
       const items = result.items.map((i) => ({ ...i })); // defensive copy
       const sig = signatureOf(items);
+
+      // 3.5. Hesitation gate (2026-09 menuDelayMs): while the menu is
+      // CLOSED and the fresh result is a word-completion (not explicit
+      // intent — trigger char / chain), paint only when this keystroke
+      // arrived ≥ firstPaintDelayMs after the previous one — full-speed
+      // typing (small gaps) never pops the menu. Platform reality: this
+      // query is the word's ONLY one (pi-tui asks at the first letter;
+      // a closed menu self-sustains nothing), so suppressing here means
+      // no menu for this word — which is exactly the requested behavior
+      // for flow typing. Returning empty items keeps the menu closed
+      // (pi-tui cancels on zero items); the anchor invariant holds — an
+      // empty set carries no prefix that could ever be applied.
+      if (
+        displayedSig === null &&
+        firstPaintDelayMs > 0 &&
+        prevKeystrokeAt !== null &&
+        Date.now() - prevKeystrokeAt < firstPaintDelayMs &&
+        !isIntentResult({ items, prefix: result.prefix })
+      ) {
+        return { items: [], prefix: result.prefix };
+      }
 
       // 4a. First paint or idempotent repaint — never delay the menu's
       // first appearance; identical sets refresh the window clock.

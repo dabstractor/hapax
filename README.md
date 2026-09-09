@@ -23,12 +23,34 @@ scripted zero-typing chain proof is the item-7 section of
 
 ## Features
 
+Behavioral truth lives in [`spec/`](spec/SPEC.md) — the single source
+of truth (see its "Spec maintenance policy": interactive sessions must
+keep it current; this README is a summary).
+
 - **Trigger-char completion from the 1st character** (default `#`) — `#ze`
   looks up from the first character after `#`; a bare `#` lists the
   session's top candidates (`src/pi/provider.ts`).
-- **Threshold matching from N typed characters**, anywhere a word starts
-  (default 2, configurable 1–3) — no position gating, no special mode
-  (`src/pi/provider.ts`).
+- **Word matching from the 1st typed character**, anywhere a word
+  starts — no position gating, no special mode. The menu opens
+  automatically while typing (identifier chars are registered as
+  autocomplete triggers; `config.threshold` is retained but inert —
+  pi-tui only requests at word starts) (`src/pi/provider.ts`).
+- **Predictable, content-derived menu order** — shortest match first,
+  then lexicographic; never reshuffled by session stats. Salience
+  (recency, repetition, sticky user-typed, rarity) governs store
+  retention/eviction only (`src/core/score.ts`, `src/core/query.ts`).
+- **Conjugation guard** — inflections of common words (`deleted`,
+  `lists`, `uploads`) never enter the store: a reject-common or
+  attested-mid stem rejects the word; capitalized (proper-noun)
+  candidates are exempt (`src/core/score.ts`).
+- **Tunable word exclusion** — `rejectCommonness` in
+  `~/.pi/agent/hapax.json` (or `.pi/hapax.json`) sets the dictionary
+  commonness quantile at/above which words reject. Probe words with
+  `node tools/calibrate-bands.mjs <words...>`.
+- **Enter always submits** — while a hapax word menu is open, Enter
+  dismisses the menu and submits the prompt (Tab is the accept key).
+  Composes with pi-vim/split-editor via a non-mutating forwarding
+  proxy (`src/pi/editor.ts`).
 - **Stock contexts are never preempted** — slash-command lines (`/re`),
   `@` mentions, and fragments inside quoted paths delegate verbatim to
   pi's own completion (`classifyStockContext` in `src/pi/provider.ts`,
@@ -44,9 +66,9 @@ scripted zero-typing chain proof is the item-7 section of
   NREL walk at zero typed chars is integration item 7 (PASS,
   `docs/M1-DoD.md`; chain-after-restore probe in
   `test/adversarial-typing.test.ts`).
-- **Session salience ranking** — recency, repetition, and a sticky
-  user-typed boost decide what reaches the menu and in what order
-  (`src/core/score.ts`).
+- **Session salience retention** — recency, repetition, and a sticky
+  user-typed feed the eviction score that decides which candidates
+  stay in the bounded store (`src/core/score.ts`).
 - **Case-preserving insertion** — type `nrel`, get `NREL`: matching is
   case-insensitive, insertion uses the casing last seen in-session.
 - **Secrets never suggested** — an always-on, two-layer gate keeps
@@ -340,8 +362,10 @@ silently (forward compatibility):
 | Field            | Type    | Default | Valid                                                   | Meaning                                        |
 | ---------------- | ------- | ------- | ------------------------------------------------------- | ---------------------------------------------- |
 | `triggerChar`    | string  | `"#"`   | one non-word, non-space character (`/^[^\w\s]$/`), or `""` to disable trigger mode entirely | prefix that opens the completion popup |
-| `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | chars before threshold matching                 |
+| `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | retained but inert — matching is effectively 1 char (see spec 07) |
 | `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once               |
+| `rejectCommonness` | number | `50`  | `1`–`255` (clamped)                                      | dictionary quantile at/above which words reject (lower = stricter); probes: `node tools/calibrate-bands.mjs <words>` |
+| `menuDelayMs`     | number  | `150`   | `0`–`2000` (clamped)                                     | hesitation gate for the menu's first appearance — full-speed typing never pops it; trigger-char/Tab-chain bypass; `0` = immediate |
 | `enableChaining` | boolean | `true`  | `true` / `false`                                         | gates chained (successor) completion only; word completion unaffected either way; `enablePhrases` is accepted as a deprecated alias and is mapped to this key |
 | `debug`          | boolean | `false` | `true` / `false`                                         | enables the `/acwords` command + store dump     |
 

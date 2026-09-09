@@ -44,6 +44,43 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const dictPath = join(root, "dict", "common-en.bin");
 const tsvPath = join(root, "tools", "corpus", "en-50k.tsv");
 
+// ── 0. Word-probe mode: node tools/calibrate-bands.mjs <word...> ──────────
+// The manual tuning dial for admission: print each word's dictionary q
+// (null = absent → rarest, group 0) and its verdict under the CURRENT
+// constants, then exit. Use it to pick a rejectCommonness value in
+// ~/.pi/agent/hapax.json (or .pi/hapax.json): a word rejects when its
+// q ≥ the configured band, so to drop "lists" (q=49) set
+// rejectCommonness to 49 — and every word at or above it goes too.
+const words = process.argv.slice(2);
+if (words.length > 0) {
+  const dict = loadDictionary(dictPath);
+  const draft = (key) => ({
+    key,
+    display: key,
+    properName: false,
+    isSubword: false,
+  });
+  console.log(`word → q → verdict under REJECT=${REJECT_COMMON_THRESHOLD}, MID=${MID_FREQ_THRESHOLD} (lc | Cap)`);
+  const capDraft = (key) => ({
+    key,
+    display: key[0].toUpperCase() + key.slice(1),
+    properName: true,
+    isSubword: false,
+  });
+  for (const w of words) {
+    const lower = w.toLowerCase();
+    const q = dict.lookup(lower);
+    const verdict = admit(draft(lower), dict);
+    const cap = admit(capDraft(lower), dict);
+    const qText = q === null ? "absent" : String(q);
+    const fmt = (v) => (v === "reject" ? "REJECT" : `g${v}`);
+    console.log(
+      `  ${w.padEnd(16)} q=${qText.padEnd(6)} ${fmt(verdict).padEnd(6)} | Cap: ${fmt(cap)}`,
+    );
+  }
+  process.exit(0);
+}
+
 // ── 1. Artifact header + raw band populations ──────────────────────────────
 const buf = readFileSync(dictPath);
 const dv = new DataView(buf.buffer, buf.byteOffset, buf.length);

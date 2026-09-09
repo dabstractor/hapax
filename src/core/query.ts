@@ -11,10 +11,15 @@
  * allocation-heavy work: one prefixRange call, one key slice, one get
  * per candidate, one sort of the (typically small) range.
  *
- * Order is compareCandidates's exactly (PRD §04 h2.26): salience desc →
- * shorter key → byte-lex on the lowercase key — so the menu never shows
- * a visible tie. Matching is case-insensitive (h2.27): the prefix is
- * lowercased here; insertion uses the stored display casing verbatim.
+ * MENU ORDER (2026-09 redesign, drift from PRD §04 h2.26 recorded
+ * here): compareRankedMatches is now CONTENT-DERIVED ONLY — shorter
+ * key first, then byte-lex on the lowercase key. Salience is NOT a
+ * sort key anymore: it decides MEMBERSHIP (admission bands) and
+ * eviction, never position — a menu whose order depends on recency/
+ * frequency reshuffles between keystrokes and sessions, defeating the
+ * muscle memory completion exists to build. Ordering is pure text so
+ * the same fragment always yields the same list: predictable, stable
+ * while narrowing, and identical to editor/shell convention.
  * An empty result tells the provider to delegate (never an empty menu) —
  * this function just returns [].
  *
@@ -60,21 +65,15 @@ export interface RankOptions {
   limit?: number;
 }
 
-/** Total order over the result list — score.ts's
- *  compareCandidates ladder (PRD §04 h2.26) mirrored exactly. Ties in
- *  salience mean EXACT float equality:
- *
- *  1. salience descending (higher salience first)
- *  2. tie → shorter key first
- *  3. tie → lexicographic byte order on the lowercase key
- *
- *  Exported for tests; rankMatches is the production caller. */
+/** Total order over the result list — CONTENT-DERIVED (2026-09
+ * redesign): shorter key first, then byte-lex. Deliberately ignores
+ * salience (see module doc: salience governs membership/eviction only,
+ * never menu position). Exported for tests; rankMatches is the
+ * production caller. */
 export function compareRankedMatches(a: RankedMatch, b: RankedMatch): number {
-  const bySalience = b.salience - a.salience;
-  if (bySalience !== 0) return bySalience;
   if (a.key.length !== b.key.length) return a.key.length - b.key.length;
-  // Byte order (see score.ts compareCandidates — keys are ASCII, so
-  // UTF-16 code-unit comparison equals byte order; never quantize).
+  // Byte order (keys are ASCII, so UTF-16 code-unit comparison equals
+  // byte order; locale-independent). The menu never shows a visible tie.
   return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
 }
 
@@ -86,8 +85,8 @@ export function compareRankedMatches(a: RankedMatch, b: RankedMatch): number {
  * Accepts any prefix casing — it is lowercased BEFORE prefixRange, since
  * prefixRange deliberately throws RangeError on non-lowercase input
  * (caller-bug guard in store.ts). Returns at most `opts.limit` (default
- * 8) results in the compareCandidates order: salience desc → shorter
- * key → byte-lex (PRD §04 h2.26/§09). Word `description` is `"session
+ * 8) results in compareRankedMatches order (content-derived: shorter
+ * key → byte-lex; salience never sorts — see module doc). Word `description` is `"session
  * x" + sessionCount` (ASCII x per the work-item contract, e.g. "session
  * x12"). `salience` is the exact unquantized value.
  *
@@ -123,10 +122,11 @@ export function rankMatches(
   }
 
   // Sort of the (typically small) set: O(r log r), well under the <1 ms
-  // keystroke gate at realistic sizes. Same ladder as compareCandidates
-  // (PRD §04 h2.26) via compareRankedMatches. If the P1.M4.T1.S2 bench
-  // pass ever shows huge hot ranges, a partial top-N selection is the
-  // documented fallback — keep it simple until measured.
+  // keystroke gate at realistic sizes. Content-derived order (module
+  // doc): shorter key → byte-lex — salience is carried per item for
+  // diagnostics/eviction parity but NEVER sorts the menu. If the
+  // P1.M4.T1.S2 bench pass ever shows huge hot ranges, a partial top-N
+  // selection is the documented fallback — keep it simple until measured.
   matches.sort(compareRankedMatches);
   return matches.slice(0, limit);
 }
