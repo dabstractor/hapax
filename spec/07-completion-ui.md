@@ -91,7 +91,10 @@ Four interacting rules, implemented in the provider:
    tab may insert a top item before the popup painted it; accepted, see 01.)
    Tab resolves to a completion, never to a menu-open action.
 2. **Display debounce: 100 ms — and a hesitation gate on first
-   appearance (`menuDelayMs`, default 150 ms).** Suggestions are
+   appearance (`menuDelayMs`, default 300 ms — measured at the word
+   boundary, the longest natural inter-key gap: 150–250 ms at 100+ WPM,
+   which is why 150 suppressed almost nothing in real rhythm).**
+   Suggestions are
    *returned* to pi immediately from the live query, but:
    - First appearance: while the menu is CLOSED, a word-completion
      paints only when the keystroke that triggered the query arrived

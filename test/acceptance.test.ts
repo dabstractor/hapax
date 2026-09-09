@@ -337,10 +337,14 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     // parameterized on the IMPORTED constants — a future retune that
     // moves a word out of (or into) the band fails here and forces the
     // label surface to be re-synced, never silently drifted.
+    // (2026-09 sentence-initial rule: "apples" ("…wide. Apples like…")
+    // and "feed" ("…first step. Feed the tree…") have their capitalized
+    // sightings right after a period — no properName, no relief, must NOT
+    // store. The words below are capitalized at MESSAGE STARTS (no
+    // preceding punctuation), which still counts: the rule suppresses
+    // capitals after .!? + closers, not text starts.)
     const relieved: [word: string, fixtureDisplay: string][] = [
       ["apple", "Apple"],
-      ["apples", "Apples"],
-      ["feed", "Feed"],
       ["fresh", "Fresh"],
       ["rain", "Rain"],
       ["spring", "Spring"],
@@ -377,8 +381,10 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     // ── Casing gate: common words that occur ONLY lowercase in this
     // fixture must stay absent even when the relief band covers their q —
     // the relief is per-sighting properName, never a word-level whitelist.
-    for (const word of ["water", "kitchen", "window", "garden", "bread", "wind", "morning", "more"]) {
-      expect(store.get(word), `${word}: lowercase-only sighting must never store`).toBeUndefined();
+    // "apples" joins this class under the 2026-09 sentence-initial rule
+    // (its one capitalized sighting is after ". ").
+    for (const word of ["water", "kitchen", "window", "garden", "bread", "wind", "morning", "more", "apples", "feed"]) {
+      expect(store.get(word), `${word}: lowercase-only / sentence-initial-only sighting must never store`).toBeUndefined();
     }
 
     // ── precision@8 rank order for the menu-positive labels under the

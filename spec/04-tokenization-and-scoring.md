@@ -58,8 +58,20 @@ completion (`roun` → `Rounding` from `fixRoundingError`).
 - Lookup keys and store keys are **lowercase**.
 - Each candidate remembers its **display casing**: the most recently seen
   casing variant (recency wins; "how it was last used is how you want it").
-- Capitalized-initial words (first char uppercase at extraction) set a
-  `properName` hint (feeds salience, below).
+- **properName hint (2026-09 sentence-initial rule):** a Capitalized
+  token sets the `properName` hint ONLY when its capital is not
+  orthographic — i.e. NOT immediately preceded (skipping whitespace)
+  by sentence-ending punctuation (`.` `!` `?`, optionally wrapped in
+  closing quotes/brackets `)]}"'’”»`). "Done. Check the logs" yields
+  `check` WITHOUT the hint; mid-sentence "then Check the logs" yields
+  it WITH the hint. The rule applies to the whole token and its FIRST
+  sub-word ("…period. DownloadManager" → `download` unhinted,
+  `manager` keeps its camelCase hint). Text/message starts do NOT
+  count as sentence starts (no preceding punctuation — a capital there
+  is still evidence, e.g. "Rain washes…" at a message start keeps the
+  hint). Downstream: unhinted capitals lose the proper-noun relief and
+  the conjugation guard's casing exemption — sentence-initial
+  "Deleted" rejects like lowercase `deleted`.
 
 ## Shape gate (`src/core/shapeGate.ts`)
 

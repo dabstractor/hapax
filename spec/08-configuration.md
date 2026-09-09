@@ -31,13 +31,17 @@ defaults, continue running. Missing files are normal.
                               // <words...> prints q + verdict (lowercase and
                               // Capitalized). Default: the baked constant
                               // in src/core/score.ts.
-  "menuDelayMs": 150,        // 0–2000: hesitation gate for the menu's
-                              // first appearance. Word-completions paint
-                              // only when a keystroke arrives ≥ this many
-                              // ms after the previous one — full-speed
-                              // typing never pops the menu. Trigger-char
-                              // and Tab-chain results bypass it. 0 =
-                              // always immediate.
+  "menuDelayMs": 300,        // 0–2000: hesitation gate for the menu's
+                              // first appearance, measured at the WORD
+                              // BOUNDARY (queries only fire at word
+                              // starts, and the space→letter gap is the
+                              // longest natural one: 150–250 ms at 100+
+                              // WPM — 150 suppressed almost nothing in
+                              // real rhythm). Word-completions paint only
+                              // when a keystroke arrives ≥ this many ms
+                              // after the previous. Trigger-char and
+                              // Tab-chain results bypass it. 0 = always
+                              // immediate.
   "enableChaining": true,    // M2 flag; gates the successor-index chain
                               // layer only. "enablePhrases" is accepted as a
                               // deprecated alias for this key. Word

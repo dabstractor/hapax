@@ -365,7 +365,7 @@ silently (forward compatibility):
 | `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | retained but inert — matching is effectively 1 char (see spec 07) |
 | `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once               |
 | `rejectCommonness` | number | `50`  | `1`–`255` (clamped)                                      | dictionary quantile at/above which words reject (lower = stricter); probes: `node tools/calibrate-bands.mjs <words>` |
-| `menuDelayMs`     | number  | `150`   | `0`–`2000` (clamped)                                     | hesitation gate for the menu's first appearance — full-speed typing never pops it; trigger-char/Tab-chain bypass; `0` = immediate |
+| `menuDelayMs`     | number  | `300`   | `0`–`2000` (clamped)                                     | hesitation gate measured at the word boundary (the longest natural gap); full-speed typing never pops it; trigger-char/Tab-chain bypass; `0` = immediate |
 | `enableChaining` | boolean | `true`  | `true` / `false`                                         | gates chained (successor) completion only; word completion unaffected either way; `enablePhrases` is accepted as a deprecated alias and is mapped to this key |
 | `debug`          | boolean | `false` | `true` / `false`                                         | enables the `/acwords` command + store dump     |
 

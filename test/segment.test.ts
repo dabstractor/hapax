@@ -258,9 +258,9 @@ describe("tokenize — ordering and bounds invariants", () => {
 describe("tokenize — span offsets (P1.M1.T3.S1)", () => {
   it("reports exact UTF-16 spans on the canonical mixed case", () => {
     expect(tokenize("fix 0f3a9c2 now")).toEqual([
-      { raw: "fix", hexish: false, start: 0, end: 3 },
-      { raw: "0f3a9c2", hexish: true, start: 4, end: 11 },
-      { raw: "now", hexish: false, start: 12, end: 15 },
+      { raw: "fix", hexish: false, start: 0, end: 3, sentenceStart: false },
+      { raw: "0f3a9c2", hexish: true, start: 4, end: 11, sentenceStart: false },
+      { raw: "now", hexish: false, start: 12, end: 15, sentenceStart: false },
     ]);
   });
 
@@ -292,7 +292,7 @@ describe("tokenize — span offsets (P1.M1.T3.S1)", () => {
 
   it("hexish token reports its own span, not an absorbed base tail's", () => {
     const [whole] = tokenize("0f3a9c2");
-    expect(whole).toEqual({ raw: "0f3a9c2", hexish: true, start: 0, end: 7 });
+    expect(whole).toEqual({ raw: "0f3a9c2", hexish: true, start: 0, end: 7, sentenceStart: false });
     const text = "run 0f3a9c2!";
     const toks = tokenize(text);
     expect(toks).toHaveLength(2); // "run" + one opaque hexish token
@@ -312,15 +312,15 @@ describe("tokenize — span offsets (P1.M1.T3.S1)", () => {
     // "草sword" is disqualified whole; 草 is ONE UTF-16 unit, so "error"
     // starts after it: f i x ␠ 草 s w o r d ␠ e r r o r → 11..16.
     expect(tokenize(text)).toEqual([
-      { raw: "fix", hexish: false, start: 0, end: 3 },
-      { raw: "error", hexish: false, start: 11, end: 16 },
+      { raw: "fix", hexish: false, start: 0, end: 3, sentenceStart: false },
+      { raw: "error", hexish: false, start: 11, end: 16, sentenceStart: false },
     ]);
   });
 });
 
 describe("expandCandidates — camelCase/snake_case subwords (PRD §04 h3.4/h3.5)", () => {
   const expand = (raw: string): CandidateDraft[] =>
-    expandCandidates({ raw, hexish: false, start: 0, end: raw.length });
+    expandCandidates({ raw, hexish: false, start: 0, end: raw.length, sentenceStart: false });
 
   it("fixRoundingError → whole + Rounding + Error (fix dropped, len<4)", () => {
     expect(expand("fixRoundingError")).toEqual([
@@ -423,7 +423,7 @@ describe("expandCandidates — camelCase/snake_case subwords (PRD §04 h3.4/h3.5
 
   it("hexish tokens are opaque: exactly one whole draft, never split", () => {
     expect(
-      expandCandidates({ raw: "f3a9c2e", hexish: true, start: 0, end: 7 }),
+      expandCandidates({ raw: "f3a9c2e", hexish: true, start: 0, end: 7, sentenceStart: false }),
     ).toEqual([
       {
         key: "f3a9c2e",
@@ -504,5 +504,51 @@ describe("expandCandidates — camelCase/snake_case subwords (PRD §04 h3.4/h3.5
         expect(d.parentKey).toBeUndefined();
       }
     }
+  });
+});
+describe("sentence-start flag + properName suppression (2026-09 rule)", () => {
+  const starts = (text: string): boolean[] =>
+    tokenize(text).map((t) => t.sentenceStart);
+
+  it("token after '. ', '! ', '? ' (incl. newline + closers) is sentenceStart", () => {
+    expect(starts("Done. Check the logs")).toEqual([
+      false, // Done
+      true, // Check (after ". ")
+      false, // the
+      false, // logs
+    ]);
+    expect(starts("Wow! Really?")[1]).toBe(true); // Really after "! "
+    expect(starts("Sure? Yes")[1]).toBe(true);
+    expect(starts('He said." Quietly')).toEqual([false, false, true]); // Quietly after closers
+    expect(starts("One.\nTwo")[1]).toBe(true); // newline is whitespace
+  });
+
+  it("mid-sentence capitals and message starts are NOT sentenceStart", () => {
+    expect(starts("Check the National labs")).toEqual([
+      false, // message start — no preceding punctuation (per spec: only AFTER punctuation counts)
+      false,
+      false, // National mid-sentence
+      false,
+    ]);
+    expect(starts("v2.5 Release")).toEqual([false, false]); // '.' inside a token is not a sentence end
+  });
+
+  it("expandCandidates suppresses properName for sentence-initial capitals (whole + first sub)", () => {
+    const [afterDot] = tokenize(". Check");
+    const [, midText] = tokenize("then Check"); // the Check token, mid-sentence
+    expect(afterDot.sentenceStart).toBe(true);
+    expect(midText.sentenceStart).toBe(false);
+    const [afterDraft] = expandCandidates(afterDot);
+    const [midDraft] = expandCandidates(midText);
+    expect(afterDraft.properName).toBe(false); // orthographic capital
+    expect(midDraft.properName).toBe(true); // genuine capitalization signal
+
+    // First sub-word of a sentence-initial identifier too.
+    const [init] = tokenize(". DownloadManager");
+    const subs = expandCandidates(init).filter((d) => d.isSubword);
+    expect(subs[0]!.key).toBe("download");
+    expect(subs[0]!.properName).toBe(false);
+    expect(subs[1]!.key).toBe("manager");
+    expect(subs[1]!.properName).toBe(true); // mid-token camel capital keeps the hint
   });
 });

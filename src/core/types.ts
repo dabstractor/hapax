@@ -86,6 +86,15 @@ export interface RawToken {
   start: number;
   /** one past the token's last char (exclusive), same string as `start` */
   end: number;
+  /** True when the text immediately before the token (skipping
+   *  whitespace) ends with sentence-ending punctuation — `.` `!` `?`,;
+   *  optionally wrapped in closing quotes/brackets (`)”"’»…`). A
+   *  Capitalized token at such a position is sentence-INITIAL: its
+   *  capital is orthographic, not a proper-name signal (2026-09 rule —
+   *  sentence-first words like "Check…" no longer set the properName
+   *  hint, so relief/conjugation exemptions don't fire for them).
+   *  Message starts do NOT count (no preceding punctuation). */
+  sentenceStart: boolean;
 }
 
 /** Why the shape gate rejected a candidate. PRD §04 shape-gate rules. */

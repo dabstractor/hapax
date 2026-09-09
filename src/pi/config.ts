@@ -64,12 +64,17 @@ export interface HapaxConfig {
   /** Hesitation gate for the menu's first appearance (ms; 0–2000).
    *  While the menu is closed, a word-completion paints only when the
    *  keystroke arrived ≥ this many ms after the previous one — typing
-   *  full speed never pops the menu; hesitating does. True keystroke
-   *  timing comes from the editor proxy's input clock; without an
-   *  editor factory it degrades to query-gap timing (rarely
+   *  full speed never pops the menu; hesitating does. MEASURED AT THE
+   *  WORD BOUNDARY: queries only ever fire at word starts (pi-tui asks
+   *  once per word), and the space→letter transition is the LONGEST
+   *  natural gap in typing (150–250 ms at 100+ WPM) — 150 suppressed
+   *  almost nothing in real rhythm (live-reported) despite passing
+   *  uniformly-paced tests; 300 clears real flow while a genuine
+   *  "what was that word" hesitation (400 ms+) still opens. True
+   *  keystroke timing comes from the editor proxy's input clock;
+   *  without an editor factory it degrades to query-gap timing (rarely
    *  suppresses). Trigger-char and Tab-chain results bypass the gate
-   *  (explicit intent). Default 150 (full-speed gaps run ~60–120 ms;
-   *  100 is borderline-loose). 0 = always immediate. */
+   *  (explicit intent). 0 = always immediate. */
   menuDelayMs: number;
   /** PRIMARY chaining flag (PRD §08 h2.46): gates the successor-index
    *  chain layer ONLY — word completion is unaffected either way. The
@@ -85,7 +90,7 @@ export const DEFAULT_CONFIG: HapaxConfig = {
   threshold: 2,
   maxSuggestions: 8,
   rejectCommonness: REJECT_COMMON_THRESHOLD,
-  menuDelayMs: 150,
+  menuDelayMs: 300,
   enableChaining: true,
   debug: false,
 };

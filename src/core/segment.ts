@@ -220,6 +220,23 @@ export function tokenize(text: string): RawToken[] {
 
   // Merge: both lists ascend by start with disjoint spans → linear
   // two-pointer merge produces document order (skipping absorbed bases).
+  // sentenceStart (2026-09 rule): sentence-ending punctuation — `.`/`!`/`?`,
+  //  optionally wrapped in closers (quotes/brackets), then whitespace —
+  //  immediately before the token. Orthographic capitals at that position
+  // are not proper-name evidence (expandCandidates consults the flag).
+  // isSentenceStartBefore: bounded walk-back (O(1) per token — an
+  // O(start) slice+regex here made ingest quadratic and blew the 800 KB
+  // perf gate).
+  const isSentenceStartBefore = (text: string, start: number): boolean => {
+    let i = start;
+    while (i > 0) {
+      const c = text[i - 1];
+      if (c === " " || c === "\t" || c === "\n" || c === "\r") i--;
+      else break;
+    }
+    while (i > 0 && ")]}\"'’”»".includes(text[i - 1])) i--;
+    return i > 0 && (text[i - 1] === "." || text[i - 1] === "!" || text[i - 1] === "?");
+  };
   const out: RawToken[] = [];
   let i = 0;
   let j = 0;
@@ -231,7 +248,13 @@ export function tokenize(text: string): RawToken[] {
     if (takeBase) i++;
     else j++;
     if (t.dead) continue;
-    out.push({ raw: t.raw, hexish: t.hexish, start: t.start, end: t.end });
+    out.push({
+      raw: t.raw,
+      hexish: t.hexish,
+      start: t.start,
+      end: t.end,
+      sentenceStart: isSentenceStartBefore(text, t.start),
+    });
   }
   return out;
 }
@@ -305,19 +328,28 @@ function splitCamel(seg: string): string[] {
  * Pure: no state, no runtime imports (RawToken is a type-only import).
  */
 export function expandCandidates(token: RawToken): CandidateDraft[] {
+  // properName (2026-09 sentence-initial rule): a Capitalized token
+  // right after sentence-ending punctuation is sentence-INITIAL — the
+  // capital is orthographic, not a name signal, so the hint is
+  // suppressed. Same for the token's FIRST sub-word (it begins the
+  // token; mid-token sub-words keep their own semantics).
+  const nameInitial = isUpperAscii(token.raw.charAt(0)) && !token.sentenceStart;
   const whole: CandidateDraft = {
     key: token.raw.toLowerCase(),
     display: token.raw,
-    properName: isUpperAscii(token.raw.charAt(0)),
+    properName: nameInitial,
     isSubword: false,
   };
   if (token.hexish) return [whole];
 
   const parentKey = whole.key;
   const subs: CandidateDraft[] = [];
+  let firstPart = true; // the first split part begins the token
   for (const seg of token.raw.split("_")) {
     if (seg.length === 0) continue;
     for (const sub of splitCamel(seg)) {
+      const atTokenStart = firstPart;
+      firstPart = false;
       // A part equal to the whole token (single segment, no boundary — e.g.
       // "HTTPS") IS the whole token, never a sub-word of itself.
       if (sub === token.raw) continue;
@@ -325,7 +357,9 @@ export function expandCandidates(token: RawToken): CandidateDraft[] {
       subs.push({
         key: sub.toLowerCase(),
         display: sub,
-        properName: isUpperAscii(sub.charAt(0)),
+        // First sub-word of a sentence-initial token: its capital is
+        // orthographic too ("DownloadManager" after ". ").
+        properName: atTokenStart ? nameInitial : isUpperAscii(sub.charAt(0)),
         isSubword: true,
         parentKey,
       });
