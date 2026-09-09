@@ -126,6 +126,23 @@ Four interacting rules, implemented in the provider:
      space. A close followed by a qualifying keystroke within 200 ms re-opens
      fresh (no stale set).
 
+### Startup restore gate
+
+History replay (05) runs in the background after `session_start`, and
+pi-tui asks the provider exactly once per word — so a word queried
+while the store is still replaying got zero candidates and never
+re-asked: its menu was permanently missing until retyped (observed:
+"first typed word after restart missed its menu"). The provider stack
+carries a bounded startup gate (`createStartupGate`, src/pi/provider.ts):
+queries racing an unfinished replay wait for the replay's settled
+signal (`restoreFromHistory` onSettled — fires exactly once on
+completion, abort, or error) or **≤ 500 ms**, whichever comes first.
+Effect: the first typed word's menu is at most ~500 ms late instead of
+missing. Fresh sessions (no replay) resolve the signal immediately —
+the gate is a no-op there. Forced (Tab) requests wait under the same
+bound during that window only; the synchronous-query Tab contract
+(rule 1) applies to the steady state, which is unchanged.
+
 ### Tab-open gesture: root cause (traced) and mitigation
 
 The "Tab opens the menu" gesture originates in **pi-tui's editor**

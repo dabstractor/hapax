@@ -646,6 +646,63 @@ export function createChainMachine(): ChainMachine {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Startup gate — first queries wait (bounded) for history replay
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Bounded startup gate (2026-09, "first typed word after restart missed
+ * its menu"): restoreFromHistory replays session history in the
+ * background, and pi-tui asks the provider exactly ONCE per word — so a
+ * word queried while the store is still replaying got ZERO candidates
+ * and never re-asked: its menu was permanently missing until retyped.
+ * The gate turns that into "at most `maxWaitMs` late": every
+ * getSuggestions call racing an unfinished replay waits for the
+ * replay's onSettled signal (or the cap) before querying. Once settled,
+ * calls are pure pass-through with zero overhead.
+ *
+ * Forced (Tab) requests wait too — bounded, and only during the
+ * sub-second startup window; the synchronous-query Tab contract (spec
+ * 07 rule 1) applies to the steady state, which this preserves.
+ *
+ * `ready` is a promise that resolves when replay settles; callers pass
+ * an already-resolved promise when no restore is needed (fresh
+ * sessions), making the gate a no-op there.
+ */
+export function createStartupGate<
+  T extends AutocompleteProvider & { __hapaxLive: () => unknown; __hapaxKey: (v: string) => unknown },
+>(base: T, ready: Promise<void>, maxWaitMs = 500): T {
+  let settled = false;
+  const settledPromise = ready.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true; // replay errors must never wedge the gate
+    },
+  );
+  void settledPromise; // fire-and-forget; getSuggestions re-awaits as needed
+
+  const gate = {
+    ...base, // closure-based provider: method refs copy safely
+    async getSuggestions(
+      lines: string[],
+      cursorLine: number,
+      cursorCol: number,
+      options: { signal: AbortSignal; force?: boolean },
+    ) {
+      if (!settled) {
+        await Promise.race([
+          settledPromise,
+          new Promise<void>((resolve) => setTimeout(resolve, maxWaitMs)),
+        ]);
+      }
+      return base.getSuggestions(lines, cursorLine, cursorCol, options);
+    },
+  };
+  return gate as T;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // S3 — display debounce + flicker hysteresis (P1.M3.T3.S3, PRD §07 rules 2–3)
 // ─────────────────────────────────────────────────────────────────────────────
 

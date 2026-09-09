@@ -46,6 +46,11 @@ On `session_start` with reason `"startup"` or `"resume"`:
    store fills progressively).
 3. Oldest-first ordering matters: `lastSeen` ordinals and display casing must
    end in the correct final state.
+4. Completion signal: the replay invokes `onSettled` exactly once (finish,
+   abort on dictionary failure, or collection throw) so the provider's
+   startup gate (07) can bound-wait for a full store — otherwise a word
+   typed during replay queries a partial store, and pi-tui's
+   one-query-per-word makes its menu permanently missing until retyped.
 
 Budget: 200k tokens (~800 KB) ≈ 30–50 ms total. This is the **only** cold-start
 work; there is no persistence layer by design (rebuild beats deserialize at

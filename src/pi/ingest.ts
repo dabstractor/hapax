@@ -697,10 +697,23 @@ export function restoreFromHistory(
   pipeline: Pick<IngestPipeline, "processText">,
   sessionManager: RestoreSessionManager,
   shouldAbort?: () => boolean,
+  /** Completion signal (2026-09 startup gate): invoked EXACTLY once —
+   *  after the last entry replays, on abort, or on a collection throw —
+   *  because the caller's first-query gate turns "menu permanently
+   *  missing for the first typed word" (restore race + pi-tui's
+   *  one-query-per-word) into "menu at most 500 ms late". */
+  onSettled?: () => void,
 ): void {
   // Collect the ordered entry list synchronously — metadata only. Text
   // is never extracted or held here (h2.34: touch bodies one message at
   // a time, inside the replay loop).
+  let settled = false;
+  const settle = (): void => {
+    if (!settled) {
+      settled = true;
+      onSettled?.();
+    }
+  };
   let ordered: readonly SessionEntry[];
   try {
     const branch = sessionManager.getBranch();
@@ -713,20 +726,24 @@ export function restoreFromHistory(
   }
 
   void (async () => {
-    for (const entry of ordered) {
-      if (shouldAbort?.()) {
-        return; // BUG-004: dict failed → stop replay cold
+    try {
+      for (const entry of ordered) {
+        if (shouldAbort?.()) {
+          return; // BUG-004: dict failed → stop replay cold (settle runs in finally)
+        }
+        if (entry.type !== "message") continue;
+        try {
+          const text = extractText(entry.message);
+          if (text === null) continue; // toolResult, no text parts → no-op
+          await pipeline.processText(text, entry.message.role === "user");
+        } catch {
+          // Best-effort background work: one bad entry must never break
+          // session start or abort the rest of the replay.
+          continue;
+        }
       }
-      if (entry.type !== "message") continue;
-      try {
-        const text = extractText(entry.message);
-        if (text === null) continue; // toolResult, no text parts → no-op
-        await pipeline.processText(text, entry.message.role === "user");
-      } catch {
-        // Best-effort background work: one bad entry must never break
-        // session start or abort the rest of the replay.
-        continue;
-      }
+    } finally {
+      settle();
     }
   })();
 }

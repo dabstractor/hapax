@@ -51,6 +51,7 @@ import {
   createChainMachine,
   createDisplayProvider,
   createHapaxProvider,
+  createStartupGate,
 } from "./provider.js";
 import type { ChainMachine } from "./provider.js";
 
@@ -195,9 +196,23 @@ export default function hapax(pi: ExtensionAPI): void {
     // reload is acceptable (fresh session, fresh provider); no unregister
     // API exists, and degradation after a dict failure keeps this provider
     // registered with an empty store — zero candidates → delegation.
+    // Startup gate (2026-09, src/pi/provider.ts createStartupGate): the
+    // replay signal resolves when history restore settles (end, abort,
+    // or error — see restoreFromHistory's onSettled). First queries wait
+    // for it (≤ 500 ms) so a word typed while the store replays gets a
+    // LATE menu instead of a permanently missing one (pi-tui asks once
+    // per word). Fresh sessions with no replay resolve immediately.
+    let markReady = (): void => {};
+    const restoreReady = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+
     ctx.ui.addAutocompleteProvider((current) => {
       const p = createDisplayProvider(
-        createHapaxProvider(store!, config, current, sessionChain),
+        createStartupGate(
+          createHapaxProvider(store!, config, current, sessionChain),
+          restoreReady,
+        ),
         {
           // Hesitation gate (2026-09 menuDelayMs): full-speed typing
           // never pops the menu. Explicit intent bypasses: trigger-char
@@ -263,7 +278,9 @@ export default function hapax(pi: ExtensionAPI): void {
       // `disabled` flips DURING the replay (the first lookup triggers the
       // failed load), so this must close over the live flag — its value
       // here is still false.
-      restoreFromHistory(pipeline, ctx.sessionManager, () => disabled);
+      restoreFromHistory(pipeline, ctx.sessionManager, () => disabled, markReady);
+    } else {
+      markReady(); // no replay → gate is a pure no-op
     }
   });
 

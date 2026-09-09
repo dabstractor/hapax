@@ -58,8 +58,14 @@
 - Enter-submits proxy (test/editor-enter.test.ts): Enter + open word
   menu → cancel then delegate exactly once; slash menus, closed menus,
   non-submit keys untouched; the inner instance is NEVER mutated (v1
-  recursion regression pin); proxy get/set/has forwarding and the
-  thenable guard.
+  recursion regression pin); proxy get/set/has forwarding, the
+  thenable guard, and the onKeystroke input-clock hook (fires for every
+  input event; a throwing hook never breaks input).
+- Startup gate (test/startup-gate.test.ts): queries racing an
+  unfinished replay wait for settled then query; the wait is bounded
+  (≤ maxWaitMs); settled gate is pure pass-through; a rejected replay
+  promise never wedges it; restoreFromHistory's onSettled fires
+  exactly once (finish, abort, empty).
 - Zero candidates → delegate/empty, never a menu.
 - Debounce: two rapid set updates → only one swap at +100 ms; Tab mid-debounce
   resolves the live (undebounced) top item.
