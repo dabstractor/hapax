@@ -393,7 +393,10 @@ describe("pass-through members", () => {
 
     expect(wrapper.shouldTriggerFileCompletion!(["x"], 0, 1)).toBe(false);
     expect(current.shouldTriggerFileCompletion).toHaveBeenCalledWith(["x"], 0, 1);
-    expect(wrapper.triggerCharacters).toEqual(["#"]);
+    expect(wrapper.triggerCharacters).toEqual([
+      "#",
+      ..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_".split(""),
+    ]);
   });
 });
 

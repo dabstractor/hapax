@@ -228,8 +228,13 @@ export type HapaxProvider = AutocompleteProvider & {
  * cloning, no dropping `force`. All other members pass straight
  * through: applyCompletion and shouldTriggerFileCompletion always
  * delegate (current may leave the latter undefined → default true, pi's
- * own behavior). triggerCharacters mirrors config.triggerChar, and is
- * undefined — not [] — when trigger mode is disabled ("").
+ * own behavior). triggerCharacters mirrors config.triggerChar PLUS
+ * every identifier character ([A-Za-z0-9_]) so pi-tui's keystroke
+ * auto-trigger fires on plain word typing too (its pattern is
+ * `(?:^|\s)[<chars>][^\s]*$` with its own word-start gating) —
+ * and threshold-mode word completion never auto-opens. The list is
+ * therefore never empty/undefined, even when trigger mode is
+ * disabled ("").
  *
  * The store is accepted, never constructed (src/core architecture); the
  * config is trusted (loadConfig already validated it); no debounce or
@@ -261,8 +266,20 @@ export function createHapaxProvider(
   let lastLive: LiveResult | null = null;
   const liveKeyByValue = new Map<string, string>(); // item.value → RankedMatch.key
 
+  // Identifier trigger chars: pi-tui only auto-requests suggestions
+  // on plain-letter keystrokes when the char is a registered trigger
+  // character (editor.js: char-in-triggerCharacters at a word start,
+  // then triggerPattern per following char). Registering [A-Za-z0-9_]
+  // makes the dropdown open automatically while typing a word instead
+  // of only via Tab's force path; hapax still delegates whenever
+  // extractMatchState misses, so stock contexts are unaffected.
+  const IDENTIFIER_TRIGGERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+
   return {
-    triggerCharacters: config.triggerChar ? [config.triggerChar] : undefined,
+    triggerCharacters: [
+      ...(config.triggerChar ? [config.triggerChar] : []),
+      ...IDENTIFIER_TRIGGERS,
+    ],
 
     async getSuggestions(lines, cursorLine, cursorCol, options) {
       // 1. Aborted → pass pi's request through, arguments untouched.

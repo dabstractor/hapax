@@ -275,19 +275,21 @@ describe("pass-through members", () => {
   });
 });
 
-describe("triggerCharacters mirror config.triggerChar", () => {
-  it("default config → ['#']", () => {
+describe("triggerCharacters mirror config.triggerChar + identifier triggers", () => {
+  const ID = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_".split("");
+
+  it("default config → ['#'] + identifier chars (auto-open on word typing)", () => {
     const provider = createHapaxProvider(new CandidateStore(), cfg(), mockCurrent());
-    expect(provider.triggerCharacters).toEqual(["#"]);
+    expect(provider.triggerCharacters).toEqual(["#", ...ID]);
   });
 
-  it("triggerChar '' (trigger mode disabled) → undefined, not []", () => {
+  it("triggerChar '' (trigger mode disabled) → identifier chars only, never undefined", () => {
     const provider = createHapaxProvider(
       new CandidateStore(),
       cfg({ triggerChar: "" }),
       mockCurrent(),
     );
-    expect(provider.triggerCharacters).toBeUndefined();
+    expect(provider.triggerCharacters).toEqual(ID);
   });
 });
 

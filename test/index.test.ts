@@ -343,7 +343,7 @@ describe("session_start — config wiring", () => {
     ) => AutocompleteProvider & { dispose: () => void };
     const provider = factory(currentFake());
     expect(typeof provider.dispose).toBe("function");
-    expect(provider.triggerCharacters).toEqual(["#"]); // default config flowed in
+    expect(provider.triggerCharacters?.[0]).toBe("#"); // default config flowed in (rest = identifier triggers)
   });
 
   it("registers /acwords only when config.debug is true", () => {
