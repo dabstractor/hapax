@@ -468,7 +468,21 @@ export function createHapaxProvider(
         }
       }
       // 2. No hapax match state (S1 null) → pi's completion stays in charge.
-      const state = extractMatchState(lines, cursorLine, cursorCol, config);
+      // AUTO-OPEN (PRD §07 live-editor reality): pi-tui's handleChar fires
+      // getSuggestions for plain letters ONLY at a word start (the
+      // trigger-character branch's space/tab guard) — and the menu, once
+      // open, self-updates every keystroke via updateAutocomplete. A
+      // threshold above 1 is therefore UNOBSERVABLE on the typing path:
+      // the word-start request arrives with a 1-char fragment, and if we
+      // delegate there the menu never opens and no further request comes.
+      // The effective threshold is clamped to 1 HERE (S1's pure threshold
+      // semantics and its unit tests are untouched): the word-start
+      // request answers with prefix-matched candidates, the menu opens,
+      // and narrowing happens per keystroke from then on.
+      const state = extractMatchState(lines, cursorLine, cursorCol, {
+        ...config,
+        threshold: 1,
+      });
       if (!state) {
         return current.getSuggestions(lines, cursorLine, cursorCol, options);
       }

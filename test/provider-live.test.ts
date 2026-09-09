@@ -115,7 +115,7 @@ describe("delegation — aborted signal (args untouched)", () => {
 });
 
 describe("delegation — null match state (args untouched)", () => {
-  it("fragment 'z' below threshold 2 → delegates, args untouched", async () => {
+  it("fragment 'z' below config threshold 2 → still answers (auto-open: pi-tui only asks at word start, effective threshold 1)", async () => {
     const current = mockCurrent();
     const provider = createHapaxProvider(zeStore(), cfg(), current);
     const lines = ["z"];
@@ -123,11 +123,9 @@ describe("delegation — null match state (args untouched)", () => {
 
     const result = await provider.getSuggestions(lines, 0, 1, options);
 
-    expect(result).toBeNull();
-    expect(current.getSuggestions).toHaveBeenCalledOnce();
-    const call = current.getSuggestions.mock.calls[0];
-    expect(call[0]).toBe(lines);
-    expect(call[3]).toBe(options);
+    expect(result!.prefix).toBe("z");
+    expect(result!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(current.getSuggestions).not.toHaveBeenCalled(); // hapax owns the word-start request
   });
 });
 
@@ -353,18 +351,18 @@ describe("forced single-item returns (PRD §07 h3.8)", () => {
     expect(provider.__hapaxLive()!.matches).toHaveLength(2); // full set published
   });
 
-  it("force:true + null match state → delegates with identical options (native Tab intact)", async () => {
+  it("force:true + 1-char fragment → single top item (auto-open contract: effective threshold 1)", async () => {
     const current = mockCurrent();
     const provider = createHapaxProvider(zeStore(), cfg(), current);
-    const lines = ["z"]; // below threshold 2
+    const lines = ["z"];
     const options = opts({ force: true });
 
     const result = await provider.getSuggestions(lines, 0, 1, options);
 
-    expect(result).toBeNull();
-    expect(current.getSuggestions).toHaveBeenCalledOnce();
-    expect(current.getSuggestions.mock.calls[0][0]).toBe(lines);
-    expect(current.getSuggestions.mock.calls[0][3]).toBe(options);
+    expect(result!.items).toHaveLength(1); // pi-tui's === 1 fast path
+    expect(result!.items[0].value).toBe("Zendesk");
+    expect(result!.prefix).toBe("z");
+    expect(current.getSuggestions).not.toHaveBeenCalled();
   });
 
   it("force:true + zero candidates ('#zzz') → delegates; no fabricated empty set", async () => {

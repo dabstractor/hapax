@@ -342,9 +342,9 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     expect(gatedTrigger).toEqual(ungatedTrigger);
     expect(gatedTrigger?.items.length).toBeGreaterThan(0);
 
-    // Below threshold (1 char < 2): BOTH delegate to pi.
-    expect(await suggest(gated, ["n"], 0, 1)).toBeNull();
-    expect(await suggest(ungated, ["n"], 0, 1)).toBeNull();
+    // 1-char fragment (auto-open: effective threshold 1): BOTH answer
+    // identically — the gate never leaks into the word path.
+    expect(await suggest(gated, ["n"], 0, 1)).toEqual(await suggest(ungated, ["n"], 0, 1));
   });
 
   it("control (gated true): the harness arms on word accept and fires the zero-char successor offer", async () => {

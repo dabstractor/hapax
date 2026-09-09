@@ -362,9 +362,13 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     const base = createHapaxProvider(reproStore(), cfg(), current);
     const wrapper = createDisplayProvider(base);
 
-    // 'z' — below the 2-char threshold → full-stack delegate, no live set.
-    expect(await type(wrapper, "z")).toBeNull();
-    expect(base.__hapaxLive()).toBeNull();
+    // 'z' — auto-open contract (effective threshold 1): the word-start
+    // request already publishes the live set.
+    expect((await type(wrapper, "z"))!.items.map((i) => i.value)).toEqual([
+      "Zendesk",
+      "zephyr",
+    ]);
+    expect(base.__hapaxLive()).not.toBeNull();
 
     // 'e' — first qualifying keystroke paints {Zendesk, zephyr} @"ze".
     const ze = await type(wrapper, "ze");

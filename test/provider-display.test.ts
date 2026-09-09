@@ -440,8 +440,11 @@ describe("prefix-anchor invalidation (BUG-002)", () => {
     const base = createHapaxProvider(reproStore(), cfg(), current);
     const wrapper = createDisplayProvider(base);
 
-    // 'z' — below threshold → null match state → full-stack delegate.
-    expect(await type(wrapper, "z")).toBeNull();
+    // 'z' — auto-open contract (effective threshold 1): pi-tui only
+    // asks at word start, so the first letter already paints.
+    const z = await type(wrapper, "z");
+    expect(z!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(z!.prefix).toBe("z");
 
     // 'e' — buffer "ze": first qualifying query → immediate paint of both.
     const ze = await type(wrapper, "ze");
