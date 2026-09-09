@@ -703,64 +703,102 @@ describe("hesitation gate (menuDelayMs — first-paint delay)", () => {
     const base = createHapaxProvider(gateStore(), cfg(), mockCurrent());
     const wrapper = createDisplayProvider(base, {
       firstPaintDelayMs: 150,
+      getPreviousKeystrokeAt: () => clock.prevAt,
       isIntentResult: (r) => r.prefix.startsWith("#") || r.items.some((i) => i.description === "chain"),
     });
     return { wrapper };
   };
 
-  /** Type one keystroke at time t. */
-  const key = (wrapper: ReturnType<typeof createDisplayProvider>, line: string, t: number) => {
-    vi.setSystemTime(t);
-    return wrapper.getSuggestions([line], 0, line.length, opts());
+  /** The REAL input model (first cut's bug: tests treated consecutive
+   *  getSuggestions calls as consecutive keystrokes — they are not; a
+   *  closed menu gets ONE query per word, at its first letter). Model
+   *  it faithfully: the clock ticks for EVERY character typed, but the
+   *  provider is queried only at word starts. */
+  const clock = { lastAt: null as number | null, prevAt: null as number | null };
+  /** Tick the clock for each char at startT + i·gap; returns the LAST
+   *  char's timestamp — the moment a word-start query for that char
+   *  fires (the query happens ON the keystroke, not after it). */
+  const typeChars = (chars: string[], startT: number, gapMs: number): number => {
+    let t = startT;
+    for (const c of chars) {
+      void c;
+      vi.setSystemTime(t);
+      const now = Date.now();
+      clock.prevAt = clock.lastAt;
+      clock.lastAt = now;
+      t += gapMs;
+    }
+    return t - gapMs;
   };
+  const resetClock = () => {
+    clock.lastAt = null;
+    clock.prevAt = null;
+  };
+  /** Query at a word start (the only query a closed menu gets). */
+  const wordStartQuery = (wrapper: ReturnType<typeof createDisplayProvider>, line: string) =>
+    wrapper.getSuggestions([line], 0, line.length, opts());
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
+    resetClock();
   });
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("full-speed typing (gaps < 150 ms) never opens the menu", async () => {
+  it("full-speed typing (char gaps < 150 ms) never opens the menu — words typed whole", async () => {
     const { wrapper } = gated();
-    // First keystroke ever at t=0: no previous keystroke → allowed... but
-    // suppress it too by giving a prior keystroke via a non-matching query.
-    await key(wrapper, "zz", 0); // closes/neutral — establishes lastKeystrokeAt
-    expect(await key(wrapper, "ze", 100)).toEqual({ items: [], prefix: "ze" }); // gap 100 < 150
-    expect(await key(wrapper, "zep", 200)).toEqual({ items: [], prefix: "zep" }); // gap 100
+    // "the zendesk": every char ticks the clock 80 ms apart; the 'z'
+    // word-start query fires ON the 'z' keystroke — gap since the
+    // previous char (space) is 80 < 150 → suppressed.
+    const zAt = typeChars(["t", "h", "e", " ", "z"], 0, 80);
+    vi.setSystemTime(zAt);
+    const out = await wordStartQuery(wrapper, "the z");
+    expect(out).toEqual({ items: [], prefix: "z" }); // suppressed
+    // keep flowing (a mid-word query would only come from a backspace
+    // retrigger; if it did, the clock still suppresses)
+    const eAt = typeChars(["e"], zAt + 80, 80);
+    vi.setSystemTime(eAt);
+    const out2 = await wordStartQuery(wrapper, "the ze");
+    expect(out2).toEqual({ items: [], prefix: "ze" });
   });
 
-  it("hesitation (gap ≥ 150 ms) opens the menu; it then self-sustains", async () => {
+  it("hesitation (char gap ≥ 150 ms before the word's first letter) opens the menu", async () => {
     const { wrapper } = gated();
-    await key(wrapper, "zz", 0);
-    vi.setSystemTime(300); // 300 ms pause before the word's first letter
-    const open = await wrapper.getSuggestions(["ze"], 0, 2, opts());
+    const spaceAt = typeChars(["t", "h", "e", " "], 0, 80);
+    // pause ≥ 150 ms after the space before typing 'z'
+    const zAt = typeChars(["z"], spaceAt + 300, 1);
+    vi.setSystemTime(zAt);
+    const open = await wordStartQuery(wrapper, "the z");
     expect(open!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
     // Menu open → updates flow through the normal swap rules, no gate.
-    vi.setSystemTime(350);
-    const narrowed = await wrapper.getSuggestions(["zep"], 0, 3, opts());
-    expect(narrowed!.items.map((i) => i.value)).toEqual(["zephyr"]);
+    vi.setSystemTime(zAt + 80);
+    const narrowed = await wrapper.getSuggestions(["the ze"], 0, 6, opts());
+    expect(narrowed!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
   });
 
   it("first keystroke of the session (no prior key) paints immediately", async () => {
     const { wrapper } = gated();
-    const open = await key(wrapper, "ze", 0);
+    const zAt = typeChars(["z"], 0, 1);
+    vi.setSystemTime(zAt);
+    const open = await wordStartQuery(wrapper, "z");
     expect(open!.items).toHaveLength(2); // no previous keystroke → nothing to gate
   });
 
   it("explicit intent bypasses the gate: trigger-char prefix shows immediately", async () => {
     const { wrapper } = gated();
-    await key(wrapper, "zz", 0);
-    const open = await key(wrapper, "#ze", 50); // gap 50 < 150 — intent wins
+    const at = typeChars(["#", "z"], 0, 50); // gaps 50 < 150 — intent wins
+    vi.setSystemTime(at);
+    const open = await wordStartQuery(wrapper, "#z");
     expect(open!.items).toHaveLength(2);
-    expect(open!.prefix).toBe("#ze");
+    expect(open!.prefix).toBe("#z");
   });
 
   it("forced (Tab) requests bypass the gate entirely (rule 1.5 ordering)", async () => {
     const { wrapper } = gated();
-    await key(wrapper, "zz", 0);
-    vi.setSystemTime(50);
+    const at = typeChars(["z"], 0, 1);
+    vi.setSystemTime(at);
     const forced = await wrapper.getSuggestions(["ze"], 0, 2, {
       signal: new AbortController().signal,
       force: true,
@@ -771,16 +809,30 @@ describe("hesitation gate (menuDelayMs — first-paint delay)", () => {
   it("gate disabled (0) → immediate first paint, pre-2026-09 behavior", async () => {
     const base = createHapaxProvider(gateStore(), cfg(), mockCurrent());
     const wrapper = createDisplayProvider(base, { firstPaintDelayMs: 0 });
-    await key(wrapper, "zz", 0);
-    const open = await key(wrapper, "ze", 10); // gap 10 — would suppress at 150
+    const at = typeChars(["t", " ", "z"], 0, 80);
+    vi.setSystemTime(at);
+    const open = await wordStartQuery(wrapper, "t z");
     expect(open!.items).toHaveLength(2);
+  });
+
+  it("FALLBACK (no keystroke clock): inter-query gaps govern — and a whole-word-apart query (the first cut's bug) NEVER suppresses", async () => {
+    const base = createHapaxProvider(gateStore(), cfg(), mockCurrent());
+    const wrapper = createDisplayProvider(base, { firstPaintDelayMs: 150 });
+    // Simulates typing two words where only word starts query: 'a' at
+    // t=0, then 'ze' at t=600 (a full 6-char word later at 100 wpm).
+    vi.setSystemTime(0);
+    await wordStartQuery(wrapper, "a");
+    vi.setSystemTime(600);
+    const out = await wordStartQuery(wrapper, "ze");
+    expect(out!.items).toHaveLength(2); // fallback cannot suppress this — documented limitation
   });
 
   it("suppressed returns carry NO anchor (empty items never apply a prefix)", async () => {
     const { wrapper } = gated();
-    await key(wrapper, "zz", 0);
-    const out = await key(wrapper, "ze", 100);
+    const at = typeChars(["t", " ", "z"], 0, 80); // 'z' 80 ms after the space
+    vi.setSystemTime(at);
+    const out = await wordStartQuery(wrapper, "t z");
     expect(out!.items).toEqual([]);
-    expect(out!.prefix).toBe("ze"); // pi-tui ignores prefix on empty sets
+    expect(out!.prefix).toBe("z"); // pi-tui ignores prefix on empty sets
   });
 });

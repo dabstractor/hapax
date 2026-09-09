@@ -94,18 +94,22 @@ Four interacting rules, implemented in the provider:
    appearance (`menuDelayMs`, default 150 ms).** Suggestions are
    *returned* to pi immediately from the live query, but:
    - First appearance: while the menu is CLOSED, a word-completion
-     paints only when its keystroke arrived ≥ `menuDelayMs` after the
-     previous keystroke — typing full speed (gaps under the threshold)
-     never pops the menu; hesitating mid-sentence does. Platform
-     constraint that forces this shape: pi-tui asks the provider
-     exactly ONCE per word (at its first letter; an open menu
-     self-sustains, a closed one never re-asks mid-word), so a
-     suppressed first paint means no menu for that word — which is
-     precisely the requested behavior for flow typing. Explicit
-     intent — trigger-char results and armed-chain successors —
-     bypasses the gate and shows immediately. Forced (Tab) requests
-     are unaffected (rule 0/1.5). `menuDelayMs: 0` restores the
-     pre-2026-09 immediate first paint.
+     paints only when the keystroke that triggered the query arrived
+     ≥ `menuDelayMs` after the PREVIOUS keystroke — typing full speed
+     (gaps under the threshold) never pops the menu; hesitating
+     mid-sentence does. Keystroke times come from the editor proxy's
+     input clock (07's Enter wrapper ticks once per real input event —
+     the ONLY seam that sees every keystroke: a closed menu yields one
+     getSuggestions call per WORD, and word-start-to-word-start gaps
+     are a whole word apart, so inter-QUERY timing can never suppress
+     flow typing — the first cut shipped with exactly that bug and was
+     live-verified broken, then live-verified fixed). Without an editor
+     factory (stock editor) the gate degrades to query-gap timing and
+     rarely suppresses — documented limitation. Explicit intent —
+     trigger-char results and armed-chain successors — bypasses the
+     gate and shows immediately. Forced (Tab) requests are unaffected
+     (rule 0/1.5). `menuDelayMs: 0` restores the pre-2026-09 immediate
+     first paint.
    - Subsequent set changes: the provider suppresses non-empty result
      *sets* that differ from the currently displayed set within 100 ms
      of the last paint. Implementation: timestamp of last visible set;

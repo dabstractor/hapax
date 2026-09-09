@@ -195,6 +195,26 @@ describe("createEnterSubmitEditor — proxy forwarding", () => {
     expect(editor.then).toBeUndefined();
   });
 
+  it("onKeystroke hook fires for EVERY input event, before delegation (the input clock seam)", () => {
+    const ticks: number[] = [];
+    const inner = fakeInner();
+    const editor = createEnterSubmitEditor(inner, kb, () => ticks.push(Date.now()));
+    for (const key of ["z", "e", "\r", "\t", "\x1b[A"]) {
+      editor.handleInput(key);
+    }
+    expect(ticks).toHaveLength(5); // every key, including Enter/Tab/arrows
+    expect(inner.calls).toEqual(["inner:z", "inner:e", "inner:\r", "inner:\t", "inner:\x1b[A"]);
+  });
+
+  it("a throwing onKeystroke never breaks input", () => {
+    const inner = fakeInner();
+    const editor = createEnterSubmitEditor(inner, kb, () => {
+      throw new Error("clock boom");
+    });
+    expect(() => editor.handleInput("z")).not.toThrow();
+    expect(inner.calls).toEqual(["inner:z"]);
+  });
+
   it("missing menu helpers on inner → pure pass-through, no throw", () => {
     const inner = {
       handleInput: (d: string) => d,

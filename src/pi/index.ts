@@ -204,6 +204,7 @@ export default function hapax(pi: ExtensionAPI): void {
           // prefixes and armed-chain successor sets (description
           // "chain") always show immediately.
           firstPaintDelayMs: config.menuDelayMs,
+          getPreviousKeystrokeAt: () => inputClock.prevAt,
           isIntentResult: (r) =>
             (config.triggerChar !== "" && r.prefix.startsWith(config.triggerChar)) ||
             r.items.some((i) => i.description === "chain"),
@@ -219,9 +220,23 @@ export default function hapax(pi: ExtensionAPI): void {
     // editor factory an extension set (pi-vim etc.) — capture-previous
     // composition per the extension docs. Idempotent across reloads
     // (a factory that is already ours is not re-wrapped).
+    //
+    // The proxy ALSO feeds `inputClock` — one tick per real keystroke,
+    // the only such seam (a closed menu gets one getSuggestions call
+    // per WORD, useless for inter-keystroke timing — the first-cut
+    // menuDelayMs gate measured word-to-word gaps and never suppressed;
+    // that bug is why this clock exists). The display layer's hesitation
+    // gate reads clock.prevAt: the keystroke before the one triggering
+    // the current query.
+    const inputClock = { lastAt: null as number | null, prevAt: null as number | null };
+    const tickInputClock = () => {
+      const t = Date.now();
+      inputClock.prevAt = inputClock.lastAt;
+      inputClock.lastAt = t;
+    };
     const editorFactory = ctx.ui.getEditorComponent?.();
     if (editorFactory && !isEnterSubmitWrapper(editorFactory)) {
-      ctx.ui.setEditorComponent?.(wrapEditorFactory(editorFactory));
+      ctx.ui.setEditorComponent?.(wrapEditorFactory(editorFactory, tickInputClock));
     }
 
     // /acwords only in debug mode (PRD §08 h2.48): the command must not

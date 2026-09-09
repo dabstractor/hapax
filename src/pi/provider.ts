@@ -680,6 +680,17 @@ export interface DisplayProviderOptions {
    * after classification; default: nothing bypasses.
    */
   isIntentResult?: (result: { items: AutocompleteItem[]; prefix: string }) => boolean;
+  /**
+   * True keystroke clock for the hesitation gate (2026-09 fix): returns
+   * the time of the keystroke BEFORE the one that triggered this query,
+   * or null when unknown. Wired from the editor proxy's handleInput
+   * (src/pi/editor.ts) — the ONLY seam that sees every keystroke.
+   * Without it the gate falls back to inter-QUERY gaps, which when the
+   * menu is closed are word-start-to-word-start (a whole word apart) and
+   * therefore almost never suppress — the bug the first cut shipped
+   * with. Default: absent (fallback behavior).
+   */
+  getPreviousKeystrokeAt?: () => number | null;
 }
 
 /**
@@ -764,6 +775,7 @@ export function createDisplayProvider(
   const debounceMs = opts.debounceMs ?? 100;
   const firstPaintDelayMs = opts.firstPaintDelayMs ?? 0;
   const isIntentResult = opts.isIntentResult ?? (() => false);
+  const getPreviousKeystrokeAt = opts.getPreviousKeystrokeAt;
 
   // PopupScheduler state (PRD §07 rules 2–3) — all closure-private.
   // displayed* is what pi was last told to paint; pending* is the swap
@@ -895,20 +907,25 @@ export function createDisplayProvider(
 
       // 3.5. Hesitation gate (2026-09 menuDelayMs): while the menu is
       // CLOSED and the fresh result is a word-completion (not explicit
-      // intent — trigger char / chain), paint only when this keystroke
-      // arrived ≥ firstPaintDelayMs after the previous one — full-speed
-      // typing (small gaps) never pops the menu. Platform reality: this
-      // query is the word's ONLY one (pi-tui asks at the first letter;
-      // a closed menu self-sustains nothing), so suppressing here means
-      // no menu for this word — which is exactly the requested behavior
-      // for flow typing. Returning empty items keeps the menu closed
-      // (pi-tui cancels on zero items); the anchor invariant holds — an
-      // empty set carries no prefix that could ever be applied.
+      // intent — trigger char / chain), paint only when the keystroke
+      // that triggered this query arrived ≥ firstPaintDelayMs after the
+      // PREVIOUS keystroke — full-speed typing (small gaps) never pops
+      // the menu. Keystroke times come from the editor proxy's input
+      // clock (getPreviousKeystrokeAt); the lastKeystrokeAt fallback
+      // below is inter-QUERY timing, which — because a closed menu gets
+      // exactly one query per word — measures word-to-word distance and
+      // almost never suppresses (the first cut's bug). Platform reality:
+      // this query is the word's ONLY one, so suppressing here means no
+      // menu for this word — the requested behavior for flow typing.
+      // Returning empty items keeps the menu closed (pi-tui cancels on
+      // zero items); an empty set carries no prefix anchor (BUG-002
+      // invariant holds).
+      const prevAt = getPreviousKeystrokeAt?.() ?? prevKeystrokeAt;
       if (
         displayedSig === null &&
         firstPaintDelayMs > 0 &&
-        prevKeystrokeAt !== null &&
-        Date.now() - prevKeystrokeAt < firstPaintDelayMs &&
+        prevAt !== null &&
+        Date.now() - prevAt < firstPaintDelayMs &&
         !isIntentResult({ items, prefix: result.prefix })
       ) {
         return { items: [], prefix: result.prefix };

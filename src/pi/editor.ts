@@ -83,13 +83,26 @@ const isSubmitKey = (data: string, keybindings?: KeybindingsLike): boolean => {
  * routes that same keystroke to its own submit branch. Everything else
  * — Enter with no menu, slash menus, Tab, arrows, Esc, plain text —
  * reaches the inner editor untouched.
+ *
+ * `onKeystroke` (2026-09 menuDelayMs fix): invoked for EVERY input event
+ * before delegation — the editor is the only seam that sees every
+ * keystroke (a closed autocomplete menu yields one getSuggestions call
+ * per WORD, which is useless for inter-keystroke timing). index.ts feeds
+ * it the shared input clock the display layer's hesitation gate reads.
+ * Optional; absent = no clock.
  */
 export function createEnterSubmitEditor<T extends object>(
   inner: T,
   keybindings?: KeybindingsLike,
+  onKeystroke?: () => void,
 ): T {
   const innerAny = inner as unknown as EditorLike;
   const handleInput = (data: string): unknown => {
+    try {
+      onKeystroke?.();
+    } catch {
+      /* clock failures must never break input */
+    }
     try {
       if (
         isSubmitKey(data, keybindings) &&
@@ -133,9 +146,10 @@ export function createEnterSubmitEditor<T extends object>(
  */
 export function wrapEditorFactory<T extends object = object>(
   inner: (tui: any, theme: any, keybindings?: any) => T,
+  onKeystroke?: () => void,
 ): (tui: any, theme: any, keybindings?: any) => T {
   const wrapped = (tui: any, theme: any, keybindings?: any): T =>
-    createEnterSubmitEditor(inner(tui, theme, keybindings), keybindings);
+    createEnterSubmitEditor(inner(tui, theme, keybindings), keybindings, onKeystroke);
   (wrapped as { [WRAPPED]?: boolean })[WRAPPED] = true;
   return wrapped;
 }

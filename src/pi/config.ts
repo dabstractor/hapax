@@ -64,10 +64,12 @@ export interface HapaxConfig {
   /** Hesitation gate for the menu's first appearance (ms; 0–2000).
    *  While the menu is closed, a word-completion paints only when the
    *  keystroke arrived ≥ this many ms after the previous one — typing
-   *  full speed never pops the menu; hesitating does. Trigger-char and
-   *  Tab-chain results bypass the gate (explicit intent). Default 150
-   *  (full-speed gaps run ~60–120 ms; 100 is borderline-loose).
-   *  0 = always immediate (pre-2026-09 behavior). */
+   *  full speed never pops the menu; hesitating does. True keystroke
+   *  timing comes from the editor proxy's input clock; without an
+   *  editor factory it degrades to query-gap timing (rarely
+   *  suppresses). Trigger-char and Tab-chain results bypass the gate
+   *  (explicit intent). Default 150 (full-speed gaps run ~60–120 ms;
+   *  100 is borderline-loose). 0 = always immediate. */
   menuDelayMs: number;
   /** PRIMARY chaining flag (PRD §08 h2.46): gates the successor-index
    *  chain layer ONLY — word completion is unaffected either way. The
