@@ -33,7 +33,22 @@ tests couldn't see.
 
 ## Open items (nothing known-broken; all need owner judgment)
 
-1. **`menuDelayMs: 300` is calibrated but unconfirmed.** Rationale is
+1. **TOP: relief evidence bar (the "fine line").** Audited against
+   real history (~2k messages replayed through the real pipeline,
+   /tmp technique preserved in git history of this session): the store
+   holds ~6.7k words; menus are dominated by genuinely useful jargon
+   (`sessionmanager`, `agents.md`, `stdout`, `projecttrusted`), but
+   ~480 common words admit via capitalized-sighting relief even after
+   the structural-start rule — `echo`, `reject`, `device`, `failed`,
+   `file` — because across thousands of messages nearly every common
+   word gets one MID-SENTENCE capitalized occurrence. Proposed lever:
+   relief only for words with NO lowercase sighting in-session
+   (sticky `lowercaseSeen` flag on the store entry, consulted by the
+   pipeline at admit time). Trade-off to decide: it also filters
+   words used both ways (`national` lowercase AND the capitalized NREL
+   phrase). Alternative: drop relief entirely and rely on the
+   dictionary-absent class (identifiers rarely need it).
+DELETED_MARKER_2 but unconfirmed.** Rationale is
    measured (word-boundary gaps 150–250 ms at 100+ WPM), but only the
    owner's real typing validates it. If menus still pop in flow:
    raise; if help feels laggy: lower. Knob is in `~/.pi/agent/hapax.json`.

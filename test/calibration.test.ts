@@ -216,22 +216,26 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     expect(firsProvider.__hapaxLive()).toBeNull();
   });
 
-  it("positive control: fenc → Fences opens a real menu (store is alive)", async () => {
+  it("positive control: a directly-stored jargon word opens a real menu (store is alive)", async () => {
     // Guards this file against vacuous no-menu results: the SAME store
     // DOES answer fragments of admitted words through the same provider
-    // path. 2026-09 conjugation guard: the former control 'posts'
-    // (mid-band inflection, stem post=85) no longer stores — the live
-    // control is the proper-noun-relieved 'Fences' (capitalized in
-    // prose.jsonl; properName drafts skip the guard, mirroring the
-    // relief). (The even older controls 'wate'→'Water' and 'garde'→
-    // 'garden' are obsolete under the 2026-09-recalibrated bands.)
-    expect(rankMatches(store, "fenc").map((m) => m.display)).toEqual(["Fences"]);
+    // path. 2026-09 structural-start rule: every capitalized sighting in
+    // prose.jsonl is message/sentence-initial ('Fences', 'Apple',
+    // 'Rain'…), so relief no longer fires for ANY of them — correct, but
+    // it leaves the fixture with zero stored words. The live control is
+    // therefore a directly-upserted jargon sighting (the dictionary-
+    // absent class the tool actually exists for).
+    store.upsert({
+      key: "lwlock", display: "lwlock", ordinal: store.currentOrdinal() + 1,
+      fromUser: true, properName: false, rankGroup: 0, isSubword: false,
+    });
+    expect(rankMatches(store, "lwl").map((m) => m.display)).toEqual(["lwlock"]);
     const current = mockCurrent(SENTINEL);
     const provider = createHapaxProvider(store, cfg(), current);
-    const result = await provider.getSuggestions(["fenc"], 0, 4, opts());
+    const result = await provider.getSuggestions(["lwl"], 0, 3, opts());
     expect(result).not.toBe(SENTINEL); // menu, not delegation
-    expect(result!.items.map((i) => i.value)).toEqual(["Fences"]);
-    expect(result!.prefix).toBe("fenc");
+    expect(result!.items.map((i) => i.value)).toEqual(["lwlock"]);
+    expect(result!.prefix).toBe("lwl");
     expect(provider.__hapaxLive()).not.toBeNull();
   });
 });

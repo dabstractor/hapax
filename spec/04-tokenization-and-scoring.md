@@ -66,20 +66,30 @@ completion (`roun` → `Rounding` from `fixRoundingError`).
 - Lookup keys and store keys are **lowercase**.
 - Each candidate remembers its **display casing**: the most recently seen
   casing variant (recency wins; "how it was last used is how you want it").
-- **properName hint (2026-09 sentence-initial rule):** a Capitalized
-  token sets the `properName` hint ONLY when its capital is not
-  orthographic — i.e. NOT immediately preceded (skipping whitespace)
-  by sentence-ending punctuation (`.` `!` `?`, optionally wrapped in
-  closing quotes/brackets `)]}"'’”»`). "Done. Check the logs" yields
-  `check` WITHOUT the hint; mid-sentence "then Check the logs" yields
-  it WITH the hint. The rule applies to the whole token and its FIRST
-  sub-word ("…period. DownloadManager" → `download` unhinted,
-  `manager` keeps its camelCase hint). Text/message starts do NOT
-  count as sentence starts (no preceding punctuation — a capital there
-  is still evidence, e.g. "Rain washes…" at a message start keeps the
-  hint). Downstream: unhinted capitals lose the proper-noun relief and
-  the conjugation guard's casing exemption — sentence-initial
-  "Deleted" rejects like lowercase `deleted`.
+- **properName hint (2026-09 structural-start rule, extended after a
+  live audit of real session history):** a Capitalized token sets the
+  `properName` hint ONLY when its capital is not orthographic — i.e.
+  the token is NOT at a **structural start**: (a) the first word of
+  its line (this covers message starts — the audit showed
+  "Project"-class clutter entering precisely there), (b) preceded by
+  a bullet/heading/list marker run (`- ` `* ` `## ` `1. `), or (c)
+  preceded — after whitespace and closing quotes/brackets — by
+  sentence or clause punctuation (`.` `!` `?` `;` `:`). Mid-sentence
+  "then Check the logs" keeps the hint; "Done. Check", "- Check",
+  "## Check", "Note: Check", and message-initial "Check" do not.
+  Applies to the whole token and its FIRST sub-word. Detection is a
+  bounded walk-back (a fixed window per token; an unbounded scan made
+  ingest quadratic and failed the 800 KB perf gate). Downstream:
+  unhinted capitals lose the proper-noun relief and the conjugation
+  guard's casing exemption. AUDIT FINDING (2026-09, real history
+  replay): across ~2k messages this removes the systematic
+  sentence-initial harvesting, but ~480 common words still admit via
+  relief from occasional MID-SENTENCE capitalized sightings — a mix
+  of legitimate names (Windows, Intel) and noise (echo, reject,
+  device). The proposed next lever — relief requires the word to have
+  no lowercase sightings in-session — is an OPEN DESIGN ITEM
+  (docs/HANDOFF.md): it would also filter words like `national` that
+  appear both ways.
 
 ## Shape gate (`src/core/shapeGate.ts`)
 

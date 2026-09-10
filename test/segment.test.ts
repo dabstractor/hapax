@@ -258,7 +258,7 @@ describe("tokenize — ordering and bounds invariants", () => {
 describe("tokenize — span offsets (P1.M1.T3.S1)", () => {
   it("reports exact UTF-16 spans on the canonical mixed case", () => {
     expect(tokenize("fix 0f3a9c2 now")).toEqual([
-      { raw: "fix", hexish: false, start: 0, end: 3, sentenceStart: false },
+      { raw: "fix", hexish: false, start: 0, end: 3, sentenceStart: true },
       { raw: "0f3a9c2", hexish: true, start: 4, end: 11, sentenceStart: false },
       { raw: "now", hexish: false, start: 12, end: 15, sentenceStart: false },
     ]);
@@ -292,7 +292,7 @@ describe("tokenize — span offsets (P1.M1.T3.S1)", () => {
 
   it("hexish token reports its own span, not an absorbed base tail's", () => {
     const [whole] = tokenize("0f3a9c2");
-    expect(whole).toEqual({ raw: "0f3a9c2", hexish: true, start: 0, end: 7, sentenceStart: false });
+    expect(whole).toEqual({ raw: "0f3a9c2", hexish: true, start: 0, end: 7, sentenceStart: true });
     const text = "run 0f3a9c2!";
     const toks = tokenize(text);
     expect(toks).toHaveLength(2); // "run" + one opaque hexish token
@@ -312,7 +312,7 @@ describe("tokenize — span offsets (P1.M1.T3.S1)", () => {
     // "草sword" is disqualified whole; 草 is ONE UTF-16 unit, so "error"
     // starts after it: f i x ␠ 草 s w o r d ␠ e r r o r → 11..16.
     expect(tokenize(text)).toEqual([
-      { raw: "fix", hexish: false, start: 0, end: 3, sentenceStart: false },
+      { raw: "fix", hexish: false, start: 0, end: 3, sentenceStart: true },
       { raw: "error", hexish: false, start: 11, end: 16, sentenceStart: false },
     ]);
   });
@@ -512,25 +512,28 @@ describe("sentence-start flag + properName suppression (2026-09 rule)", () => {
 
   it("token after '. ', '! ', '? ' (incl. newline + closers) is sentenceStart", () => {
     expect(starts("Done. Check the logs")).toEqual([
-      false, // Done
+      true, // Done — ALSO line-initial (message start) under the extended rule
       true, // Check (after ". ")
       false, // the
       false, // logs
     ]);
     expect(starts("Wow! Really?")[1]).toBe(true); // Really after "! "
     expect(starts("Sure? Yes")[1]).toBe(true);
-    expect(starts('He said." Quietly')).toEqual([false, false, true]); // Quietly after closers
+    expect(starts('He said." Quietly')).toEqual([true, false, true]); // He line-initial; Quietly after closers
     expect(starts("One.\nTwo")[1]).toBe(true); // newline is whitespace
   });
 
-  it("mid-sentence capitals and message starts are NOT sentenceStart", () => {
+  it("mid-sentence capitals are NOT structural; message/line starts and bullets ARE", () => {
     expect(starts("Check the National labs")).toEqual([
-      false, // message start — no preceding punctuation (per spec: only AFTER punctuation counts)
+      true, // Check — message start IS structural now (the live-audit extension)
       false,
-      false, // National mid-sentence
+      false, // National mid-sentence — the only capital that still counts as evidence
       false,
     ]);
-    expect(starts("v2.5 Release")).toEqual([false, false]); // '.' inside a token is not a sentence end
+    expect(starts("- Bulleted Item here")).toEqual([true, false, false]); // Bulleted after "- " marker
+    expect(starts("## Heading Word")).toEqual([true, false]); // 2 tokens; Heading after "## "
+    expect(starts("Note: This follows a colon")).toEqual([true, true, false, false]); // 4 tokens (a dropped, len<2)
+    expect(starts("v2.5 Release")).toEqual([true, false]); // v2 line-initial; Release preceded by '5', not '.'
   });
 
   it("expandCandidates suppresses properName for sentence-initial capitals (whole + first sub)", () => {

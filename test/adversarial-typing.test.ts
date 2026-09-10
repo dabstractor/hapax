@@ -255,10 +255,13 @@ const PROSE_PROBES: readonly ProseProbe[] = [
     expected: "delegate",
   },
   {
+    // 2026-09 structural-start rule: 'Fences' is capitalized only at a
+    // message start → no properName → conjugation guard rejects (stem
+    // fence=71). Delegation is the CORRECT new outcome.
     fragment: "fenc",
-    full: "fences",
-    title: "menu ['Fences'] (relief; guard skips properName)",
-    expected: ["Fences"],
+    full: "fence",
+    title: "delegate (structural-start capital → no relief → guard rejects)",
+    expected: "delegate",
   },
   {
     fragment: "firs",
@@ -334,21 +337,23 @@ describe("adversarial Probe A — prose no-menu (BUG-001)", () => {
     }
   });
 
-  it("positive control: fenc → Fences opens a real menu on the SAME store", async () => {
+  it("positive control: a directly-stored jargon word opens a real menu on the SAME store", async () => {
     // Guards this file against vacuous no-menu results: the SAME store
     // DOES answer fragments of admitted words through the same provider
-    // path. 2026-09 conjugation guard: prose inflections of common stems
-    // ('posts', stem post=85) no longer store — the live control is now
-    // the proper-noun-relieved 'Fences' (capitalized in prose.jsonl;
-    // properName drafts skip the guard, mirroring the relief).
-    expect(rankMatches(store, "fenc").map((m) => m.display)).toEqual(["Fences"]);
+    // path. 2026-09 structural-start rule: every capitalized sighting in
+    // prose.jsonl is message/sentence-initial, so relief no longer fires
+    // for any of them ('Fences' included) — the live control is a
+    // directly-upserted dictionary-absent jargon sighting instead.
+    store.upsert({
+      key: "lwlock", display: "lwlock", ordinal: store.currentOrdinal() + 1,
+      fromUser: true, properName: false, rankGroup: 0, isSubword: false,
+    });
+    expect(rankMatches(store, "lwl").map((m) => m.display)).toEqual(["lwlock"]);
     const current = mockCurrent(SENTINEL);
     const provider = createHapaxProvider(store, cfg(), current);
-    const result = await provider.getSuggestions(["fenc"], 0, 4, opts());
+    const result = await provider.getSuggestions(["lwl"], 0, 3, opts());
     expect(result).not.toBe(SENTINEL);
-    expect(result!.items.map((i) => i.value)).toEqual(["Fences"]);
-    expect(result!.prefix).toBe("fenc");
-    expect(provider.__hapaxLive()).not.toBeNull();
+    expect(result!.items.map((i) => i.value)).toEqual(["lwlock"]);
   });
 });
 

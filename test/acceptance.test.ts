@@ -265,18 +265,21 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     }
   });
 
-  it("positive control: a stored word fragment DOES open a hapax menu (fenc → Fences)", async () => {
+  it("positive control: a stored word fragment DOES open a hapax menu (lwl → lwlock)", async () => {
     const { store } = await ingestFixture(`${FIXTURES}/prose.jsonl`);
+    // 2026-09 structural-start rule: every capitalized sighting in
+    // prose.jsonl is message/sentence-initial ('Fences' included), so
+    // relief no longer fires anywhere in this fixture — the live control
+    // is a directly-upserted dictionary-absent jargon sighting.
+    store.upsert({
+      key: "lwlock", display: "lwlock", ordinal: store.currentOrdinal() + 1,
+      fromUser: true, properName: false, rankGroup: 0, isSubword: false,
+    });
     const provider = createHapaxProvider(store, cfg(), mockCurrent(SENTINEL));
-    const result = await provider.getSuggestions(["fenc"], 0, 4, opts());
-    expect(result).not.toBe(SENTINEL); // menu, not delegation — the harness can tell the difference
-    // 2026-09 conjugation guard: the former control 'posts' (mid-band
-    // inflection, stem post=85) no longer stores — hapax is for proper
-    // nouns and identifiers. The live control is the proper-noun-relieved
-    // 'Fences' (capitalized in prose.jsonl; properName drafts skip the
-    // guard, mirroring the relief).
-    expect(result!.items.map((i) => i.value)).toEqual(["Fences"]);
-    expect(result!.prefix).toBe("fenc");
+    const result = await provider.getSuggestions(["lwl"], 0, 3, opts());
+    expect(result).not.toBe(SENTINEL); // menu, not delegation
+    expect(result!.items.map((i) => i.value)).toEqual(["lwlock"]);
+    expect(result!.prefix).toBe("lwl");
     expect(provider.__hapaxLive()).not.toBeNull();
   });
 
@@ -343,13 +346,13 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     // store. The words below are capitalized at MESSAGE STARTS (no
     // preceding punctuation), which still counts: the rule suppresses
     // capitals after .!? + closers, not text starts.)
-    const relieved: [word: string, fixtureDisplay: string][] = [
-      ["apple", "Apple"],
-      ["fresh", "Fresh"],
-      ["rain", "Rain"],
-      ["spring", "Spring"],
-      ["warm", "Warm"],
-    ];
+    // 2026-09 structural-start rule (extended): EVERY capitalized
+    // sighting in this fixture is message/sentence-initial (Apple,
+    // Fresh, Rain, Spring, Warm at message starts; feed/apples after
+    // periods), so relief has NO positive case here — the list is empty
+    // and the mechanism is covered by unit tests (score.test.ts) with
+    // mid-sentence capitals.
+    const relieved: [word: string, fixtureDisplay: string][] = [];
     for (const [word, display] of relieved) {
       const q = dict.lookup(word);
       expect(q, `${word}: fixture-measured band member`).not.toBeNull();
@@ -383,7 +386,7 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     // the relief is per-sighting properName, never a word-level whitelist.
     // "apples" joins this class under the 2026-09 sentence-initial rule
     // (its one capitalized sighting is after ". ").
-    for (const word of ["water", "kitchen", "window", "garden", "bread", "wind", "morning", "more", "apples", "feed"]) {
+    for (const word of ["water", "kitchen", "window", "garden", "bread", "wind", "morning", "more", "apples", "feed", "apple", "fresh", "rain", "spring", "warm"]) {
       expect(store.get(word), `${word}: lowercase-only / sentence-initial-only sighting must never store`).toBeUndefined();
     }
 
@@ -394,11 +397,13 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     // 2026-09 conjugation guard: 'posts' (mid-band inflection of the
     // common stem post=85) no longer stores — [] is the correct new pin.
     expect(rankMatches(store, "post")).toEqual([]);
-    expect(rankMatches(store, "fenc").map((m) => m.display)).toEqual(["Fences"]);
-    expect(rankMatches(store, "fresh").map((m) => m.display)).toEqual(["Fresh"]);
+    // 2026-09 structural-start rule: 'Fences' is capitalized only at a
+    // message start — no properName, no relief, guard rejects (stem
+    // fence=71). [] is the correct new pin.
+    expect(rankMatches(store, "fenc")).toEqual([]);
+    expect(rankMatches(store, "fresh")).toEqual([]); // Fresh only message-initial → structural → no relief
     const freshMenu = await provider.getSuggestions(["fresh"], 0, 5, opts());
-    expect(freshMenu?.items.map((i) => i.value)).toEqual(["Fresh"]);
-    expect(freshMenu?.prefix).toBe("fresh");
+    expect(freshMenu?.items.map((i) => i.value)).toEqual(["src/core/query.ts"]); // the only fresh* match left: a filename token from the fixture's one path mention
   });
 });
 

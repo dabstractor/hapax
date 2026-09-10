@@ -232,15 +232,41 @@ export function tokenize(text: string): RawToken[] {
   // isSentenceStartBefore: bounded walk-back (O(1) per token — an
   // O(start) slice+regex here made ingest quadratic and blew the 800 KB
   // perf gate).
+  // STRUCTURAL-START detection (2026-09, extended after live audit:
+  // sentence punctuation alone missed message starts, bullets, headings,
+  // and colons — the actual source of "Project"-class clutter in
+  // markdown-heavy sessions). A token is at a structural start when it
+  // is (a) the first word of its LINE (covers message starts and every
+  // wrapped sentence), (b) preceded by a bullet/heading/numbered-list
+  // marker run ("- ", "* ", "## ", "1. "), or (c) preceded
+  // (after whitespace and closing quotes/brackets) by sentence or
+  // clause punctuation (. ! ? ; :). Bounded walk-back, O(1) per token.
   const isSentenceStartBefore = (text: string, start: number): boolean => {
+    // Bounded window (perf gate: an unbounded lastIndexOf/slice per token
+    // made ingest quadratic on long lines). A token is structurally
+    // initial iff only whitespace precedes it on its line (walk back to
+    // '\n' or a non-space within the window), or the ≤12 chars before it
+    // form a bullet/heading/list marker run, or (after whitespace and
+    // closers) sentence/clause punctuation.
     let i = start;
-    while (i > 0) {
-      const c = text[i - 1];
-      if (c === " " || c === "\t" || c === "\n" || c === "\r") i--;
-      else break;
+    let sawNonSpace = false;
+    let k = start;
+    const lim = Math.max(0, start - 64);
+    while (k > lim) {
+      const c = text[k - 1];
+      if (c === "\n") break; // only whitespace (or nothing) since line start
+      if (!/\s/.test(c)) { sawNonSpace = true; break; }
+      k--;
     }
-    while (i > 0 && ")]}\"'’”»".includes(text[i - 1])) i--;
-    return i > 0 && (text[i - 1] === "." || text[i - 1] === "!" || text[i - 1] === "?");
+    if (!sawNonSpace && (k === 0 || text[k - 1] === "\n")) return true; // first word of line / message
+    // bullet/heading/list marker immediately before (≤ 12-char window)
+    const w = text.slice(Math.max(lim, start - 12), start);
+    if (/^\s*([-*+>#]+|\d+[.)])\s*$/.test(w)) return true;
+    // punctuation (after whitespace + closing quotes/brackets), ≤ 12 chars
+    let m = w.length;
+    while (m > 0 && /\s/.test(w[m - 1])) m--;
+    while (m > 0 && ")]}\\\"'’”»".includes(w[m - 1])) m--;
+    return m > 0 && ".!?;:".includes(w[m - 1]);
   };
   const out: RawToken[] = [];
   let i = 0;
