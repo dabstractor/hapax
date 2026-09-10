@@ -53,16 +53,31 @@ describe("tokenize — base tokens (PRD §04 rule 1)", () => {
     ]);
   });
 
-  it("terminates tokens at punctuation/whitespace, no joins (rule 4)", () => {
-    // PRD §09 enumerates the four segments; the "three words" in §04 prose
-    // is a miscount — state/of/the/art is four.
-    expect(raws(tokenize("state-of-the-art"))).toEqual([
-      "state",
-      "of",
-      "the",
-      "art",
-    ]);
+  it("hyphenated compounds are ONE token (2026-09 compound rule); apostrophes still split", () => {
+    // Rule 4 flipped by the owner (2026-09): a hyphen between word
+    // segments does not split — the compound as typed is the completion
+    // target, parts absorbed like the filename pass.
+    expect(raws(tokenize("state-of-the-art"))).toEqual(["state-of-the-art"]);
+    expect(raws(tokenize("load-bearing wall"))).toEqual(["load-bearing", "wall"]);
+    expect(raws(tokenize("e2e-test ok"))).toEqual(["e2e-test", "ok"]);
+    expect(raws(tokenize("2e-test ok"))).toEqual(["test", "ok"]); // digit-initial runs are never letter-initial compounds
     expect(raws(tokenize("don't"))).toEqual(["don"]); // "t" is length 1 → dropped
+  });
+
+  it("leading/doubled hyphens never form tokens (CLI flags are not candidates)", () => {
+    expect(raws(tokenize("--flag -v value"))).toEqual(["flag", "value"]);
+    expect(raws(tokenize("git-log --verbose"))).toEqual(["git-log", "verbose"]);
+  });
+
+  it("compound tokens carry sentenceStart like any other", () => {
+    const [c] = tokenize("done. Load-bearing work").filter((t) => t.raw === "Load-bearing");
+    expect(c.sentenceStart).toBe(true); // directly after ". " — orthographic capital
+    const [m] = tokenize("the load-bearing wall").filter((t) => t.raw === "load-bearing");
+    expect(m.raw).toBe("load-bearing");
+    expect(m.sentenceStart).toBe(false); // mid-sentence
+  });
+
+  it("underscores are word chars; commas still terminate", () => {
     expect(raws(tokenize("foo_bar,baz"))).toEqual(["foo_bar", "baz"]); // _ is a word char
   });
 
@@ -229,10 +244,7 @@ describe("tokenize — ordering and bounds invariants", () => {
     ].join(" ");
     const expected: Array<Pick<RawToken, "raw" | "hexish">> = [
       { raw: "fix", hexish: false },
-      { raw: "state", hexish: false },
-      { raw: "of", hexish: false },
-      { raw: "the", hexish: false },
-      { raw: "art", hexish: false },
+      { raw: "state-of-the-art", hexish: false }, // ONE compound (2026-09 rule)
       { raw: "f3a9c2e", hexish: true },
       { raw: "0f3a9c2", hexish: true },
       { raw: "abcdef", hexish: false },

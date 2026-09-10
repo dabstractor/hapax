@@ -82,6 +82,14 @@ const HEXISH_RE = /(?=[0-9a-fA-F]*[A-Fa-f])(?:[0-9a-fA-F]{6,40})\b/g;
  *  numbers and decimals never match (final part must be letters). */
 const FILENAME_RE = /\b[A-Za-z][A-Za-z0-9_]{0,30}(?:\.[A-Za-z0-9_]{1,16}){0,2}\.[A-Za-z]{1,5}\b/g;
 
+/** 2026-09 hyphen-compound rule: a letter-initial run of ≥2 segments
+ *  joined by SINGLE inner hyphens ("load-bearing", "opt-in",
+ *  "e2e-test", "state-of-the-art"). The hyphen does NOT split — the
+ *  compound as typed is the completion target, parts absorbed like the
+ *  filename pass. Leading/doubled hyphens never match (CLI "--flag",
+ *  "-v" are not tokens); inner segments may hold digits/underscores. */
+const HYPHEN_RE = /\b[A-Za-z][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)+\b/g;
+
 /** Hash-shape discriminator for letter-initial tokens both passes matched. */
 const HAS_DIGIT_RE = /[0-9]/;
 
@@ -288,21 +296,27 @@ export function tokenize(text: string): RawToken[] {
     });
   }
 
-  // Pass 3 — dotted filename-shaped tokens (2026-09 rule): a word run
-  // with ONE OR MORE dotted alnum parts whose FINAL part is 1–5 letters
-  // ("AGENTS.md", "package.json", "file.tar.gz"). The '.' is not a word
-  // boundary here — the filename is the completion target ("agent"
-  // should offer "AGENTS.md", not the bare "AGENTS"). Version numbers
-  // ("v1.2.3" — final part numeric) and decimals ("3.14") do NOT match;
-  // they keep the base-pass split. Every base/hexish token fully inside
-  // a filename span is absorbed (dropped) so the filename wins
-  // exclusively — same absorption semantics as the hexish pass.
+  // Pass 3 — COMPOUND tokens (2026-09 rules): dotted filename-shaped
+  // runs ("AGENTS.md", "package.json", "file.tar.gz") and hyphenated
+  // compounds ("load-bearing", "state-of-the-art"). Neither '.' nor an
+  // inner '-' is a word boundary here — the compound as typed is the
+  // completion target ("agent" offers "AGENTS.md"; "load" offers
+  // "load-bearing"), never the bare parts. Version numbers ("v1.2.3")
+  // and decimals ("3.14") keep the base-pass split; CLI "--flag"/"-v"
+  // are not tokens. Every base/hexish token fully inside a compound
+  // span is absorbed (dropped) — same absorption semantics as the
+  // hexish pass. Both span families feed ONE sorted array; they cannot
+  // overlap (dots and hyphens are mutually exclusive inside a span).
   FILENAME_RE.lastIndex = 0;
-  const filenames: Array<{ raw: string; start: number; end: number }> = [];
-  for (let m = FILENAME_RE.exec(text); m !== null; m = FILENAME_RE.exec(text)) {
-    filenames.push({ raw: m[0], start: m.index, end: m.index + m[0].length });
+  HYPHEN_RE.lastIndex = 0;
+  const compounds: Array<{ raw: string; start: number; end: number }> = [];
+  for (const re of [FILENAME_RE, HYPHEN_RE]) {
+    for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+      compounds.push({ raw: m[0], start: m.index, end: m.index + m[0].length });
+    }
   }
-  if (filenames.length > 0) {
+  if (compounds.length > 0) {
+    compounds.sort((a, b) => a.start - b.start);
     const mk = (fn: { raw: string; start: number; end: number }): RawToken => ({
       raw: fn.raw,
       hexish: false,
@@ -315,19 +329,19 @@ export function tokenize(text: string): RawToken[] {
     let lastEmitted = -1;
     const emitFn = (idx: number): void => {
       if (idx !== lastEmitted) {
-        kept.push(mk(filenames[idx]));
+        kept.push(mk(compounds[idx]));
         lastEmitted = idx;
       }
     };
     for (const tok of out) {
-      // filenames entirely before this token (none absorbed it) emit first
-      while (f < filenames.length && filenames[f].end <= tok.start) {
+      // compounds entirely before this token (none absorbed it) emit first
+      while (f < compounds.length && compounds[f].end <= tok.start) {
         emitFn(f);
         f++;
       }
-      const fn = filenames[f];
+      const fn = compounds[f];
       if (fn !== undefined && fn.start <= tok.start && tok.end <= fn.end) {
-        emitFn(f); // token absorbed by the filename span
+        emitFn(f); // token absorbed by the compound span
         continue;
       }
       if (fn !== undefined && fn.start < tok.end) {
@@ -336,7 +350,7 @@ export function tokenize(text: string): RawToken[] {
       }
       kept.push(tok);
     }
-    for (; f < filenames.length; f++) emitFn(f);
+    for (; f < compounds.length; f++) emitFn(f);
     return kept;
   }
   return out;

@@ -94,7 +94,13 @@ export function extractMatchState(
   // Threshold mode (PRD §07 rule 2): a trailing identifier of length
   // >= config.threshold, fires everywhere — no whitespace/position
   // gating. prefix is the bare fragment (no leading trigger char).
-  const t = before.match(/[A-Za-z][A-Za-z0-9_]*$/);
+  // Hyphens are admitted INSIDE the fragment (and as a trailing char):
+  // hyphenated compounds are single candidates (spec 04 compound rule),
+  // so mid-compound continuation must query the compound prefix —
+  // "load-b" → fragment "load-b", not "b" (a hyphen-terminating regex
+  // here restarted the menu at every segment). Still letter-initial:
+  // "-v"/"--flag" never match.
+  const t = before.match(/[A-Za-z][A-Za-z0-9_-]*$/);
   if (t && t[0].length >= config.threshold) {
     return { mode: "threshold", fragment: t[0], prefix: t[0] };
   }

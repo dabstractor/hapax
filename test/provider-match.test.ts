@@ -21,6 +21,36 @@ const cfg = (over: Partial<HapaxConfig> = {}): HapaxConfig => ({
   ...over,
 });
 
+describe("threshold mode — hyphenated fragments (2026-09 compound rule)", () => {
+  it("inner hyphens stay in the fragment: 'load-b' → fragment/prefix 'load-b'", () => {
+    expect(extractMatchState(["the load-b"], 0, 10, cfg())).toEqual({
+      mode: "threshold",
+      fragment: "load-b",
+      prefix: "load-b",
+    });
+  });
+
+  it("trailing hyphen continues the compound: 'load-' → fragment 'load-'", () => {
+    expect(extractMatchState(["the load-"], 0, 9, cfg())).toEqual({
+      mode: "threshold",
+      fragment: "load-",
+      prefix: "load-",
+    });
+  });
+
+  it("letter-initial requirement holds: hyphens never enter the fragment head", () => {
+    expect(extractMatchState(["run -v"], 0, 6, cfg())).toBeNull(); // "v" len 1 < threshold 2
+    // "--flag": the fragment is "flag" — leading hyphens stay in the
+    // buffer, never the fragment/prefix (applyCompletion only replaces
+    // the fragment; the "--" survives untouched).
+    expect(extractMatchState(["run --flag"], 0, 10, cfg())).toEqual({
+      mode: "threshold",
+      fragment: "flag",
+      prefix: "flag",
+    });
+  });
+});
+
 describe("trigger mode — default triggerChar #", () => {
   it("'#' alone → trigger with empty fragment and prefix '#'", () => {
     expect(extractMatchState(["#"], 0, 1, cfg())).toEqual({

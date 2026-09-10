@@ -34,18 +34,32 @@ Rules:
    NOTHING (not `bsidianMirror`). Never slice a non-ASCII letter out of a
    word and complete the ASCII remainder. CJK word segmentation remains a
    documented non-goal.
-4. **Punctuation/whitespace terminate tokens.** No hyphen or apostrophe joins
-   (`state-of-the-art` segments into three words; multi-word terms are M2
-   successor-index territory — chained one word at a time, never a single
-   multi-word insertion).
-5. **Dotted filename-shaped tokens stay whole (2026-09 rule).** A word
-   run with one or more dotted alphanumeric parts whose FINAL part is
-   1–5 letters is ONE token: `AGENTS.md`, `package.json`, `file.tar.gz`.
-   The `.` is not a word boundary here — filenames are completion
-   targets as typed ("agent" should offer `AGENTS.md`, not the bare
-   `AGENTS`). Base/hexish tokens inside the span are absorbed. Version
-   numbers (`v1.2.3` — final part numeric) and decimals (`3.14`) do not
-   match and keep the base-pass split.
+4. **Punctuation/whitespace terminate tokens — EXCEPT the compound
+   joins of rules 4a/4b.** Apostrophes always split (`don't` →
+   `don`); commas, brackets, quotes, whitespace terminate.
+   4a. **Dotted filename-shaped tokens stay whole (2026-09 rule).** A
+       word run with one or more dotted alphanumeric parts whose FINAL
+       part is 1–5 letters is ONE token: `AGENTS.md`, `package.json`,
+       `file.tar.gz`. The `.` is not a word boundary here — filenames
+       are completion targets as typed ("agent" should offer
+       `AGENTS.md`, not the bare `AGENTS`). Base/hexish tokens inside
+       the span are absorbed. Version numbers (`v1.2.3` — final part
+       numeric) and decimals (`3.14`) do not match and keep the
+       base-pass split.
+   4b. **Hyphenated compounds stay whole (2026-09 owner rule — a
+       hyphen between word segments does NOT split).** A letter-initial
+       run of two or more segments joined by single inner hyphens is
+       ONE token: `load-bearing`, `opt-in`, `e2e-test`,
+       `state-of-the-art`. The compound as typed is the completion
+       target; the parts are absorbed (never separate candidates),
+       exactly like the filename pass. Leading, doubled, or trailing
+       hyphens never form tokens — CLI `--flag` and `-v` are not
+       candidates (and digit-initial runs like `2e-test` stay
+       letter-initial-only). Admission falls out naturally: compound
+       keys are dictionary-absent → group 0, the identifier class.
+       Rules 4a/4b are one family: COMPOUND TOKENS — typed-shape units
+       (`.`-joined or `-`-joined) that complete whole, with contained
+       base tokens absorbed by a shared sweep.
 
 ### camelCase / snake_case splitting
 

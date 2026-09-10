@@ -461,3 +461,32 @@ describe("armed chain + stock context (BUG-001)", () => {
     // armed-state-after-stock-delegation rules; this pins delegation only.
   });
 });
+
+describe("hyphenated-compound completion (2026-09 compound rule)", () => {
+  const compoundStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    put(s, "load-bearing", 3, 9);
+    return s;
+  };
+
+  it("fragment regex admits inner hyphens: 'load-b' → prefix 'load-b', matches the compound", async () => {
+    const provider = createHapaxProvider(compoundStore(), cfg(), mockCurrent());
+    const result = await provider.getSuggestions(["the load-b"], 0, 10, opts());
+    expect(result!.prefix).toBe("load-b");
+    expect(result!.items.map((i) => i.value)).toEqual(["load-bearing"]);
+  });
+
+  it("trailing-hyphen fragment continues the compound: 'load-' matches", async () => {
+    const provider = createHapaxProvider(compoundStore(), cfg(), mockCurrent());
+    const result = await provider.getSuggestions(["the load-"], 0, 9, opts());
+    expect(result!.prefix).toBe("load-");
+    expect(result!.items.map((i) => i.value)).toEqual(["load-bearing"]);
+  });
+
+  it("word-start query still opens the menu for a compound: 'load' matches", async () => {
+    const provider = createHapaxProvider(compoundStore(), cfg(), mockCurrent());
+    const result = await provider.getSuggestions(["the load"], 0, 8, opts());
+    expect(result!.prefix).toBe("load");
+    expect(result!.items.map((i) => i.value)).toEqual(["load-bearing"]);
+  });
+});

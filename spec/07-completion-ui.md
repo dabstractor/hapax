@@ -56,8 +56,13 @@ Two lookup modes, both always active:
    after `#` (0-char minimum: `#` alone lists the top candidates in
    content-derived order). On completion, `applyCompletion` replaces
    `#fragment` with the word (trigger char is consumed).
-2. **Word matching**: the regex `/[A-Za-z][A-Za-z0-9_]*$/` on
-   text-before-cursor, effective from **1** typed char (see
+2. **Word matching**: the regex `/[A-Za-z][A-Za-z0-9_-]*$/` on
+   text-before-cursor (inner and trailing hyphens admitted — hyphenated
+   compounds are single candidates per spec 04 rule 4b, so mid-compound
+   continuation queries the compound prefix: `load-b` → fragment
+   `load-b`, never `b`; leading hyphens never enter a fragment —
+   `--flag` yields fragment `flag` and the `--` survives insertion),
+   effective from **1** typed char (see
    "Auto-open" above; `config.threshold` is inert). Fires **everywhere** —
    any word start, any context, not just after whitespace. This is
    settled: we never gate on position because the menu never interferes

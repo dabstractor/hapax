@@ -8,7 +8,10 @@
 - snake_case: `session_token_valid` → whole + `session`, `token`, `valid`.
 - Hexish: `f3a9c2e` captured; `123456` (no letter) not; 41+ chars not.
 - CJK run skipped; ASCII resumes after.
-- Hyphen/apostrophe not joined: `state-of-the-art` → three tokens.
+- Hyphenated compounds are ONE token (2026-09 rule 4b): `state-of-the-art`
+  → single token; apostrophes still split (`don't` → `don`); `--flag`/`-v`
+  never form tokens. Threshold fragments admit inner/trailing hyphens
+  (`load-b` → prefix `load-b`).
 
 **shapeGate.test.ts** (each rule is a case)
 - Accept: `zendesk`, `lwlock`, `NREL`, `f3a9c2e`.
