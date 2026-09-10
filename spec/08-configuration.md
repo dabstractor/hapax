@@ -71,3 +71,13 @@ Read-only inspection for development: dumps top-50 candidates by salience,
 store size, rank-group histogram, shape-gate rejection counts, and (M2)
 a successor-index sample. Output via `ctx.ui.notify` or the
 widget API; never logs message bodies (store holds words + counters only).
+**Complete list (2026-09):** every invocation also writes the FULL store
+to `/tmp/hapax-store.txt` — one line per word (key, display, count,
+group, proper/typed flags), count-desc then content order — and the
+notify footer names the path. The popup caps at 50; the file does not.
+
+Why the popup/menu is capped at all: `maxSuggestions` (default 8,
+1–20) is the per-query return cap — a menu-height decision (04), not a
+store cap; pi-tui additionally renders only `autocompleteMaxVisible`
+rows (a pi setting) and pages the rest with ↑/↓. The store itself
+holds up to 20,000 words (06).

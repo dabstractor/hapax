@@ -13,6 +13,7 @@
  * one place (one builder + one spread entry).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { writeFileSync } from "node:fs";
 
 import { salience } from "../core/score.js";
 import type { CandidateStore } from "../core/store.js";
@@ -178,10 +179,38 @@ export function registerAcwordsCommand(
 ): void {
   if (!deps.config.debug) return;
   pi.registerCommand("acwords", {
-    description: "hapax: dump candidate store stats",
+    description: "hapax: dump candidate store stats (full list → file)",
     handler: async (_args, ctx) => {
+      // Full dump (2026-09): the notify popup caps at top-50, but the
+      // menu limits are per-query slices of a store that can hold
+      // thousands of words — owners auditing admission need the
+      // COMPLETE list. Written to /tmp/hapax-store.txt (one line per
+      // word: key, display, count, group, flags), count-desc then
+      // content order for stable diffs.
+      let written = "";
+      try {
+        const rows = [...deps.store.entries()]
+          .map((c) => ({ c }))
+          .sort(
+            (a, b) =>
+              b.c.sessionCount - a.c.sessionCount ||
+              a.c.key.length - b.c.key.length ||
+              (a.c.key < b.c.key ? -1 : a.c.key > b.c.key ? 1 : 0),
+          );
+        written = rows
+          .map(
+            ({ c }) =>
+              `${c.key}\t${c.display}\tx${c.sessionCount}\tg${c.rankGroup}` +
+              `${c.properName ? "\tproper" : ""}${c.userTyped ? "\ttyped" : ""}`,
+          )
+          .join("\n");
+        writeFileSync("/tmp/hapax-store.txt", written + "\n");
+      } catch {
+        /* the notify dump below still works without the file */
+      }
       ctx.ui.notify(
-        formatAcwordsDump(deps.store, deps.pipeline.getStats()),
+        formatAcwordsDump(deps.store, deps.pipeline.getStats()) +
+          `\nfull list (${deps.store.size} words): /tmp/hapax-store.txt`,
         "info",
       );
     },
