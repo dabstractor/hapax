@@ -300,5 +300,7 @@ word** (candidate display casing). Multi-word items are forbidden
 (invariant; see 06). `label` = same, `description` = optional short
 provenance (e.g. `session ×12` or `chain`) — keep minimal; do not clutter.
 
-Max 8 items per result set, ordered per 04 ranking. Every item is a single
+Max 8 items per result set, ordered per 04 ranking (including 04's
+plural pruning: an exact key/key+`"s"` pair in the same result set
+yields only the singular). Every item is a single
 word, including during chains (06, 07).

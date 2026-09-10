@@ -128,5 +128,31 @@ export function rankMatches(
   // P1.M4.T1.S2 bench pass ever shows huge hot ranges, a partial top-N
   // selection is the documented fallback — keep it simple until measured.
   matches.sort(compareRankedMatches);
+
+  // PLURAL PRUNING (2026-09 owner rule, spec 04): when a result set
+  // contains both a key and that key + "s", the plural is redundant
+  // menu noise — the singular is the completion target, so the plural
+  // is dropped. EXACT single-"s" pairs only, and only when BOTH forms
+  // are in the SAME result set: "ss"-final keys never prune
+  // (glass/glas), "es"/"ies" plurals are different keys entirely
+  // (class vs classes — out of scope), filename-shaped keys are
+  // untouched (agents vs agents.md is not a pair), and a plural whose
+  // singular is absent (filtered out, not a prefix match, evicted)
+  // stays. Applied BEFORE the limit slice so a pruned plural never
+  // consumes a slot; can never reduce the set below its non-paired
+  // members.
+  if (matches.length > 1) {
+    const keySet = new Set(matches.map((m) => m.key));
+    return matches
+      .filter(
+        (m) =>
+          !(
+            m.key.endsWith("s") &&
+            !m.key.endsWith("ss") &&
+            keySet.has(m.key.slice(0, -1))
+          ),
+      )
+      .slice(0, limit);
+  }
   return matches.slice(0, limit);
 }

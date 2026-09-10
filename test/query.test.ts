@@ -394,3 +394,48 @@ describe("rankMatches — perf sanity (PRD §02 h3.1: < 1 ms per keystroke)", ()
     }
   });
 });
+describe("rankMatches — plural pruning (2026-09 owner rule)", () => {
+  it("singular + plural both match → only the singular is returned", () => {
+    const s = new CandidateStore();
+    put(s, "plugin", 3, 1);
+    put(s, "plugins", 2, 2);
+    expect(rankMatches(s, "plug").map((m) => m.key)).toEqual(["plugin"]);
+  });
+
+  it("plural without its singular in the result set → plural stays", () => {
+    const s = new CandidateStore();
+    put(s, "plugins", 2);
+    expect(rankMatches(s, "plug").map((m) => m.key)).toEqual(["plugins"]);
+  });
+
+  it("prefix excludes the singular → plural survives on its own", () => {
+    const s = new CandidateStore();
+    put(s, "agent", 3);
+    put(s, "agents", 2);
+    // "agen" matches both; "agents" alone (prefix "agents") has no
+    // singular in its result set — the plural must still return.
+    expect(rankMatches(s, "agen").map((m) => m.key)).toEqual(["agent"]);
+    expect(rankMatches(s, "agents").map((m) => m.key)).toEqual(["agents"]);
+  });
+
+  it("\"ss\" and \"es\" forms never prune: glass stays, class/classes coexist", () => {
+    const s = new CandidateStore();
+    put(s, "glas", 1);
+    put(s, "glass", 1); // ss-final — must survive even with glas present
+    put(s, "class", 1);
+    put(s, "classes", 1); // different key shape — not a single-s pair
+    expect(rankMatches(s, "glas").map((m) => m.key)).toEqual(["glas", "glass"]);
+    expect(rankMatches(s, "clas").map((m) => m.key)).toEqual(["class", "classes"]);
+  });
+
+  it("pruning runs BEFORE the limit slice — a pruned plural frees its slot", () => {
+    const s = new CandidateStore();
+    put(s, "plugged", 1); // len 7
+    put(s, "plugin", 1); // len 6 — pairs with plugins
+    put(s, "plugins", 1); // len 7
+    expect(rankMatches(s, "plug", { limit: 2 }).map((m) => m.key)).toEqual([
+      "plugin",
+      "plugged", // plugins was pruned; its slot went to the next candidate
+    ]);
+  });
+});

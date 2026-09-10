@@ -190,6 +190,21 @@ salience and of everything that changes during a session:
 1. Shorter candidate key first.
 2. Ties → lexicographic (byte order on the lowercase key).
 
+**Plural pruning (2026-09 owner rule):** when a result set contains
+both a key and that key + `"s"` (exact single-`s` pair: `plugin` /
+`plugins`), the plural is dropped — the pair is redundant menu noise
+and the singular is the completion target. Guards: the pair must be
+in the SAME result set (a plural whose singular is absent — filtered
+by the limit, not a prefix match, or evicted — stays); `ss`-final
+keys never prune (`glass`/`glas`); `es`/`ies` plurals are different
+keys entirely (`class`/`classes` is out of scope); filename-shaped
+keys are untouched (`agents` vs `agents.md` is not a pair). Pruning
+runs BEFORE the limit slice, so a pruned plural never consumes a
+slot. The store itself is never pruned — this is a query-time menu
+rule only (the conjugation guard in admission handles common stems;
+this covers dictionary-absent jargon pairs that both stored
+legitimately).
+
 Rationale: a menu whose order depends on recency or frequency reshuffles
 between keystrokes and between sessions, defeating the muscle memory
 completion exists to build. The same fragment must always yield the same
