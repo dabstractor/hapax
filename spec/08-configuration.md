@@ -23,7 +23,7 @@ defaults, continue running. Missing files are normal.
                               // matching is effectively 1 char (see 07).
                               // Kept for schema compatibility. 1 | 2 | 3.
   "maxSuggestions": 8,       // 1–20
-  "rejectCommonness": 50,    // 1–255: dictionary quantile at/above which
+  "rejectCommonness": 12,    // 1–255: dictionary quantile at/above which
                               // a word is rejected from the store (higher
                               // = looser). Governs admission AND the
                               // conjugation guard's stem comparison. Probe
@@ -61,9 +61,12 @@ Validation: clamp/repair invalid values to defaults (log when repaired).
   set, eviction cap, debounce intervals, popup timing. These are
   internal tuning constants — the tuning protocol lives in 09, not in
   user config. The reject band is the one deliberate exception
-  (`rejectCommonness`): everyday-word leakage is an ongoing dial the
-  owner tunes against real sessions, and a code edit per tweak would
-  defeat that.
+  (`rejectCommonness`): dictionary attestation is near-disqualifying
+  evidence (2026-09 owner rule — "commit hashes and variable names, not
+  half of the english language"); the knob exists so the owner can
+  loosen or tighten against real sessions without a code edit. The
+  config default imports score.ts's baked REJECT_COMMON_THRESHOLD
+  automatically — no separate default to keep in sync.
 
 ## Debug command (`/acwords`, registered when `debug: true`)
 

@@ -2,26 +2,29 @@
  * Score — stage 3 of the segment → shapeGate → score → store → query
  * pipeline (PRD §04), two halves sharing one module.
  *
- * ADMISSION (h2.24, P1.M2.T3.S1): `admit` maps a shape-gated CandidateDraft
- * plus a dictionary lookup to a RankGroup (0 | 1 | 2) or 'reject':
+ * ADMISSION (h2.24, P1.M2.T3.S1; 2026-09 retighten): `admit` maps a
+ * shape-gated CandidateDraft plus a dictionary lookup to a RankGroup
+ * (0 | 1 | 2) or 'reject'. Dictionary ATTESTATION is near-disqualifying
+ * evidence — hapax completes identifiers/hashes/jargon (the ABSENT
+ * class), not ordinary English:
  *
  *   q = dictionary.lookup(draft.key)   (0–255 quantized rank; 0 = rarest,
  *                                      255 = most common; null = absent)
- *   q === null                 → group 0    rare-by-default
- *   q < MID_FREQ_THRESHOLD     → group 1    rare-but-attested
- *   q < REJECT_COMMON_THRESHOLD → group 2   mid-frequency
- *   otherwise                  → 'reject'   very common ("the", "context",
- *                                           "data" — PRD §04's reject
- *                                           examples and their band)
- *   + proper-noun relief (BUG-002): a CAPITALIZED whole token with
- *     REJECT_COMMON_THRESHOLD ≤ q < PROPER_NOUN_ADMIT_CEILING admits at
- *     group 2 instead of rejecting.
+ *   q === null                 → group 0    rare-by-default (THE value:
+ *                                           identifiers, jargon, hashes)
+ *   q < REJECT_COMMON_THRESHOLD (12) → group 1  rarest English tail only
+ *   otherwise                  → 'reject'   attested English
+ *   + proper-noun relief: RETIRED-IN-PLACE (ceiling == reject band —
+ *     can no longer admit table-rejected words; see
+ *     PROPER_NOUN_ADMIT_CEILING's history).
  *
  * Band values are pinned by MEASUREMENT against the shipped artifact —
  * tools/calibrate-bands.mjs prints the rank↔word↔q table and re-verifies the
  * constants (BUG-001 history: the original 220/120 bands covered only ranks
  * ≤ 3 / ≤ 391 of the real corpus, so "the"/"with"/"this" could never be
- * rejected no matter how good the dictionary data was).
+ * rejected no matter how good the dictionary data was; 2026-09 final:
+ * reject 50 → 12 after a live audit showed the mid band admitting 1,183
+ * everyday words against 4,889 absent identifiers).
  *
  * Smaller groups rank better (rare words are the most valuable completions),
  * so the subword clamp RAISES the numeric group: a sub-word never ranks above
@@ -70,68 +73,61 @@
 import type { CandidateDraft } from "./segment.js";
 import type { Candidate, Dictionary, RankGroup } from "./types.js";
 
-/** Reject at/above this commonness rank — very common English that must
- *  never trigger a menu ("the", "with", "this", "them", "context").
- *  PRD §04 h2.24; baked per PRD §08 (the ONLY tuning surface — never
- *  config/env).
+/** Reject at/above this commonness rank — dictionary-ATTESTED English
+ *  is near-disqualifying evidence (2026-09 retighten): hapax exists to
+ *  complete identifiers, commit-hash-shaped tokens, and jargon — the
+ *  dictionary-ABSENT class — not ordinary English. Only the rarest
+ *  English tail admits: q < 12 ⇔ roughly the rarest ~10% of the corpus
+ *  (a live audit of ~2.2k real messages: 4,889 stored words were
+ *  dictionary-absent — the value — while 1,183 words at q 20–49 were
+ *  the noise leak: provider/default/null/node/enable/spec/cache;
+ *  483 more were relief-only capitalized admits). Baked per PRD §08
+ *  (never config/env; the `rejectCommonness` config knob overrides at
+ *  runtime by owner choice, defaulting to this constant).
  *
- *  Calibrated against the shipped artifact (tools/calibrate-bands.mjs).
- *  BUG-001 fix: under the frozen quant curve the original value 220 covered
- *  only ranks ≤ 3, making rejection mathematically unreachable; the first
- *  recalibration (q ≥ 100) still left the PRD's own named reject example
- *  "context" (q = 51) admitted at group 2, so ordinary prose opened menus
- *  on context/data/code/jumps/lazy-class words (2026-09 validation Issue 1).
- *  q ≥ 50 ⇔ the top ~8,501 dictionary ranks of 48,802 — the rank band the
- *  dialogue-register corpus actually assigns to everyday prose words — and
- *  "context" (q = 51), "jumps" (51), "lazy" (67), "ordinary" (79),
- *  "data" (82), "code" (91) all clear it. The BUG-001 word set
- *  (the=240, with=179, this=197, them=156) clears it with margin. */
-export const REJECT_COMMON_THRESHOLD = 50 as const;
+ *  Calibration history (condensed): the original 220 covered only
+ *  ranks ≤ 3 (BUG-001 — rejection mathematically unreachable);
+ *  retuned 220 → 100 → 50 (2026-09 Issue 1: "context" q=51 et al. kept
+ *  admitting) → 12 (2026-09 final: English attestation is evidence
+ *  AGAINST admission, per owner: "not half of the english language").
+ *  Calibrated against the shipped artifact via
+ *  tools/calibrate-bands.mjs. */
+export const REJECT_COMMON_THRESHOLD = 12 as const;
 
 /** Demote to group 2 at/above this commonness rank
- *  (20 ≤ q < 50 — mid-frequency, e.g. "gospel"/"brazil"-band words).
- *  PRD §04 h2.24; baked per PRD §08.
+ *  (historically 20 ≤ q < 50 — mid-frequency). PRD §04 h2.24; baked per
+ *  PRD §08.
  *
- *  Calibrated against the shipped artifact (tools/calibrate-bands.mjs,
- *  BUG-001 fix + 2026-09 Issue 1 retune): group 2 ⇔ dictionary ranks
- *  ~8,502–~27,000 land group 2; the rarest attested tail below stays
- *  group 1 (the corpus tail bottoms out at q ≈ 11, so 20 keeps three
- *  live bands: reject [50,255], mid [20,50), rare-attested [0,20)). */
+ *  2026-09 retighten: with REJECT_COMMON_THRESHOLD at 12, the table's
+ *  mid band is unreachable (every attested q ≥ 12 rejects before the
+ *  demotion matters) and group 2 is effectively retired — this constant
+ *  now serves only the conjugation guard's tier-2 (stem q ≥ 20 rejects
+ *  absent inflections), which tier-1 (stem ≥ 12) largely subsumes.
+ *  Redundant but harmless; kept to avoid touching the guard's shape. */
 export const MID_FREQ_THRESHOLD = 20 as const;
 
-/** Relief ceiling for capitalized whole tokens (BUG-002 fix,
- *  bugfix/001_0f4b641cf9ce): a properName-flagged, non-subword,
- *  dictionary-attested candidate with REJECT_COMMON_THRESHOLD ≤ q <
- *  PROPER_NOUN_ADMIT_CEILING admits at group 2 instead of rejecting.
- *  Baked per PRD §08; tuned 120 → 95 by the §09 tuning-protocol re-run
- *  (P1.M2.T1.S2, Mode A below). Must satisfy 94 < ceiling ≤ 156 so
- *  national(90)/energy(94)/laboratory(57) admit while The(240)/This(197)/
- *  With(179)/Them(156) stay rejected.
+/** Relief ceiling for capitalized whole tokens — **RETIRED-IN-PLACE
+ *  (2026-09 retighten)**: set equal to REJECT_COMMON_THRESHOLD (12), so
+ *  the strict `q < ceiling` test can never reach past the reject band
+ *  and the relief can no longer admit table-rejected words. The
+ *  mechanism (properName-flagged, non-subword, dictionary-attested
+ *  candidates admitting at group 2 instead of rejecting) stays in code
+ *  and spec per the owner's "don't take them out just yet" — restoring
+ *  it is a one-constant change. The design answer for wanting named
+ *  entities back is a user allowlist (config), not a band change
+ *  (docs/HANDOFF.md).
  *
- *  Why 95 (measured, prose A/B against test/fixtures/sessions/
- *  prose.jsonl): the fixture contains sentence-initial capitals, and the
- *  relief admits ANY capitalized occurrence — at 120 sixteen common
- *  words stored (Check q=119, Sleep 118, Light 113, Cold 109, Strong
- *  106, Enjoy/Lunch 102, Books/Guard 95, Fresh 93, Rain/Warm 92, Spring
- *  84, Feed 88, Apple 77, Apples 59) and two expected.md `[]` labels
- *  flipped (gar → Guard, fresh → Fresh). 95 — the interval's minimum —
- *  is the tightest legal band: it excludes every excludable label-breaker
- *  (Guard/Books at q=95 reject at ceiling 95 since relief is q < ceiling
- *  STRICT) and also keeps Water(121) out — "Water" occurs capitalized in
- *  the fixture, so any ceiling ≥ 122 would re-break `wate → []`. Fresh
- *  (q=93) is below the interval floor and cannot be excluded by any
- *  legal ceiling; its expected.md row is the documented minimal
- *  re-label (fallback ladder step 3). Full probe table + A/B result in
- *  the admit() doc-block below.
- *
- *  Why a relief band and not a blanket REJECT retune: REJECT ≥ 95 would
- *  re-admit lowercase context(51)/posts(47) and break the calibration
- *  no-menu gate (test/calibration.test.ts — its probes are lowercase, so
- *  the capitalized-only relief cannot touch them). Known drift from
- *  spec/04's original 220/120 table — spec/*.md is READ-ONLY; this
- *  JSDoc is the record. Verified against the shipped artifact via
- *  tools/calibrate-bands.mjs. */
-export const PROPER_NOUN_ADMIT_CEILING = 95 as const;
+ *  Calibration history (condensed, was binding until the 2026-09
+ *  retighten): BUG-002 fix — relief existed so M2's "National Renewable
+ *  Energy Laboratory" chain (national q=90, energy 94, laboratory 57)
+ *  could complete while lowercase prose stayed rejected; ceiling tuned
+ *  120 → 95 by a measured prose A/B (at 120, sixteen common capitalized
+ *  words stored and two expected.md labels flipped; 95 was the
+ *  tightest legal value). A live audit of real sessions later showed
+ *  the relief admitting ~483 capitalized common words (echo, windows,
+ *  failed, file) — the owner retired it: "it's for completing commit
+ *  hashes and variable names, not half of the english language." */
+export const PROPER_NOUN_ADMIT_CEILING = 12 as const;
 
 /** Admission outcome: a rank group (0 = rarest/best … 2 = mid-frequency)
  *  or 'reject' (never enters the store). */
@@ -204,47 +200,16 @@ function inflectionStems(word: string): string[] {
  *     interval and the known drift from spec/04's original 220/120
  *     table).
  *
- * Rationale: M2 integration item 7 chains "National Renewable Energy
- * Laboratory", whose words sit at q 57–94 — inside the BUG-001 reject
- * band. A blanket retune (REJECT ≥ 95) would re-admit lowercase
- * context(51)/posts(47) and break the calibration no-menu gate; the
- * capitalized-only relief admits the phrase while prose stays rejected.
- * Admission alone restores chaining: admitted whole tokens enter
- * adjacency runs, so the successor index fills (§06) with no separate
- * bigram-path change. Downstream: a relieved parent sets wholeGroup = 2,
- * so its sub-words clamp to min(2, max(table, 2+1)) = 2; properName also
- * feeds salience (W_PROPER_NAME = 0.8) — unchanged.
- *
- * MEASURED — §09 tuning-protocol re-run (P1.M2.T1.S2, Mode A; real
- * pipeline + shipped dict against test/fixtures/sessions/prose.jsonl):
- * the fixture is full of sentence-initial capitals, so the relief is
- * load-bearing there. Final ceiling 95 (tuned from S1's 120; legal
- * integer range 95..156). Probe table (word → dict q → verdict under
- * the final band):
- *
- *   admit group 2 via relief (capitalized in fixture, 50 ≤ q < 95):
- *     Apple 77, Apples 59, Feed 88, Fresh 93, Rain 92, Spring 84,
- *     Warm 92
- *   reject / delegate (capitalized in fixture, q ≥ 95): Guard 95,
- *     Books 95, Enjoy 102, Lunch 102, Strong 106, Cold 109, Light 113,
- *     Sleep 118, Check 119, Water 121, Move 128, Keep 138, Long 138,
- *     Take 155, They 174, Your 188, This 197
- *   reject via casing gate (occur ONLY lowercase → never stored despite
- *     50 ≤ q < 95): garden 86, bread 84, wind 97; and above-ceiling
- *     lowercase: kitchen 96, window 99, morning 129, more 150,
- *     water 121
- *   normal mid-band (no relief needed): fences 41, posts 47
- *
- * A/B result: at S1's ceiling 120 two expected.md prose `[]` labels
- * flipped (gar → relieved Guard 95; fresh → relieved Fresh 93). Ceiling
- * 120 → 95 — one constant, the interval minimum — re-fixed `gar`
- * (95 < 95 false → Guard rejects); `fresh` (q=93) is below the interval
- * floor and unfixable by any legal ceiling, so its expected.md row is
- * the documented minimal re-label (ladder step 3) to ["Fresh"]. Water
- * (121, capitalized in the fixture) additionally caps the ceiling at
- * 121. Evidence: test/acceptance.test.ts item-2 "prose A/B replay";
- * probe/delegation guarantees (SENTINEL identity, calledOnce,
- * __hapaxLive() null) unchanged.
+ * CALIBRATION HISTORY (condensed; was binding until the 2026-09
+ * retighten): the relief existed so M2 integration item 7's "National
+ * Renewable Energy Laboratory" chain (q 57–94, inside the then-reject
+ * band) could complete while lowercase prose stayed rejected; ceiling
+ * tuned 120 → 95 by a measured prose A/B (probe tables preserved in git
+ * history at d6bbeeb^). A later live audit of real sessions showed the
+ * relief admitting ~483 capitalized common words (echo, windows,
+ * failed, file) — the owner retired it in place: ceiling == reject
+ * band. Restoring named-entity completion is a user-allowlist design
+ * question (docs/HANDOFF.md), not a band change.
  *
  * @param draft the shape-gated candidate (key must be lowercase)
  * @param dictionary quantized commonness dictionary (0–255 rank or null)

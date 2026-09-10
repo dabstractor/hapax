@@ -128,10 +128,15 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     await finished;
   }, 60_000);
 
-  it("ingests prose.jsonl into a live (non-empty) store", () => {
-    // Positive control, half 1: the replay really admitted words. Every
-    // no-menu assertion below would be vacuous against an empty store.
-    expect(store.size).toBeGreaterThan(0);
+  it("ingests prose.jsonl into a store that is now EMPTY by design (2026-09 retighten)", () => {
+    // Ordinary English prose is no longer completion material: every
+    // prose.jsonl word is either attested (q ≥ 12 rejects — fences 41,
+    // posts 47, garden 86…) or capitalized-only-at-structural-starts.
+    // The no-menu assertions below are therefore trivially true for the
+    // RIGHT reason (nothing admits); the live-menu control elsewhere in
+    // this suite uses a direct store upsert, keeping this file
+    // non-vacuous.
+    expect(store.size).toBe(0);
   });
 
   it.each(COMMON_PROBES)(
@@ -161,33 +166,19 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     },
   );
 
-  it("posts/thin/firs: mid-band inflection now delegates (conjugation guard), rejected prefixes stay rejected", async () => {
-    // MEASURED against the shipped artifact (2026-09 Issue-1 retune +
-    // the 2026-09 conjugation guard):
-    //   lookup('posts') = 47  → mid band in the DICT, but its STEM
-    //                          'post' = 85 sits in the REJECT band → the
-    //                          guard rejects the inflection: hapax is for
-    //                          proper nouns and identifiers, not prose
-    //                          verb/plural morphology
-    //   lookup('thin')  = 76  → ≥ REJECT_COMMON_THRESHOLD    → rejected
-    //   lookup('first') = 144 → ≥ REJECT_COMMON_THRESHOLD    → rejected
-    // The dict-band facts are still asserted relative to the IMPORTED
-    // constants — the guard layers on top of the band table, it does not
-    // replace it.
+  it("posts/thin/firs: attested English rejects at the TABLE now (2026-09 retighten), rejected prefixes stay rejected", async () => {
+    // posts(47), thin(76), first(144) are all ≥ REJECT(12): admission
+    // rejects them before the conjugation guard is even consulted. The
+    // dict-band assertions keep documenting where these words sit.
     const postsQ = dict.lookup("posts");
     expect(postsQ, "shipped dict lost 'posts'").not.toBeNull();
-    expect(postsQ!).toBeGreaterThanOrEqual(MID_FREQ_THRESHOLD);
-    expect(postsQ!).toBeLessThan(REJECT_COMMON_THRESHOLD);
-    const postQ = dict.lookup("post");
-    expect(postQ, "shipped dict lost 'post' (guard stem)").not.toBeNull();
-    expect(postQ!).toBeGreaterThanOrEqual(REJECT_COMMON_THRESHOLD);
-    expect(rankMatches(store, "posts")).toEqual([]); // guard: stem is common
+    expect(postsQ!).toBeGreaterThanOrEqual(REJECT_COMMON_THRESHOLD); // 2026-09: 47 ≥ 12 — table-rejected
+    expect(rankMatches(store, "posts")).toEqual([]);
 
-    // Provider path pins the same measured behavior: delegation, no menu.
     const postsCurrent = mockCurrent(SENTINEL);
     const postsProvider = createHapaxProvider(store, cfg(), postsCurrent);
     const menu = await postsProvider.getSuggestions(["posts"], 0, 5, opts());
-    expect(menu).toBe(SENTINEL); // delegated — the guard rejected 'posts'
+    expect(menu).toBe(SENTINEL); // delegated — table reject
     expect(postsProvider.__hapaxLive()).toBeNull();
 
     // 'thin' and 'firs' are top-corpus words (measured q=76 and q=144,

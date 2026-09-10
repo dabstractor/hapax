@@ -721,8 +721,8 @@ function editingCurrent(initial: string[] = ["natio"], cursorCol = 5) {
   };
 }
 
-describe("replayed-store arming end-to-end (real ingest pipeline, zephyr-chain fixture — the PRD §09 item-7 route, h2.54)", () => {
-  it("bare-word arming end-to-end: 'Acme' in menu → accept → armed → word-start offer yields Zephyr → Noria", async () => {
+describe("replayed-store arming end-to-end (real ingest pipeline, zephra-chain fixture — the PRD §09 item-7 route, h2.54)", () => {
+  it("bare-word arming end-to-end: 'Zorp' in menu → accept → armed → word-start offer yields Zephra → Noria", async () => {
     const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
     const { store, pipeline } = makeChainPipeline(true);
     const current = editingCurrent();
@@ -733,33 +733,35 @@ describe("replayed-store arming end-to-end (real ingest pipeline, zephyr-chain f
 
     // The bare word is present in the word-only menu (whole-word
     // acceptance arms the chain — h2.43), topping the candidates:
-    // dictionary-absent "acme" (group 0, rarity bonus) outranks its
+    // dictionary-absent "zorp" (group 0, rarity bonus) outranks its
     // q≤26 walk partners (group 2).
-    const menu = await suggest(provider, ["acme"], 0, 4);
-    const acmeItem = menu!.items[0]!;
-    expect(acmeItem.value).toBe("Acme");
-    expect(acmeItem.description).toMatch(/^session x\d+$/);
+    const menu = await suggest(provider, ["zorp"], 0, 4);
+    const zorpItem = menu!.items[0]!;
+    expect(zorpItem.value).toBe("Zorp");
+    expect(zorpItem.description).toMatch(/^session x\d+$/);
 
-    provider.applyCompletion(["acme"], 0, 4, acmeItem, "acme");
-    expect(chain.state()).toEqual({ word: "acme" });
-    expect(current.state.lines).toEqual(["Acme"]);
+    provider.applyCompletion(["zorp"], 0, 4, zorpItem, "zorp");
+    expect(chain.state()).toEqual({ word: "zorp" });
+    expect(current.state.lines).toEqual(["Zorp"]);
 
     // The user types the separating space — the cursor is now at the
     // empty next word with ZERO typed chars, where the redesigned
-    // word-start offer (plan 002) serves topSuccessors('acme') at
+    // word-start offer (plan 002) serves topSuccessors('zorp') at
     // prefix "" with BARE values in the candidate display casing
     // (PRD §07; the 2026-09 Issue-2 fix).
     current.typeSpace();
-    expect(current.state.lines).toEqual(["Acme "]);
+    expect(current.state.lines).toEqual(["Zorp "]);
     const offer = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => [i.label, i.value])).toEqual([
-      ["Zephyr", "Zephyr"],
-      ["turbine", "turbine"], // license dropped: was a gate-rejected-"lab" bridge (P1.M1.T3.S2)
+      ["Zephra", "Zephra"],
+      // 2026-09 retighten: "turbine" (q=26) now REJECTS at the table, so
+      // it no longer appears as a successor (its adjacency run broke the
+      // same way "license" did via the gate).
     ]);
     expectSingleWordItems(offer?.items ?? []);
 
-    // Tab → armed(zephyr); pi-tui splices the BARE value verbatim at
+    // Tab → armed(zephra); pi-tui splices the BARE value verbatim at
     // the cursor (prefix ""), so the user's space stays the single
     // separator — no double space.
     provider.applyCompletion(
@@ -769,13 +771,13 @@ describe("replayed-store arming end-to-end (real ingest pipeline, zephyr-chain f
       offer!.items[0]!,
       offer!.prefix,
     );
-    expect(chain.state()).toEqual({ word: "zephyr" });
-    expect(current.state.lines).toEqual(["Acme Zephyr"]); // ONE space
+    expect(chain.state()).toEqual({ word: "zephra" });
+    expect(current.state.lines).toEqual(["Zorp Zephra"]); // ONE space
 
     // Space again → the chain continues at the next word start:
-    // zephyr's successors, still bare, still one word each.
+    // zephra's successors, still bare, still one word each.
     current.typeSpace();
-    expect(current.state.lines).toEqual(["Acme Zephyr "]);
+    expect(current.state.lines).toEqual(["Zorp Zephra "]);
     const offer2 = await suggest(provider, current.state.lines, 0, current.state.cursorCol);
     expect(offer2?.prefix).toBe("");
     expect(offer2?.items.map((i) => i.label)).toEqual(["Noria"]);
@@ -796,9 +798,9 @@ describe("replayed-store arming end-to-end (real ingest pipeline, zephyr-chain f
     // (i) Arming is gated: accepting a live word item must NOT arm
     // (word completion itself still works — the flag disables the chain
     // layer, not hapax's word menu).
-    const menu = await suggest(provider, ["acme"], 0, 4);
-    expect(menu?.items.map((i) => i.value)).toContain("Acme");
-    provider.applyCompletion(["acme"], 0, 4, menu!.items[0]!, "acme");
+    const menu = await suggest(provider, ["zorp"], 0, 4);
+    expect(menu?.items.map((i) => i.value)).toContain("Zorp");
+    provider.applyCompletion(["zorp"], 0, 4, menu!.items[0]!, "zorp");
     expect(chain.state()).toBeNull();
 
     // (ii) Even a machine armed by ANY means never offers: the armed
@@ -806,16 +808,16 @@ describe("replayed-store arming end-to-end (real ingest pipeline, zephyr-chain f
     // extractMatchState (null there) → pi's stock delegate, no chain
     // item ever published. The machine's own state is untouched — the
     // gate lives in the provider.
-    chain.arm("acme");
+    chain.arm("zorp");
     const options = opts();
-    const lines = ["Acme "];
+    const lines = ["Zorp "];
     // 2026-09 close-on-space rule: a plain trailing space returns null
     // WITHOUT delegating (pi's stock provider answers a trailing space
     // with the whole-cwd file listing; that delegation stuck a file
     // menu where hapax's menu closed).
     expect(await provider.getSuggestions(lines, 0, 5, options)).toBeNull();
     expect(current.getSuggestions).not.toHaveBeenCalled();
-    expect(chain.state()).toEqual({ word: "acme" }); // inert, never consulted
+    expect(chain.state()).toEqual({ word: "zorp" }); // inert, never consulted
   });
 });
 
@@ -905,13 +907,13 @@ describe("chain machine — armed branch word-start guard (BUG-005)", () => {
 describe("editor-sim integration — trigger consumption & one-word invariant (BUG-005/BUG-001)", () => {
   /** The h3.4 repro corpus: two lines; the real bigram hook records
    *  alphaone→betaword, betaword→gamma, alphaone→deltaword,
-   *  deltaword→epsilon. 'betaword' is the ONLY stored b-word, so the
+   *  deltaword→epsilonz. 'betaword' is the ONLY stored b-word, so the
    *  '#b' trigger menu is deterministic without extra seeding. */
   let store: CandidateStore;
   beforeAll(async () => {
     const wired = makeChainPipeline(true);
-    await wired.pipeline.processText("alphaone betaword gamma", false);
-    await wired.pipeline.processText("alphaone deltaword epsilon", true);
+    await wired.pipeline.processText("alphaone betaword gammaz", false); // gammaz: absent (gamma q47 now rejects)
+    await wired.pipeline.processText("alphaone deltaword epsilonz", true); // epsilonz: absent (epsilon q19 now rejects)
     store = wired.store;
   });
 
@@ -1010,7 +1012,7 @@ describe("editor-sim integration — trigger consumption & one-word invariant (B
     ed.typeSpace();
     const post = await suggest(inner, ed.state.lines, 0, ed.state.cursorCol);
     expect(post?.prefix).toBe("");
-    expect(post?.items.map((i) => i.value)).toEqual(["gamma"]);
+    expect(post?.items.map((i) => i.value)).toEqual(["gammaz"]);
     expectSingleWordItems(post?.items ?? []);
 
     // (iv) RankedMatch level: the shared helper gates the direct core

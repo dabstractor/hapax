@@ -56,7 +56,8 @@ export interface HapaxConfig {
   maxSuggestions: number;
   /** Commonness quantile at/above which a word is REJECTED from the
    *  store (1–255; higher = looser). Default: score.ts's baked
-   *  REJECT_COMMON_THRESHOLD (50). This is the ongoing dial for "too
+   *  REJECT_COMMON_THRESHOLD (12 — attested English is near-disqualifying
+   *  evidence, 2026-09 owner rule). This is the ongoing dial for "too
    *  many common words in the menu" — e.g. "lists" sits at q = 49,
    * one notch below the default, so setting 49 rejects it. Probe any
    * word's q with: node tools/calibrate-bands.mjs <word...> */

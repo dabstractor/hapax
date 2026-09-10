@@ -346,6 +346,9 @@ describe("rankMatches — one-word invariant (PRD §07 h2.44, R1)", () => {
       "The lwlock guard failed again; file a zendesk ticket.",
       true,
     );
+    // 2026-09 retighten: t/g-prefix coverage needs absent words (English
+    // t-/g-words reject at the table now).
+    await pipeline.processText("txidlock and gzorch diagnostics", true);
     expect(store.size, "real ingest must populate the store").toBeGreaterThan(0);
 
     for (const p of ["", "l", "lw", "z", "t", "g"]) {

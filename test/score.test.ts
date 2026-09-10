@@ -82,9 +82,9 @@ const cand = (over: Partial<Candidate> = {}): Candidate => ({
 describe("admit — baked thresholds (PRD §04/§08)", () => {
   // Deliberate pin of the measured values (tools/calibrate-bands.mjs,
   // BUG-001): P1.M1.T2.S2's calibration test relies on these being exact.
-  it("exports REJECT_COMMON_THRESHOLD = 50 and MID_FREQ_THRESHOLD = 20", () => {
-    expect(REJECT_COMMON_THRESHOLD).toBe(50);
-    expect(MID_FREQ_THRESHOLD).toBe(20);
+  it("exports REJECT_COMMON_THRESHOLD = 12 (2026-09 retighten) and MID_FREQ_THRESHOLD = 20", () => {
+    expect(REJECT_COMMON_THRESHOLD).toBe(12);
+    expect(MID_FREQ_THRESHOLD).toBe(20); // guard tier-2 only; the g2 table band is retired
   });
 });
 
@@ -126,26 +126,34 @@ describe("admit — conjugation guard (2026-09, 'deleted' leak)", () => {
   });
 
   it("properName drafts SKIP the guard — casing evidence outranks morphology (Andrews)", () => {
-    // Table: andrews attested at q≥REJECT → reject; relief (properName,
-    // q < ceiling) → group 2; the stem guard would have rejected it too
-    // (andrew ≥ REJECT) but never runs — casing wins.
+    // 2026-09: with the relief retired (ceiling == REJECT), a capitalized
+    // table-rejected word ALSO rejects — but still WITHOUT consulting the
+    // guard (the skip is the contract this pins). The q < REJECT twin
+    // below shows the skip matters: the stem is reject-common, the word
+    // is rare-attested, and properName keeps it admitting via the table.
+    const d = { andrews: REJECT_COMMON_THRESHOLD, andrew: REJECT_COMMON_THRESHOLD };
     expect(
-      admit(
-        draft("andrews", false, { display: "Andrews", properName: true }),
-        dict({ andrews: REJECT_COMMON_THRESHOLD, andrew: REJECT_COMMON_THRESHOLD }),
-      ),
-    ).toBe(2); // relief admits it
-    // The SAME dictionary admits nothing for the lowercase draft — the
-    // guard applies there (stem andrew is reject-common).
+      admit(draft("andrews", false, { display: "Andrews", properName: true }), dict(d)),
+    ).toBe("reject"); // table-rejected; relief retired
+    expect(admit(draft("andrews"), dict(d))).toBe("reject"); // lowercase: same table + guard agrees
+    // Rare-attested word with a COMMON stem: properName skips the guard
+    // (admits at 1); lowercase hits the guard and rejects.
+    const d2 = { andrews: REJECT_COMMON_THRESHOLD - 1, andrew: REJECT_COMMON_THRESHOLD };
     expect(
-      admit(draft("andrews"), dict({ andrews: REJECT_COMMON_THRESHOLD, andrew: REJECT_COMMON_THRESHOLD })),
-    ).toBe("reject");
+      admit(draft("andrews", false, { display: "Andrews", properName: true }), dict(d2)),
+    ).toBe(1);
+    expect(admit(draft("andrews"), dict(d2))).toBe("reject");
   });
 
-  it("stem below the mid band does NOT reject absent jargon (zephyrs → zephyr q< MID stays admitted... unless attested mid+)", () => {
-    // zephyr at q = MID−1 (rare-attested): an absent plural of a RARE
-    // word is still jargon-shaped — admit at group 0.
-    expect(admit(draft("zephyrs"), dict({ zephyr: MID_FREQ_THRESHOLD - 1 }))).toBe(0);
+  it("stem below the reject band does NOT reject absent jargon (rarestem plurals stay admitted)", () => {
+    // 2026-09: at REJECT=12, a stem must sit in the rarest tail to spare
+    // its absent inflection — zephyr(q=MID−1=19) is attested-English
+    // noise now, so its plural rejects too; a genuinely rare stem
+    // (q=10) keeps the absent plural admitting at group 0.
+    expect(admit(draft("zephyrs"), dict({ zephyr: MID_FREQ_THRESHOLD - 1 }))).toBe(
+      "reject", // stem 19 ≥ 12: tier-1 rejects the absent inflection
+    );
+    expect(admit(draft("rarewords"), dict({ rareword: 10 }))).toBe(0);
   });
 
   it("word with no inflection suffix is untouched (lwlock-style jargon)", () => {
@@ -153,13 +161,13 @@ describe("admit — conjugation guard (2026-09, 'deleted' leak)", () => {
   });
 
   it("rejectCommonness knob governs the stem comparison too", () => {
-    // Word attested at q=40 (table: group 2); stem 'list' at q=45.
-    // Default band (50): stem misses → admit. Tightened to 40: the stem
-    // clears the bar → reject.
-    expect(admit(draft("lists"), dict({ lists: 40, list: 45 }))).toBe(2);
+    // 2026-09: word attested at q=5 (rarest tail → group 1 admits);
+    // stem at q=10 stays under the default band (12) → admit. Loosened
+    // to 10 the stem clears the bar → reject.
+    expect(admit(draft("listses"), dict({ listses: 5, listse: 10 }))).toBe(1);
     expect(
-      admit(draft("lists"), dict({ lists: 40, list: 45 }), undefined, {
-        rejectCommonness: 40,
+      admit(draft("listses"), dict({ listses: 5, listse: 10 }), undefined, {
+        rejectCommonness: 10,
       }),
     ).toBe("reject");
   });
@@ -174,22 +182,22 @@ describe("admit — whole-token bands (PRD §04 h2.24)", () => {
     expect(admit(draft("zzqv"), dict({ zzqv: 0 }))).toBe(1);
   });
 
-  it("q = MID_FREQ_THRESHOLD − 1 → group 1 (one below the mid-frequency boundary)", () => {
+  it("q < 12 → group 1 (the rarest-English tail is the ONLY attested class that admits)", () => {
+    expect(admit(draft("tokenish"), dict({ tokenish: 11 }))).toBe(1);
+    expect(admit(draft("tokenish"), dict({ tokenish: 0 }))).toBe(1);
+  });
+
+  it("q = REJECT_COMMON_THRESHOLD − 1 → group 1 (one below the reject boundary)", () => {
     expect(
-      admit(draft("tokenish"), dict({ tokenish: MID_FREQ_THRESHOLD - 1 })),
+      admit(draft("tokenish"), dict({ tokenish: REJECT_COMMON_THRESHOLD - 1 })),
     ).toBe(1);
   });
 
-  it("q = MID_FREQ_THRESHOLD → group 2 (mid-frequency boundary exactly)", () => {
+  it("attested English in the OLD mid band (20 ≤ q < 50) now REJECTS (2026-09 retighten)", () => {
     expect(admit(draft("tokenish"), dict({ tokenish: MID_FREQ_THRESHOLD }))).toBe(
-      2,
+      "reject",
     );
-  });
-
-  it("q = REJECT_COMMON_THRESHOLD − 1 → group 2 (one below the reject boundary)", () => {
-    expect(
-      admit(draft("tokenish"), dict({ tokenish: REJECT_COMMON_THRESHOLD - 1 })),
-    ).toBe(2);
+    expect(admit(draft("tokenish"), dict({ tokenish: 49 }))).toBe("reject");
   });
 
   it("q = REJECT_COMMON_THRESHOLD → reject (reject boundary exactly)", () => {
@@ -227,13 +235,11 @@ describe("admit — subword clamp (PRD §04 h2.24)", () => {
     expect(admit(draft("token", true), dict({ token: 10 }), 0)).toBe(1);
   });
 
-  it("parent group 1 + table group 2 → 2", () => {
-    // q = 30: mid-frequency band (MID ≤ q < REJECT) → table group 2.
-    expect(admit(draft("token", true), dict({ token: 30 }), 1)).toBe(2);
-  });
-
-  it("parent group 0 + table group 2 → 2", () => {
-    expect(admit(draft("token", true), dict({ token: 30 }), 0)).toBe(2);
+  it("the old g2 table band (q=30) now REJECTS even for subwords (2026-09 retighten)", () => {
+    // MID ≤ q < 50 was table group 2; with REJECT=12 it rejects before
+    // the clamp — group 2 remains reachable only via parentGroup values.
+    expect(admit(draft("token", true), dict({ token: 30 }), 1)).toBe("reject");
+    expect(admit(draft("token", true), dict({ token: 30 }), 0)).toBe("reject");
   });
 
   it("subword with q ≥ REJECT_COMMON_THRESHOLD → 'reject' regardless of parent (clamp never rescues)", () => {
@@ -247,28 +253,30 @@ describe("admit — subword clamp (PRD §04 h2.24)", () => {
   it("subword without parentGroup → unclamped table result", () => {
     // Defensive path: ingest always supplies parentGroup for subwords, but
     // a missing one must not fabricate a clamp — every table row passes
-    // through raw: q = null → 0, q = 0 → 1, q = REJECT−1 → 2.
+    // through raw: q = null → 0, q = 0 → 1, q = REJECT−1 → 1 (2026-09:
+    // the g2 row is retired).
     expect(admit(draft("token", true), dict({}))).toBe(0);
     expect(admit(draft("token", true), dict({ token: 0 }))).toBe(1);
     expect(
       admit(draft("token", true), dict({ token: REJECT_COMMON_THRESHOLD - 1 })),
-    ).toBe(2);
+    ).toBe(1); // 2026-09: rarest-attested tail is group 1 (g2 retired)
   });
 });
 
-describe("admit — proper-noun relief band (BUG-002)", () => {
-  // The BUG-002 shape: National=90, Energy=94, Laboratory=57 in the
-  // shipped dict — all ≥ REJECT_COMMON_THRESHOLD (50) so the BUG-001
-  // bands rejected them and M2 integration item 7 ("National Renewable
-  // Energy Laboratory" chaining) could never arm. The relief admits
-  // CAPITALIZED WHOLE tokens in [REJECT, CEILING) at group 2.
-  it("capitalized mid word (REJECT ≤ q < ceiling) relieves to group 2", () => {
+describe("admit — proper-noun relief (RETIRED-IN-PLACE, 2026-09)", () => {
+  // History: the relief admitted CAPITALIZED WHOLE tokens in
+  // [REJECT, CEILING) at group 2 so "National Renewable Energy
+  // Laboratory" (q 57–94) could chain. A live audit showed it admitting
+  // ~483 capitalized common words (echo, windows, failed) — retired by
+  // setting the ceiling to the reject band; restoring named entities is
+  // an allowlist design question (docs/HANDOFF.md), not a band change.
+  it("capitalized attested English no longer relieves (ceiling == reject band)", () => {
     expect(
       admit(
         draft("national", false, { display: "National", properName: true }),
         dict({ national: 90 }),
       ),
-    ).toBe(2);
+    ).toBe("reject");
   });
 
   it("lowercase occurrence of the same word still rejects (properName false)", () => {
@@ -281,9 +289,10 @@ describe("admit — proper-noun relief band (BUG-002)", () => {
     ).toBe("reject");
   });
 
-  it("boundary: q = ceiling rejects, q = ceiling − 1 relieves (strict <)", () => {
-    // Synthetic word so the case is independent of any real corpus shift;
-    // both edges pinned via the imported constant, same as the band tests.
+  it("boundary semantics preserved: q = ceiling rejects; below-ceiling is now simply the rare-attested tail", () => {
+    // With ceiling == REJECT (12), "q < ceiling" lands in the admitting
+    // tail — via the TABLE (group 1), not the relief. The strict-<
+    // boundary shape is pinned so restoring a wider ceiling behaves.
     const proper = { display: "Nadroj", properName: true };
     expect(
       admit(
@@ -296,7 +305,7 @@ describe("admit — proper-noun relief band (BUG-002)", () => {
         draft("nadroj", false, proper),
         dict({ nadroj: PROPER_NOUN_ADMIT_CEILING - 1 }),
       ),
-    ).toBe(2);
+    ).toBe(1);
   });
 
   it("sub-words never relieve: a table-rejected sub-word stays rejected (clamp-immune)", () => {
@@ -314,16 +323,18 @@ describe("admit — proper-noun relief band (BUG-002)", () => {
     ).toBe("reject");
   });
 
-  it("sub-word of a relieved parent clamps at group 2 (never above parent + 1)", () => {
-    // Own table result admits (mid band → 2); relieved parent is group 2
-    // → min(2, max(2, 2+1)) = 2.
-    expect(
-      admit(draft("energetic", true), dict({ energetic: 30 }), 2),
-    ).toBe(2);
-    // Own table result rare (→ 1); parent 2 → min(2, max(1, 3)) = 2.
+  it("sub-word of a group-2 parent clamps at group 2 (never above parent + 1)", () => {
+    // 2026-09: table group 2 is retired, so a 2-parent arrives only via
+    // the (retired) relief or legacy store entries — the clamp itself is
+    // unchanged and stays pinned: own table result rare (→ 1) with
+    // parent 2 → min(2, max(1, 3)) = 2; own q=30 now rejects (table)
+    // before the clamp.
     expect(
       admit(draft("energise", true), dict({ energise: 10 }), 2),
     ).toBe(2);
+    expect(
+      admit(draft("energetic", true), dict({ energetic: 30 }), 2),
+    ).toBe("reject"); // old g2 table row is gone
   });
 
   it("capitalized dictionary-absent word stays group 0 (relief never demotes)", () => {

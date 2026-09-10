@@ -195,8 +195,8 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     expect(store.size).toBeGreaterThan(0);
     // The successor index was never built: no bigrams, no successors.
     expect(store.bigramSize).toBe(0);
-    expect(store.topSuccessors("acme")).toEqual([]);
-    expect(store.topSuccessors("zephyr")).toEqual([]);
+    expect(store.topSuccessors("zorp")).toEqual([]);
+    expect(store.topSuccessors("zephra")).toEqual([]);
     expect(store.topSuccessors("noria")).toEqual([]);
   });
 
@@ -216,17 +216,17 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
 
     await replayChain(pipeline, entries);
 
-    const menu = await suggest(provider, ["acme"], 0, 4);
-    expect(menu?.items.map((i) => i.value)).toContain("Acme");
-    const acmeItem = menu!.items.find((i) => i.value === "Acme")!;
+    const menu = await suggest(provider, ["zorp"], 0, 4);
+    expect(menu?.items.map((i) => i.value)).toContain("Zorp");
+    const zorpItem = menu!.items.find((i) => i.value === "Zorp")!;
 
-    const lines = ["acme"];
+    const lines = ["zorp"];
     const returned = provider.applyCompletion(
       lines,
       0,
       4,
-      acmeItem,
-      "acme",
+      zorpItem,
+      "zorp",
     );
 
     // (i) Arming is gated: the machine stays idle after a whole-word
@@ -241,14 +241,14 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     expect(call[0]).toBe(lines); // args identity — original array forwarded
     expect(call[1]).toBe(0);
     expect(call[2]).toBe(4);
-    expect(call[3]).toBe(acmeItem);
-    expect(call[4]).toBe("acme");
+    expect(call[3]).toBe(zorpItem);
+    expect(call[4]).toBe("zorp");
     expect(returned).toEqual({
-      lines: ["Acme"],
+      lines: ["Zorp"],
       cursorLine: 0,
       cursorCol: 4,
     });
-    expect(current.state.lines).toEqual(["Acme"]); // word inserted
+    expect(current.state.lines).toEqual(["Zorp"]); // word inserted
   });
 
   it("externally-armed machine never offers: armed query delegates with unchanged args, state untouched", async () => {
@@ -264,10 +264,10 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     );
 
     await replayChain(pipeline, entries);
-    chain.arm("acme"); // armed by ANY means — the gate lives in the provider
+    chain.arm("zorp"); // armed by ANY means — the gate lives in the provider
 
     const options = opts();
-    const lines = ["Acme "];
+    const lines = ["Zorp "];
     // Zero-typed-char word start with a trailing space — 2026-09
     // close-on-space rule: return null WITHOUT delegating (pi's stock
     // provider answers a trailing space with the whole-cwd file
@@ -277,7 +277,7 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     expect(current.getSuggestions).not.toHaveBeenCalled();
     // The machine's own state is untouched — never consulted, never
     // disqualified: the branch simply never ran.
-    expect(chain.state()).toEqual({ word: "acme" });
+    expect(chain.state()).toEqual({ word: "zorp" });
   });
 
   it("force path gated too: force:true cannot resurrect the armed branch (P1.M2.T2 branch order)", async () => {
@@ -293,7 +293,7 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     );
 
     await replayChain(pipeline, entries);
-    chain.arm("acme");
+    chain.arm("zorp");
 
     // Branch order is a landed contract: abort → armed → force-aware →
     // normal. The gated-off armed branch precedes force, so a forced
@@ -303,11 +303,11 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     const options = { ...opts(), force: true } as Parameters<
       AutocompleteProvider["getSuggestions"]
     >[3];
-    const lines = ["Acme "];
+    const lines = ["Zorp "];
     expect(await provider.getSuggestions(lines, 0, 5, options)).toBeNull();
     expect(current.getSuggestions).toHaveBeenCalledTimes(1);
     expect(current.getSuggestions.mock.calls[0]![3]).toBe(options); // force forwarded
-    expect(chain.state()).toEqual({ word: "acme" }); // inert, untouched
+    expect(chain.state()).toEqual({ word: "zorp" }); // inert, untouched
   });
 
   it("word completion identical to ungated: threshold + trigger modes over the SAME store", async () => {
@@ -331,15 +331,15 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
       createChainMachine(),
     );
 
-    // Threshold mode ("acme", 4 chars ≥ 2): byte-identical menus.
-    const gatedMenu = await suggest(gated, ["acme"], 0, 4);
-    const ungatedMenu = await suggest(ungated, ["acme"], 0, 4);
+    // Threshold mode ("zorp", 4 chars ≥ 2): byte-identical menus.
+    const gatedMenu = await suggest(gated, ["zorp"], 0, 4);
+    const ungatedMenu = await suggest(ungated, ["zorp"], 0, 4);
     expect(gatedMenu).toEqual(ungatedMenu);
     expect(gatedMenu?.items.length).toBeGreaterThan(0);
 
-    // Trigger mode ("#acme"): byte-identical menus.
-    const gatedTrigger = await suggest(gated, ["#acme"], 0, 5);
-    const ungatedTrigger = await suggest(ungated, ["#acme"], 0, 5);
+    // Trigger mode ("#zorp"): byte-identical menus.
+    const gatedTrigger = await suggest(gated, ["#zorp"], 0, 5);
+    const ungatedTrigger = await suggest(ungated, ["#zorp"], 0, 5);
     expect(gatedTrigger).toEqual(ungatedTrigger);
     expect(gatedTrigger?.items.length).toBeGreaterThan(0);
 
@@ -358,21 +358,21 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     await replayChain(pipeline, entries);
 
     // Harness sanity: the successor index is populated by the replay.
-    expect(store.topSuccessors("acme").length).toBeGreaterThan(0);
+    expect(store.topSuccessors("zorp").length).toBeGreaterThan(0);
 
     // Arm via the production path: live menu → Tab accept.
-    const menu = await suggest(provider, ["acme"], 0, 4);
-    const acmeItem = menu!.items.find((i) => i.value === "Acme")!;
-    provider.applyCompletion(["acme"], 0, 4, acmeItem, "acme");
-    expect(chain.state()).toEqual({ word: "acme" });
+    const menu = await suggest(provider, ["zorp"], 0, 4);
+    const zorpItem = menu!.items.find((i) => i.value === "Zorp")!;
+    provider.applyCompletion(["zorp"], 0, 4, zorpItem, "zorp");
+    expect(chain.state()).toEqual({ word: "zorp" });
 
     // The zero-typed-char offer fires: bare single-word successors at
-    // prefix "", exactly the store's topSuccessors("acme") list rendered
+    // prefix "", exactly the store's topSuccessors("zorp") list rendered
     // in the candidate display casing (PRD §07; Issue-2 fix).
-    const offer = await suggest(provider, ["Acme "], 0, 5);
+    const offer = await suggest(provider, ["Zorp "], 0, 5);
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => i.value)).toEqual(
-      store.topSuccessors("acme").map((s) => store.get(s.next)?.display ?? s.next),
+      store.topSuccessors("zorp").map((s) => store.get(s.next)?.display ?? s.next),
     );
     expectSingleWordItems(offer?.items ?? []);
   });

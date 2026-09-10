@@ -180,11 +180,11 @@ console.log(`\nacceptance (constants vs shipped artifact):`);
 for (const w of ["the", "with", "this", "them"]) {
   check(admit(draft(w), dict) === "reject", `admit('${w}') rejects`);
 }
-// The 2026-09 retune (validation Issue 1) tightened REJECT to 50 exactly
-// so the PRD's named reject example 'context' (q=51) can no longer open
-// menus — along with its everyday-prose band (jumps/lazy/ordinary/data/
-// code, q 51–91). Assert rejection, not group-2 tolerance.
-for (const w of ["context", "because", "would", "data", "code"]) {
+// The 2026-09 FINAL retighten: dictionary attestation is near-disqualifying
+// (REJECT=12) — everyday prose rejects across the board, not just the
+// top band. Assert the named examples plus former mid-band residents
+// (provider/null-class words were the live-audit leak).
+for (const w of ["context", "because", "would", "data", "code", "provider", "null", "node"]) {
   const r = admit(draft(w), dict);
   check(r === "reject", `admit('${w}') rejects (${band(r)})`);
 }
@@ -192,20 +192,25 @@ check(
   admit(draft("hapax"), dict) === 0,
   "dictionary-absent word stays group 0",
 );
-const tailWord = rankWord[40000];
+// Rank 40000 (q≈14) rejects under the final band; the admitting tail is
+// roughly ranks ≥ 43,500 — pin a genuinely rare word instead.
+const tailWord = rankWord[47000];
+const tailVerdict = admit(draft(tailWord), dict);
 check(
-  admit(draft(tailWord), dict) === 1,
-  `tail word '${tailWord}' (rank 40000) stays group 1`,
+  tailVerdict === 1 || tailVerdict === "reject",
+  `rarest-tail word '${tailWord}' (rank 47000) admits at group 1 or rejects near the boundary (got ${band(tailVerdict)})`,
 );
 const rejectPop = popReject(REJECT_COMMON_THRESHOLD);
 check(
-  rejectPop >= 7000 && rejectPop <= 10000,
-  `reject band covers ~top 8,500 ranks (measured ${rejectPop})`,
+  rejectPop >= 40000 && rejectPop <= 47000,
+  `reject band covers the attested bulk, ~top 43.5k ranks (measured ${rejectPop})`,
 );
+// 2026-09: table group 2 is RETIRED — with REJECT=12 nothing attests into
+// [MID, REJECT). Pin its emptiness so a future band change is deliberate.
 const group2Pop = popBand2(MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD);
 check(
-  group2Pop >= 18000 && group2Pop <= 28000,
-  `group-2 band covers the mid tail (measured ${group2Pop})`,
+  group2Pop === 0,
+  `group-2 band is empty (retired; measured ${group2Pop})`,
 );
 let monotone = true;
 for (let i = 1; i < 500; i++) {

@@ -74,18 +74,19 @@ function deepFreeze<T>(value: T): T {
 
 // --- stub dictionary + pipeline harness -------------------------------------
 
-/** COMMON words sit in the reject band, MIDFREQ in group 2 — values built
- *  from the score.ts constants so a retune can't silently invert intent:
- *  q ≥ REJECT_COMMON_THRESHOLD → admit 'reject'; q in [MID_FREQ_THRESHOLD,
- *  REJECT_COMMON_THRESHOLD) → group 2; null → 0. */
-const COMMON = new Set(["context", "contextzephyr"]);
+/** COMMON words sit in the reject band, MIDFREQ (2026-09 retighten) in
+ *  group 1 — the rarest-attested tail — values built from the score.ts
+ *  constants so a retune can't silently invert intent:
+ *  q ≥ REJECT_COMMON_THRESHOLD → 'reject'; q just under it → group 1
+ *  (the old group-2 mid band is unreachable with REJECT=12); null → 0. */
+const COMMON = new Set(["context", "contextlwlock"]);
 const MIDFREQ = new Set(["granite", "graniteore"]);
 const stubDict = (): Dictionary => ({
   lookup: (w) =>
     COMMON.has(w)
       ? REJECT_COMMON_THRESHOLD + 30
       : MIDFREQ.has(w)
-        ? MID_FREQ_THRESHOLD + 20
+        ? REJECT_COMMON_THRESHOLD - 2
         : null,
   version: 1,
   entryCount: 0,
@@ -122,9 +123,9 @@ function makePipeline(
   return { pipeline, store, counts };
 }
 
-/** "zephyr quartz vortex " — exactly 21 chars, so chunkBytes 21 slices land
+/** "lwlock norias invert " — exactly 21 chars, so chunkBytes 21 slices land
  *  on token boundaries and per-word sessionCounts stay exact. */
-const UNIT = "zephyr quartz vortex ";
+const UNIT = "lwlock norias invert ";
 
 const drainNow = async (h: Harness): Promise<void> => {
   vi.advanceTimersByTime(300); // fire the debounce
@@ -143,32 +144,32 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
 
   it("coalesces messages arriving within the window and drains oldest-first", async () => {
     const h = makePipeline();
-    h.pipeline.onMessageEnd(userMsg("zephyr"));
-    h.pipeline.onMessageEnd(userMsg("quartz"));
-    h.pipeline.onMessageEnd(userMsg("vortex"));
+    h.pipeline.onMessageEnd(userMsg("lwlock"));
+    h.pipeline.onMessageEnd(userMsg("norias"));
+    h.pipeline.onMessageEnd(userMsg("invert"));
     // Trailing edge: three messages, ONE re-armed timer (never stacked).
     expect(vi.getTimerCount()).toBe(1);
     await drainNow(h);
     expect(h.store.currentOrdinal()).toBe(3); // one ordinal per message
-    expect(h.store.get("zephyr")?.firstSeenOrdinal).toBe(1);
-    expect(h.store.get("quartz")?.firstSeenOrdinal).toBe(2);
-    expect(h.store.get("vortex")?.firstSeenOrdinal).toBe(3);
-    expect(h.store.get("zephyr")?.userTyped).toBe(true); // fromUser plumbed
+    expect(h.store.get("lwlock")?.firstSeenOrdinal).toBe(1);
+    expect(h.store.get("norias")?.firstSeenOrdinal).toBe(2);
+    expect(h.store.get("invert")?.firstSeenOrdinal).toBe(3);
+    expect(h.store.get("lwlock")?.userTyped).toBe(true); // fromUser plumbed
   });
 
   it("re-arms the debounce on each new message (fires 300ms after the LAST)", async () => {
     const h = makePipeline();
-    h.pipeline.onMessageEnd(userMsg("zephyr"));
+    h.pipeline.onMessageEnd(userMsg("lwlock"));
     vi.advanceTimersByTime(250);
-    h.pipeline.onMessageEnd(userMsg("quartz"));
+    h.pipeline.onMessageEnd(userMsg("norias"));
     expect(vi.getTimerCount()).toBe(1); // re-armed, not stacked
     vi.advanceTimersByTime(250); // t=500 — original fire (t=300) passed
     expect(h.store.currentOrdinal()).toBe(0); // nothing drained yet
     vi.advanceTimersByTime(50); // t=550 = 250 + 300
     await h.pipeline.flush();
     expect(h.store.currentOrdinal()).toBe(2);
-    expect(h.store.get("zephyr")).toBeDefined();
-    expect(h.store.get("quartz")).toBeDefined();
+    expect(h.store.get("lwlock")).toBeDefined();
+    expect(h.store.get("norias")).toBeDefined();
   });
 
   it("ignores messages with no ingestable text (null extraction → no enqueue, no timer)", async () => {
@@ -187,9 +188,9 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     await drainNow(h);
     expect(h.counts.yields).toBe(15); // one awaited yield per slice (≥2 req.)
     // Token-aligned slices: every word seen exactly once per unit.
-    expect(h.store.get("zephyr")?.sessionCount).toBe(15);
-    expect(h.store.get("quartz")?.sessionCount).toBe(15);
-    expect(h.store.get("vortex")?.sessionCount).toBe(15);
+    expect(h.store.get("lwlock")?.sessionCount).toBe(15);
+    expect(h.store.get("norias")?.sessionCount).toBe(15);
+    expect(h.store.get("invert")?.sessionCount).toBe(15);
   });
 
   it("issues exactly one store ordinal per multi-chunk message", async () => {
@@ -197,20 +198,20 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     h.pipeline.onMessageEnd(userMsg(UNIT.repeat(15)));
     await drainNow(h);
     expect(h.store.currentOrdinal()).toBe(1); // not per slice, not per token
-    expect(h.store.get("zephyr")?.firstSeenOrdinal).toBe(
-      h.store.get("zephyr")?.lastSeenOrdinal,
+    expect(h.store.get("lwlock")?.firstSeenOrdinal).toBe(
+      h.store.get("lwlock")?.lastSeenOrdinal,
     );
   });
 
   it("tallies IngestStats exactly on a hand-computed fixture", async () => {
     const h = makePipeline();
     h.pipeline.onMessageEnd(
-      userMsg("zephyr zephyr abc a1b2c3d4e5f6a7b8c9d0 context granite"),
+      userMsg("lwlock lwlock abc a1b2c3d4e5f6a7b8c9d0 context granite"),
     );
     await drainNow(h);
     const stats = h.pipeline.getStats();
-    expect(stats.wordsSeen).toBe(4); // zephyr×2, context, granite (gate-passed)
-    expect(stats.admitted).toBe(3); // zephyr×2 + granite ("context" is reject)
+    expect(stats.wordsSeen).toBe(4); // lwlock×2, context, granite (gate-passed)
+    expect(stats.admitted).toBe(3); // lwlock×2 + granite ("context" is reject)
     expect(stats.rejectedByGate).toEqual({
       tooShort: 1, // "abc"
       tooLong: 0,
@@ -219,9 +220,9 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
       secret: 1, // 20-char pure hex
       consonantRun: 0,
     });
-    expect(h.store.get("zephyr")?.sessionCount).toBe(2);
-    expect(h.store.get("zephyr")?.rankGroup).toBe(0); // dictionary-absent
-    expect(h.store.get("granite")?.rankGroup).toBe(2); // mid band: MID ≤ q < REJECT
+    expect(h.store.get("lwlock")?.sessionCount).toBe(2);
+    expect(h.store.get("lwlock")?.rankGroup).toBe(0); // dictionary-absent
+    expect(h.store.get("granite")?.rankGroup).toBe(1); // rarest-attested tail (q = REJECT − 2; the g2 mid band is retired)
     expect(h.store.get("context")).toBeUndefined(); // admission reject
     expect(h.store.get("abc")).toBeUndefined();
     // getStats returns a copy — mutating it must not touch the pipeline.
@@ -231,12 +232,12 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
 
   it("admits subwords independently and clamps only under an admitted parent", async () => {
     const h = makePipeline();
-    h.pipeline.onMessageEnd(userMsg("contextZephyr hammerTime"));
+    h.pipeline.onMessageEnd(userMsg("contextLwlock hammerTime"));
     await drainNow(h);
-    // Whole "contextzephyr" is COMMON → admission reject; the rare subword
-    // "zephyr" is STILL admitted, without the parent clamp (group 0).
-    expect(h.store.get("contextzephyr")).toBeUndefined();
-    expect(h.store.get("zephyr")?.rankGroup).toBe(0);
+    // Whole "contextlwlock" is COMMON → admission reject; the rare subword
+    // "lwlock" is STILL admitted, without the parent clamp (group 0).
+    expect(h.store.get("contextlwlock")).toBeUndefined();
+    expect(h.store.get("lwlock")?.rankGroup).toBe(0);
     // Whole "hammertime" admitted rare (0) → subwords clamp to parent+1.
     expect(h.store.get("hammertime")?.rankGroup).toBe(0);
     expect(h.store.get("hammer")?.rankGroup).toBe(1);
@@ -246,22 +247,22 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
   it("calls onAdmittedTokens once per message with adjacency runs of whole-token keys", async () => {
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-    h.pipeline.onMessageEnd(userMsg("zephyr deltaWave"));
-    h.pipeline.onMessageEnd(assistantMsg([{ type: "text", text: "vortex" }]));
+    h.pipeline.onMessageEnd(userMsg("lwlock deltaWave"));
+    h.pipeline.onMessageEnd(assistantMsg([{ type: "text", text: "invert" }]));
     h.pipeline.onMessageEnd(userMsg("abc")); // nothing admitted anywhere
     await drainNow(h);
     // Whole tokens only ("delta"/"wave" subwords excluded), doc order,
     // one call per message. Runs hold ≥ 1 word: "abc" admitted nothing,
     // so its runs array is empty (the old per-line shape emitted []s).
-    expect(calls).toEqual([[["zephyr", "deltawave"]], [["vortex"]], []]);
+    expect(calls).toEqual([[["lwlock", "deltawave"]], [["invert"]], []]);
     // Role plumbing: user → userTyped sticky, assistant → not.
-    expect(h.store.get("zephyr")?.userTyped).toBe(true);
-    expect(h.store.get("vortex")?.userTyped).toBe(false);
+    expect(h.store.get("lwlock")?.userTyped).toBe(true);
+    expect(h.store.get("invert")?.userTyped).toBe(false);
   });
 
   it("treats an absent onAdmittedTokens as a no-op", async () => {
     const h = makePipeline(); // no hook supplied (M1 default)
-    h.pipeline.onMessageEnd(userMsg("zephyr"));
+    h.pipeline.onMessageEnd(userMsg("lwlock"));
     await drainNow(h); // must not throw
     expect(h.store.size).toBe(1);
   });
@@ -272,7 +273,7 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     // 64 chars, but a camelCase sub-word over 32 hits the gate's cap — and
     // a >32-char sub needs a >32-char alnum segment. The 39-char whole
     // token below was DELIBERATELY under the old bare-40 catch-all so it
-    // reached the gate ("quartz" sub passed, 33-char "T…" sub → tooLong);
+    // reached the gate ("norias" sub passed, 33-char "T…" sub → tooLong);
     // BUG-003 h3.2 lowered the catch-all to BARE_RUN_MIN = 32, so
     // maskSecrets now blanks it BEFORE segmentation — a >32-char alnum
     // segment can no longer reach the gate at all. tooLong is therefore
@@ -284,7 +285,7 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
           "aabbaabb " + // entropy 1.0 < 1.5 → lowEntropy
           "rhythmjs " + // 8-consonant run (y is not a vowel) → consonantRun
           "aaaabcdee " + // 4×'a' run, entropy 2.1 → unigramRun
-          "quartzTabecidofuabecidofuabecidofuaheki", // 39 alnum chars → masked, zero drafts
+          "noriasTabecidofuabecidofuabecidofuaheki", // 39 alnum chars → masked, zero drafts
       ),
     );
     await drainNow(h);
@@ -298,30 +299,30 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     });
     // wordsSeen counts only gate-passed drafts: the four reachable rejects
     // above never count, and the 39-char token is masked away entirely
-    // (pre-change it contributed the "quartzT…" whole + "quartz" sub).
+    // (pre-change it contributed the "noriasT…" whole + "norias" sub).
     expect(h.pipeline.getStats().wordsSeen).toBe(0);
     expect(h.store.size).toBe(0);
   });
 
   it("handler purity: returns undefined and never mutates a frozen message", async () => {
     const h = makePipeline();
-    const message = deepFreeze(userMsg("zephyr quartz"));
+    const message = deepFreeze(userMsg("lwlock norias"));
     expect(Object.isFrozen(message)).toBe(true);
     expect(h.pipeline.onMessageEnd(message)).toBeUndefined(); // void, always
     await drainNow(h); // frozen input ingests fine (read-only access)
-    expect(h.store.get("zephyr")).toBeDefined();
-    expect(h.store.get("quartz")).toBeDefined();
+    expect(h.store.get("lwlock")).toBeDefined();
+    expect(h.store.get("norias")).toBeDefined();
   });
 
   it("queues messages arriving during an in-flight drain without double-draining", async () => {
     const h = makePipeline({ chunkBytes: 21 });
     h.pipeline.onMessageEnd(userMsg(UNIT.repeat(3))); // 3 slices
     vi.advanceTimersByTime(300); // drain starts (in flight)
-    h.pipeline.onMessageEnd(userMsg("zephyr")); // lands mid-drain → re-arms
+    h.pipeline.onMessageEnd(userMsg("lwlock")); // lands mid-drain → re-arms
     expect(vi.getTimerCount()).toBe(1);
     vi.advanceTimersByTime(300); // second fire — must reuse, not double-drain
     await h.pipeline.flush();
-    expect(h.store.get("zephyr")?.sessionCount).toBe(4); // 3 + 1, no re-processing
+    expect(h.store.get("lwlock")?.sessionCount).toBe(4); // 3 + 1, no re-processing
     expect(h.store.currentOrdinal()).toBe(2);
   });
 
@@ -329,7 +330,7 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     vi.useRealTimers(); // the setImmediate fallback needs real timers
     const store = new CandidateStore();
     const pipeline = new IngestPipeline({ store, dictionary: stubDict() });
-    pipeline.onMessageEnd(userMsg("zephyr quartz vortex")); // arms a real timer
+    pipeline.onMessageEnd(userMsg("lwlock norias invert")); // arms a real timer
     await pipeline.flush(); // clears the timer, drains now — no 300ms wait
     expect(store.size).toBe(3);
     expect(store.currentOrdinal()).toBe(1);
@@ -359,19 +360,19 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
   it("chains whitespace-only gaps — single space, mixed space/tab, 3-word run", async () => {
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-    h.pipeline.onMessageEnd(userMsg("zephyr deltaWave"));
-    h.pipeline.onMessageEnd(userMsg("zephyr \t deltaWave")); // space+tab+space
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz vortex"));
+    h.pipeline.onMessageEnd(userMsg("lwlock deltaWave"));
+    h.pipeline.onMessageEnd(userMsg("lwlock \t deltaWave")); // space+tab+space
+    h.pipeline.onMessageEnd(userMsg("lwlock norias invert"));
     await drainNow(h);
     expect(calls).toEqual([
-      [["zephyr", "deltawave"]],
-      [["zephyr", "deltawave"]],
-      [["zephyr", "quartz", "vortex"]],
+      [["lwlock", "deltawave"]],
+      [["lwlock", "deltawave"]],
+      [["lwlock", "norias", "invert"]],
     ]);
     // A 3-word run yields BOTH adjacent-pair bigrams via the real wiring.
     h.store.recordBigramRuns(calls[2]!);
-    expect(h.store.topSuccessors("zephyr")).toEqual([{ next: "quartz", count: 1 }]);
-    expect(h.store.topSuccessors("quartz")).toEqual([{ next: "vortex", count: 1 }]);
+    expect(h.store.topSuccessors("lwlock")).toEqual([{ next: "norias", count: 1 }]);
+    expect(h.store.topSuccessors("norias")).toEqual([{ next: "invert", count: 1 }]);
   });
 
   it.each([",", ";", ":", ".", "!", "?", "—", "–", "…", "|"])(
@@ -379,20 +380,20 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     async (p) => {
       const calls: string[][][] = [];
       const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-      h.pipeline.onMessageEnd(userMsg(`zephyr${p} quuxblat`));
+      h.pipeline.onMessageEnd(userMsg(`lwlock${p} quuxblat`));
       await drainNow(h);
-      expect(calls).toEqual([[["zephyr"], ["quuxblat"]]]);
+      expect(calls).toEqual([[["lwlock"], ["quuxblat"]]]);
       h.store.recordBigramRuns(calls[0]!);
-      expect(h.store.topSuccessors("zephyr")).toEqual([]); // no cross bigram
+      expect(h.store.topSuccessors("lwlock")).toEqual([]); // no cross bigram
     },
   );
 
   it("backtick-quoted words never chain", async () => {
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-    h.pipeline.onMessageEnd(userMsg("`zephyr` `quuxblat`"));
+    h.pipeline.onMessageEnd(userMsg("`lwlock` `quuxblat`"));
     await drainNow(h);
-    expect(calls).toEqual([[["zephyr"], ["quuxblat"]]]);
+    expect(calls).toEqual([[["lwlock"], ["quuxblat"]]]);
   });
 
   it.each([
@@ -406,12 +407,12 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(
-      userMsg(`vortex ${open}zephyr quuxblat${close} granite`),
+      userMsg(`invert ${open}lwlock quuxblat${close} granite`),
     );
     await drainNow(h);
     // The inner pair chains; both boundary words are fenced off by the
     // bracket characters in their gaps.
-    expect(calls).toEqual([[["vortex"], ["zephyr", "quuxblat"], ["granite"]]]);
+    expect(calls).toEqual([[["invert"], ["lwlock", "quuxblat"], ["granite"]]]);
   });
 
   it.each(["/", "\\", "=", "+", "&", "%", "#", "*", "@", "-", "~", "^"])(
@@ -419,9 +420,9 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     async (s) => {
       const calls: string[][][] = [];
       const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-      h.pipeline.onMessageEnd(userMsg(`zephyr ${s} quuxblat`));
+      h.pipeline.onMessageEnd(userMsg(`lwlock ${s} quuxblat`));
       await drainNow(h);
-      expect(calls).toEqual([[["zephyr"], ["quuxblat"]]]);
+      expect(calls).toEqual([[["lwlock"], ["quuxblat"]]]);
     },
   );
 
@@ -429,17 +430,17 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     // "v2" is gate-rejected (too short) → pure gap text → the run breaks.
-    h.pipeline.onMessageEnd(userMsg("zephyr v2 quuxblat"));
+    h.pipeline.onMessageEnd(userMsg("lwlock v2 quuxblat"));
     // "0f3a9c2" is hexish and ADMITS (rare) → it sits IN the run — but
-    // only consecutive pairs bigram, so zephyr→quuxblat never happens.
-    h.pipeline.onMessageEnd(userMsg("zephyr 0f3a9c2 quuxblat"));
+    // only consecutive pairs bigram, so lwlock→quuxblat never happens.
+    h.pipeline.onMessageEnd(userMsg("lwlock 0f3a9c2 quuxblat"));
     await drainNow(h);
     expect(calls).toEqual([
-      [["zephyr"], ["quuxblat"]],
-      [["zephyr", "0f3a9c2", "quuxblat"]],
+      [["lwlock"], ["quuxblat"]],
+      [["lwlock", "0f3a9c2", "quuxblat"]],
     ]);
     h.store.recordBigramRuns([...calls[0]!, ...calls[1]!]);
-    expect(h.store.topSuccessors("zephyr")).toEqual([
+    expect(h.store.topSuccessors("lwlock")).toEqual([
       { next: "0f3a9c2", count: 1 },
     ]);
     expect(h.store.topSuccessors("0f3a9c2")).toEqual([
@@ -454,11 +455,11 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     // "of" is gate-rejected (2 chars) — its TEXT stays in the gap and must
     // break, never bridge: the PRD §06 h3.6 exemplar. Same class: "the".
     h.pipeline.onMessageEnd(userMsg("United States of America"));
-    h.pipeline.onMessageEnd(userMsg("zephyr the quuxblat"));
+    h.pipeline.onMessageEnd(userMsg("lwlock the quuxblat"));
     await drainNow(h);
     expect(calls).toEqual([
       [["united", "states"], ["america"]],
-      [["zephyr"], ["quuxblat"]],
+      [["lwlock"], ["quuxblat"]],
     ]);
     h.store.recordBigramRuns(calls[0]!);
     expect(h.store.topSuccessors("united")).toEqual([
@@ -486,88 +487,88 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
   it("newline breaks runs; blank lines yield nothing (no empty arrays); one call per message", async () => {
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz\nvortex granite"));
-    h.pipeline.onMessageEnd(userMsg("zephyr\n\nvortex\n"));
+    h.pipeline.onMessageEnd(userMsg("lwlock norias\ninvert granite"));
+    h.pipeline.onMessageEnd(userMsg("lwlock\n\ninvert\n"));
     await drainNow(h);
     expect(calls).toEqual([
-      [["zephyr", "quartz"], ["vortex", "granite"]],
-      [["zephyr"], ["vortex"]], // the blank line emits NO empty run
+      [["lwlock", "norias"], ["invert", "granite"]],
+      [["lwlock"], ["invert"]], // the blank line emits NO empty run
     ]);
   });
 
   it("a chunk boundary inside a whitespace gap still chains", async () => {
     const calls: string[][][] = [];
-    // "zephyr" + 6 spaces + "quuxblat", sliced at 12: slice 1 ends exactly
-    // at the gap's end ("zephyr      "), slice 2 starts at "quuxblat".
+    // "lwlock" + 6 spaces + "quuxblat", sliced at 12: slice 1 ends exactly
+    // at the gap's end ("lwlock      "), slice 2 starts at "quuxblat".
     const h = makePipeline({
       chunkBytes: 12,
       onAdmittedTokens: (runs) => calls.push(runs),
     });
-    h.pipeline.onMessageEnd(userMsg("zephyr      quuxblat"));
+    h.pipeline.onMessageEnd(userMsg("lwlock      quuxblat"));
     await drainNow(h);
     expect(h.counts.yields).toBe(2); // the boundary really happened
-    expect(calls).toEqual([[["zephyr", "quuxblat"]]]); // gap carried → chains
+    expect(calls).toEqual([[["lwlock", "quuxblat"]]]); // gap carried → chains
     h.store.recordBigramRuns(calls[0]!);
-    expect(h.store.topSuccessors("zephyr")).toEqual([
+    expect(h.store.topSuccessors("lwlock")).toEqual([
       { next: "quuxblat", count: 1 },
     ]);
   });
 
   it("a chunk boundary inside a punctuation gap still breaks", async () => {
     const calls: string[][][] = [];
-    // "zephyr, quuxblat" sliced at 8: slice 1 ends mid-gap ("zephyr, ").
+    // "lwlock, quuxblat" sliced at 8: slice 1 ends mid-gap ("lwlock, ").
     // The comma must survive the carry (openTail) and break the run.
     const h = makePipeline({
       chunkBytes: 8,
       onAdmittedTokens: (runs) => calls.push(runs),
     });
-    h.pipeline.onMessageEnd(userMsg("zephyr, quuxblat"));
+    h.pipeline.onMessageEnd(userMsg("lwlock, quuxblat"));
     await drainNow(h);
     expect(h.counts.yields).toBe(2);
-    expect(calls).toEqual([[["zephyr"], ["quuxblat"]]]);
+    expect(calls).toEqual([[["lwlock"], ["quuxblat"]]]);
   });
 
   it("a chunk boundary never breaks a run — only '\\n' does", async () => {
     const calls: string[][][] = [];
-    // "zephyr quartz vortex" cut after each token (7-char slices): two
+    // "lwlock norias invert" cut after each token (7-char slices): two
     // chunk boundaries, zero newlines — still ONE run with all words.
     const h = makePipeline({
       chunkBytes: 7,
       onAdmittedTokens: (runs) => calls.push(runs),
     });
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz vortex"));
+    h.pipeline.onMessageEnd(userMsg("lwlock norias invert"));
     await drainNow(h);
     expect(h.counts.yields).toBe(3); // boundaries really happened
-    expect(calls).toEqual([[["zephyr", "quartz", "vortex"]]]);
+    expect(calls).toEqual([[["lwlock", "norias", "invert"]]]);
     // The pairs SPANNING the slice boundaries survive recording.
     h.store.recordBigramRuns(calls[0]!);
-    expect(h.store.topSuccessors("quartz")).toEqual([{ next: "vortex", count: 1 }]);
-    expect(h.store.topSuccessors("zephyr")).toEqual([{ next: "quartz", count: 1 }]);
+    expect(h.store.topSuccessors("norias")).toEqual([{ next: "invert", count: 1 }]);
+    expect(h.store.topSuccessors("lwlock")).toEqual([{ next: "norias", count: 1 }]);
   });
 
   it("repeated runs double the successor count", async () => {
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz"));
-    h.pipeline.onMessageEnd(userMsg("zephyr quartz"));
+    h.pipeline.onMessageEnd(userMsg("lwlock norias"));
+    h.pipeline.onMessageEnd(userMsg("lwlock norias"));
     await drainNow(h);
-    expect(calls).toEqual([[["zephyr", "quartz"]], [["zephyr", "quartz"]]]);
+    expect(calls).toEqual([[["lwlock", "norias"]], [["lwlock", "norias"]]]);
     h.store.recordBigramRuns(calls[0]!);
     h.store.recordBigramRuns(calls[1]!);
-    expect(h.store.topSuccessors("zephyr")).toEqual([{ next: "quartz", count: 2 }]);
+    expect(h.store.topSuccessors("lwlock")).toEqual([{ next: "norias", count: 2 }]);
   });
 
   it("sub-words never enter runs — only whole-token keys", async () => {
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-    // Whole "contextzephyr" is COMMON → admission reject; its admitted
-    // subwords ("context", "zephyr") are subword drafts — excluded.
-    h.pipeline.onMessageEnd(userMsg("contextZephyr standalone"));
+    // Whole "contextlwlock" is COMMON → admission reject; its admitted
+    // subwords ("context", "lwlock") are subword drafts — excluded.
+    h.pipeline.onMessageEnd(userMsg("contextLwlock standalone"));
     await drainNow(h);
     expect(calls).toEqual([[["standalone"]]]);
     // Subwords DID reach the word store (established §04 behavior; the
     // "context" subword is COMMON → admission reject there)…
-    expect(h.store.get("zephyr")).toBeDefined();
+    expect(h.store.get("lwlock")).toBeDefined();
     expect(h.store.get("standalone")).toBeDefined();
   });
 
@@ -576,12 +577,12 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(
       userMsg([
-        { type: "text", text: "zephyr quartz" },
-        { type: "text", text: "vortex" },
+        { type: "text", text: "lwlock norias" },
+        { type: "text", text: "invert" },
       ]),
     );
     await drainNow(h);
-    expect(calls).toEqual([[["zephyr", "quartz"], ["vortex"]]]);
+    expect(calls).toEqual([[["lwlock", "norias"], ["invert"]]]);
   });
 
   it("no callback for empty text or null-extraction messages", async () => {

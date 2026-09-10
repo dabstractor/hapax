@@ -117,27 +117,41 @@ absent from the table enters here or not at all.
 ## Admission decision (`src/core/score.ts`)
 
 Let `q = dictionary.lookup(lowercase)` (null when absent), and `R` be the
-reject band — default 50, runtime-tunable via the `rejectCommonness`
-config (see 08). Whole-token candidates admit when:
+reject band — **default 12** (2026-09 retighten; owner rule), 
+runtime-tunable via the `rejectCommonness` config (see 08). The design
+premise (2026-09): **dictionary attestation is near-disqualifying
+evidence.** hapax exists to complete identifiers, commit-hash-shaped
+tokens, and jargon — the dictionary-ABSENT class — not ordinary English.
 
 | Condition | Result |
 |---|---|
-| `q !== null && q >= R` | **Reject** — very common word (`the`, `context`, `code`) |
-| `q !== null && 20 <= q < R` | **Admit, rank group 2** — mid-frequency |
-| `q !== null && q < 20` | **Admit, rank group 1** — rare-but-attested |
-| `q === null` (absent) | **Admit, rank group 0** — rare-by-default (post shape gate) |
+| `q !== null && q >= R` (12) | **Reject** — attested English (`the`, `context`, `code`, `provider`, `null`) |
+| `q !== null && q < R` (12) | **Admit, rank group 1** — the rarest English tail only (roughly the rarest ~10% of the corpus: `handoff`, `workspace`) |
+| `q === null` (absent) | **Admit, rank group 0** — rare-by-default (post shape gate): THE value class |
 
-The bands (reject 50, mid 20) are baked constants calibrated against the
-shipped artifact with `tools/calibrate-bands.mjs`, which doubles as a
-word probe: `node tools/calibrate-bands.mjs lists deleted` prints a
-word's `q` and its verdict (lowercase and capitalized).
+**Table group 2 is retired:** with `R = 12` nothing attests into the old
+`[20, 50)` mid band — that band was the live-audit noise leak (1,183
+everyday words: `provider`, `default`, `null`, `node`, `enable`, `spec`,
+`cache`, against 4,889 absent identifiers). The `RankGroup` type keeps
+group 2 for compatibility (subword clamp and salience still reference
+it); it is unreachable via the table and via relief.
 
-**Proper-noun relief.** A capitalized whole token (properName hint) whose
-table result is reject admits at group 2 when `q < 95`: sentence-case
-names (`National`, `Laboratory`, `Andrews`) complete while lowercase
-everyday prose (`context`, `data`) stays rejected. The ceiling 95 is
-calibrated so ordinary capitalized words (`Guard`, `Books`, `Water`)
-still reject.
+The bands are baked constants calibrated against the shipped artifact
+with `tools/calibrate-bands.mjs`, which doubles as a word probe:
+`node tools/calibrate-bands.mjs lists deleted` prints a word's `q` and
+its verdict (lowercase and capitalized). Calibration history: 220
+(BUG-001, mathematically unreachable) → 100 → 50 (Issue-1) → **12
+(final)**.
+
+**Proper-noun relief — RETIRED-IN-PLACE.** The relief mechanism (a
+capitalized whole token whose table result is reject admits at group 2)
+remains in code but its ceiling is set equal to the reject band, so it
+can no longer admit anything. History: it existed so M2's "National
+Renewable Energy Laboratory" (q 57–94) could chain; a live audit showed
+it admitting ~483 capitalized common words (`echo`, `windows`,
+`failed`, `file`). The owner retired it ("not half of the english
+language"); restoring named-entity completion is a user-allowlist design
+question (docs/HANDOFF.md), not a band change.
 
 **Conjugation guard.** An inflection whose STEM is a common word rejects
 too, whatever its own `q`. The dictionary ranks inflections separately
@@ -147,14 +161,15 @@ plurals into the menu. Stems are one-level strips of `-s -es -ed -d
 -ing -ly`, with e-restoration (`typing`→`type`, `caching`→`cache`) and
 doubled-consonant undo (`stopped`→`stop`). Two tiers:
 
-- stem `q >= R` → reject (any `q` of the word itself);
-- word absent AND stem `q >= 20` → reject (absent inflections of
-  attested mid-band stems: `uploads` → `upload` q=38).
+- stem `q >= R` (12) → reject (any `q` of the word itself);
+- word absent AND stem `q >= 20` (MID) → reject (absent inflections of
+  attested stems: `uploads` → `upload` q=38).
 
-Capitalized (properName) candidates skip the guard — casing evidence
-outranks morphology, so relief-admitted names are never stem-rejected.
-hapax targets proper nouns and identifiers, not verb/adverb/plural
-morphology. Derivational suffixes (`-tion`, `-ment`, `-er`) are
+With R=12 the second tier is largely subsumed by the first (any stem
+q ≥ 12 already rejects); it stays for words whose stem sits in
+[12, 20). Capitalized (properName) candidates skip the guard — casing
+evidence outranks morphology (a relief-restoring change would need this
+intact). Derivational suffixes (`-tion`, `-ment`, `-er`) are
 deliberately NOT stripped: `deletion` is a distinct lexeme.
 
 Sub-word candidates require their own admission (same table, plus the

@@ -33,6 +33,11 @@ tests couldn't see.
 
 ## Open items (nothing known-broken; all need owner judgment)
 
+0. **Proper names now reject with English** (`dustin` q38, ceiling
+   retired with the 2026-09 retighten — reject band 12). If the owner
+   wants named entities back, the design answer is a **user allowlist
+   (config)**, not a band change.
+
 1. **TOP: relief evidence bar (the "fine line").** Audited against
    real history (~2k messages replayed through the real pipeline,
    /tmp technique preserved in git history of this session): the store

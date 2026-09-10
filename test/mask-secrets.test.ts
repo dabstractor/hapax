@@ -153,7 +153,7 @@ function storedKeys(store: CandidateStore): string[] {
 describe("maskSecrets — ingest pipeline (BUG-003 end-to-end)", () => {
   it("leaks zero candidates from the bug-report message; prose still admits", async () => {
     const { pipeline, store } = makePipeline();
-    await pipeline.processText(`aws secret: ${AWS_SECRET}\nslack: ${SLACK}\nturbine notes`, true);
+    await pipeline.processText(`aws secret: ${AWS_SECRET}\nslack: ${SLACK}\nturbine notes turbinez`, true); // turbinez: absent control (turbine q26 rejects, 2026-09)
 
     const keys = storedKeys(store);
     // No candidate key draws bytes from either masked key.
@@ -166,14 +166,16 @@ describe("maskSecrets — ingest pipeline (BUG-003 end-to-end)", () => {
     expect(rankMatches(store, "wjal")).toEqual([]);
     expect(rankMatches(store, "abc")).toEqual([]);
     expect(rankMatches(store, "xoxb")).toEqual([]);
-    // Ordinary words flow through UNMASKED: "turbine" (q=26) admits; the
+    // Ordinary words flow through UNMASKED: "turbinez" (absent) admits —
+    // "turbine" (q=26) itself rejects at the table since the 2026-09
+    // retighten; the masking-surgical contract is about unmasked words
     // store holds exactly it — "aws" is gate-tooShort, while "secret"
     // (q=108) and "slack" (q=51; joined the reject band in the 2026-09
     // Issue-1 retune) are rejected at ADMISSION for commonness, i.e. they
     // reached the gate unmasked and died on normal gate decisions, not on
     // masking.
-    expect(keys).toEqual(["turbine"]);
-    expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbine");
+    expect(keys).toEqual(["turbinez"]);
+    expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbinez");
   });
 
   it("leaks zero candidates from JWT and sk-proj keys", async () => {
@@ -228,7 +230,7 @@ describe("bare-run mask floor 32 (BUG-003 h3.2)", () => {
   it("pipeline: the 38-char key leaks zero candidates; 'cy' queries nothing (inverted repro)", async () => {
     const { pipeline, store } = makePipeline();
     await pipeline.processText(
-      `password ${AWS_SECRET_38} trailing turbine`,
+      `password ${AWS_SECRET_38} trailing turbine turbinez`,
       true,
     );
 
@@ -240,9 +242,9 @@ describe("bare-run mask floor 32 (BUG-003 h3.2)", () => {
     ).toBe(false);
     expect(rankMatches(store, "cy")).toEqual([]); // THE bug-report repro
     expect(rankMatches(store, "wjal")).toEqual([]);
-    // Positive control: "turbine" (dictionary q=26) still admits — the
+    // Positive control: "turbinez" (absent) still admits — the
     // sentence was ingested, only the key was blanked.
-    expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbine");
+    expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbinez");
   });
 
   it("31-char mixed-alnum run passes through unmasked (boundary below the floor)", () => {
@@ -271,7 +273,11 @@ describe("bare-run mask floor 32 (BUG-003 h3.2)", () => {
     // End-to-end half: the real pipeline still builds a live store from
     // the fixture, and nothing store-sized slipped through the mask.
     const { pipeline, store } = makePipeline();
+    // 2026-09 retighten: the prose fixture itself admits nothing (all
+    // attested English), so an absent marker word rides along to keep
+    // the no-candidates-lost assertion non-vacuous.
     for (const t of texts) await pipeline.processText(t, true);
+    await pipeline.processText("gzorch marker", true);
     expect(store.size).toBeGreaterThan(0);
     for (const k of storedKeys(store)) expect(k.length).toBeLessThan(32);
   });

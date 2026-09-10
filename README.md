@@ -39,14 +39,15 @@ keep it current; this README is a summary).
   then lexicographic; never reshuffled by session stats. Salience
   (recency, repetition, sticky user-typed, rarity) governs store
   retention/eviction only (`src/core/score.ts`, `src/core/query.ts`).
-- **Conjugation guard** — inflections of common words (`deleted`,
-  `lists`, `uploads`) never enter the store: a reject-common or
-  attested-mid stem rejects the word; capitalized (proper-noun)
-  candidates are exempt (`src/core/score.ts`).
-- **Tunable word exclusion** — `rejectCommonness` in
-  `~/.pi/agent/hapax.json` (or `.pi/hapax.json`) sets the dictionary
-  commonness quantile at/above which words reject. Probe words with
-  `node tools/calibrate-bands.mjs <words...>`.
+- **English words barely admit (2026-09 retighten)** — hapax completes
+  identifiers, commit-hash-shaped tokens, and jargon: the
+  dictionary-ABSENT class. Attested English rejects unless it sits in
+  the rarest ~10% of the corpus (`provider`, `null`, `node` reject;
+  `handoff` stays). The `rejectCommonness` knob
+  (`~/.pi/agent/hapax.json` / `.pi/hapax.json`) tunes the band without a
+  code edit; probe words with `node tools/calibrate-bands.mjs
+  <words...>`. The conjugation guard additionally rejects inflections
+  of attested stems (`deleted`, `lists`, `uploads`).
 - **Enter always submits** — while a hapax word menu is open, Enter
   dismisses the menu and submits the prompt (Tab is the accept key).
   Composes with pi-vim/split-editor via a non-mutating forwarding
@@ -57,15 +58,13 @@ keep it current; this README is a summary).
   priority slash → mention → quoted-path → path): hapax answers nothing
   there, and Tab in those contexts behaves exactly as stock pi — it
   never opens the hapax menu (`test/provider-match.test.ts`).
-- **Proper-noun relief in the commonness gate** — a Capitalized word in
-  the mid-frequency band admits as a proper-noun candidate even where the
-  dictionary marks it common (relief ceiling 95,
-  `PROPER_NOUN_ADMIT_CEILING` in `src/core/score.ts`); lowercase common
-  words still reject, so ordinary prose never opens a menu. Visible
-  consequence: `National`-class proper nouns complete and chain — the
-  NREL walk at zero typed chars is integration item 7 (PASS,
-  `docs/M1-DoD.md`; chain-after-restore probe in
-  `test/adversarial-typing.test.ts`).
+- **Proper-noun relief — retired (2026-09)** — the relief that admitted
+  capitalized attested words (`National`-class) is retired-in-place
+  (ceiling == reject band): a live audit showed it admitting ~483
+  capitalized common words (`echo`, `windows`, `failed`). Mechanism and
+  calibration history live in `src/core/score.ts`; named-entity
+  completion, if wanted back, is an allowlist design question
+  (`docs/HANDOFF.md`).
 - **Session salience retention** — recency, repetition, and a sticky
   user-typed feed the eviction score that decides which candidates
   stay in the bounded store (`src/core/score.ts`).
@@ -364,7 +363,7 @@ silently (forward compatibility):
 | `triggerChar`    | string  | `"#"`   | one non-word, non-space character (`/^[^\w\s]$/`), or `""` to disable trigger mode entirely | prefix that opens the completion popup |
 | `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | retained but inert — matching is effectively 1 char (see spec 07) |
 | `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once               |
-| `rejectCommonness` | number | `50`  | `1`–`255` (clamped)                                      | dictionary quantile at/above which words reject (lower = stricter); probes: `node tools/calibrate-bands.mjs <words>` |
+| `rejectCommonness` | number | `12`  | `1`–`255` (clamped)                                      | dictionary quantile at/above which words reject (lower = stricter); probes: `node tools/calibrate-bands.mjs <words>` |
 | `menuDelayMs`     | number  | `0`     | `0`–`2000` (clamped)                                     | hesitation gate for the menu's first appearance; **default OFF** (150/300 calibration attempts failed against real rhythm — set only if flow-popping returns) |
 | `enableChaining` | boolean | `true`  | `true` / `false`                                         | gates chained (successor) completion only; word completion unaffected either way; `enablePhrases` is accepted as a deprecated alias and is mapped to this key |
 | `debug`          | boolean | `false` | `true` / `false`                                         | enables the `/acwords` command + store dump     |

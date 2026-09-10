@@ -215,7 +215,10 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
 
   it("ingests with the default config and stores only gate-passed words", async () => {
     const { store } = await ingestFixture(`${FIXTURES}/prose.jsonl`);
-    expect(store.size).toBeGreaterThan(0); // mid/rare prose words still admit under the calibrated bands
+    // 2026-09 retighten: ordinary English prose admits NOTHING by design
+    // (every prose.jsonl word is attested ≥ 12 or structural-start-only);
+    // the zero-candidate probes below are then true for the right reason.
+    expect(store.size).toBe(0);
     for (const probe of PROBES) {
       expect(rankMatches(store, probe), `probe "${probe}" must have zero candidates`).toEqual([]);
     }
@@ -423,9 +426,11 @@ describe("acceptance item 3 — 100k-token session restores fast (large-100k.jso
   it("replays a large vocabulary through the same bounded store", async () => {
     const { store } = await ingestFixture(`${FIXTURES}/large-100k.jsonl`);
     expect(store.size).toBeLessThanOrEqual(20_000); // STORE_CAP holds on restore
-    // Rare terms recur across the whole history — they survive replay:
+    // Rare terms recur across the whole history — they survive replay.
+    // 2026-09 retighten: "zephyr" (q=22) rejects at admission now, so the
+    // surviving-replay pins are the dictionary-absent pair.
     expect(rankMatches(store, "verd").map((m) => m.display)).toEqual(["Verdigris"]);
-    expect(rankMatches(store, "zeph").map((m) => m.display)).toEqual(["zephyr"]);
+    expect(rankMatches(store, "kes").map((m) => m.display)).toEqual(["kestrel"]);
   });
 });
 
@@ -686,7 +691,7 @@ async function replayEntries(
 //
 // Arming visibility: the chain bigrams recur ×4, so the successor index
 // is fully populated by the replay — the bare word "National" (a stored
-// word candidate) co-presents in the "acme" menu and can always arm the
+// word candidate) co-presents in the "zorp" menu and can always arm the
 // chain, in ANY resumed session, with no phase-split workaround. The
 // later tests keep the phase-split scaffold (arm on the early prefix,
 // CHAIN_PHASE1) purely as narration: it exercises the same machine flow
@@ -751,7 +756,7 @@ async function replayChain(
  *  BOUNDARY, never a word char — landing the cursor at the zero-typed-
  *  char word start the chain's word-start offer fires at. */
 function editingCurrent() {
-  const state = { lines: ["acme"], cursorLine: 0, cursorCol: 4 };
+  const state = { lines: ["zorp"], cursorLine: 0, cursorCol: 4 };
   return {
     state,
     typeSpace(): void {
@@ -788,42 +793,39 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     await replayChain(pipeline, entries);
 
     // Successor chain (PRD §06 h3.9), deterministic top-1 per word.
-    // P1.M1.T3.S2: runs are strictly adjacent — "Acme lab license"
-    // no longer bridges acme→license across the gate-rejected "lab",
-    // so only the direct "Acme turbine" co-occurrence remains. The walk
-    // words are dictionary-absent (acme/noria/inverter) or q≤26
-    // (zephyr/turbine) — band-immune under the 2026-09 Issue-1 retune.
-    expect(store.topSuccessors("acme")).toEqual([
-      { next: "zephyr", count: 4 },
-      { next: "turbine", count: 1 },
+    // 2026-09 retighten: "turbine" (q=26) rejects at admission, so the
+    // "Zorp turbine" co-occurrence no longer forms a bigram — the chain
+    // is the strictly-absent walk (zorp/zephra/noria/inverter) only.
+    expect(store.topSuccessors("zorp")).toEqual([
+      { next: "zephra", count: 4 },
     ]);
-    expect(store.topSuccessors("zephyr")).toEqual([{ next: "noria", count: 4 }]);
+    expect(store.topSuccessors("zephra")).toEqual([{ next: "noria", count: 4 }]);
     expect(store.topSuccessors("noria")).toEqual([{ next: "inverter", count: 4 }]);
 
     // The vocabulary admits as word candidates (the replay that feeds the
     // bigrams also stores the tokens themselves):
-    expect(store.get("acme")).toBeDefined();
+    expect(store.get("zorp")).toBeDefined();
     expect(store.get("azni")?.display).toBe("AZNI"); // acronym stays a rare word
     expect(store.bigramSize).toBeGreaterThan(0);
 
     // The bare word co-presents in the menu (the phrase layer is gone —
     // rankMatches is word-only, PRD 002 delta R1 — and the successor
     // index arms the chain from it, h2.43 whole-word arming).
-    const menu = rankMatches(store, "acme");
-    expect(menu.map((m) => m.key)).toContain("acme");
-    // acme TOPS the menu: dictionary-absent (group 0, rarity bonus)
+    const menu = rankMatches(store, "zorp");
+    expect(menu.map((m) => m.key)).toContain("zorp");
+    // zorp TOPS the menu: dictionary-absent (group 0, rarity bonus)
     // outranks the q≤26 walk partners (group 2).
-    expect(menu[0]!.key).toBe("acme");
-    expect(menu[0]!.display).toBe("Acme");
+    expect(menu[0]!.key).toBe("zorp");
+    expect(menu[0]!.display).toBe("Zorp");
     // 'ac'-width probe (the adversarial audit's failing query, inverted):
-    const wide = rankMatches(store, "ac");
-    expect(wide.map((m) => m.key)).toContain("acme");
+    const wide = rankMatches(store, "zo");
+    expect(wide.map((m) => m.key)).toContain("zorp");
     // One-word invariant on the real ranker output (PRD §07 h2.44):
-    assertWordsOnly(menu, "acme");
-    assertWordsOnly(wide, "ac");
+    assertWordsOnly(menu, "zorp");
+    assertWordsOnly(wide, "zo");
   });
 
-  it("zero-typing chain — Acme → space → top successor → Tab → Noria → Tab → Inverter, zero typed word-chars (h2.54)", async () => {
+  it("zero-typing chain — Zorp → space → top successor → Tab → Noria → Tab → Inverter, zero typed word-chars (h2.54)", async () => {
     const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
     // One pipeline instance feeding one store across both phases:
     const { store, pipeline } = makeChainPipeline(true);
@@ -838,23 +840,23 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
       for (const i of items) expect(i.value).not.toContain(" ");
     };
 
-    // FULL replay: "Acme" stays in the "acme" menu even with its
+    // FULL replay: "Zorp" stays in the "zorp" menu even with its
     // successor tail already recorded — arming works on a resumed
     // session, no phase-split workaround.
     await replayChain(pipeline, entries);
 
-    // Live menu for "acme": word-only (PRD 002 delta R1) — the bare
+    // Live menu for "zorp": word-only (PRD 002 delta R1) — the bare
     // word candidate is offered and can arm the chain.
-    const menu = await provider.getSuggestions(["acme"], 0, 4, opts());
-    expect(menu?.items.map((i) => i.value)).toContain("Acme");
-    expect(menu?.prefix).toBe("acme");
-    const acmeItem = menu!.items[0]!; // group-0 rarity → acme tops the menu
+    const menu = await provider.getSuggestions(["zorp"], 0, 4, opts());
+    expect(menu?.items.map((i) => i.value)).toContain("Zorp");
+    expect(menu?.prefix).toBe("zorp");
+    const zorpItem = menu!.items[0]!; // group-0 rarity → zorp tops the menu
 
-    // Tab accepts the word item → harness buffer "acme" becomes
-    // "Acme", cursor adjacent; the arming intercept arms the chain.
-    provider.applyCompletion(["acme"], 0, 4, acmeItem, "acme");
-    expect(chain.state()).toEqual({ word: "acme" });
-    expect(current.state.lines).toEqual(["Acme"]);
+    // Tab accepts the word item → harness buffer "zorp" becomes
+    // "Zorp", cursor adjacent; the arming intercept arms the chain.
+    provider.applyCompletion(["zorp"], 0, 4, zorpItem, "zorp");
+    expect(chain.state()).toEqual({ word: "zorp" });
+    expect(current.state.lines).toEqual(["Zorp"]);
     expect(current.state.cursorCol).toBe(4);
 
     // The user types the separating space (harness typeSpace — a word
@@ -863,18 +865,18 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     // 002). The armed branch answers with the unfiltered successors at
     // prefix "", BARE values.
     current.typeSpace();
-    expect(current.state.lines).toEqual(["Acme "]);
+    expect(current.state.lines).toEqual(["Zorp "]);
     const offer1 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
     // Top item IS the store's top successor. Its value carries the
     // successor's CANDIDATE DISPLAY CASING (PRD §07 "value = … candidate
     // display casing"; PRD §04 case handling) — asserted store-driven,
     // never a hardcoded casing assumption:
-    const topNext = store.topSuccessors("acme")[0]!.next; // "zephyr", count 4
-    const topNextDisplay = store.get(topNext)!.display; // "Zephyr"
+    const topNext = store.topSuccessors("zorp")[0]!.next; // "zephra", count 4
+    const topNextDisplay = store.get(topNext)!.display; // "Zephra"
     expect(offer1?.prefix).toBe("");
     expect(offer1?.items.map((i) => [i.label, i.value])).toEqual([
       [topNextDisplay, topNextDisplay], // bare, display-cased: pi-tui splices verbatim at prefix ""
-      ["turbine", "turbine"], // license no longer offered: was a "lab" bridge (P1.M1.T3.S2)
+      // 2026-09: turbine (q26) table-rejects — the second offer slot is gone
     ]);
     expect(provider.__hapaxLive()?.prefix).toBe("");
     expectSingleWordItems(offer1?.items ?? []);
@@ -883,8 +885,8 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     // single space; the chain re-arms at it.
     provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer1!.items[0]!, offer1!.prefix);
     expect(chain.state()).toEqual({ word: topNext }); // armed at the LOWERCASE key
-    expect(current.state.lines).toEqual([`Acme ${topNextDisplay}`]); // ONE space
-    expect(current.state.cursorCol).toBe(`Acme ${topNextDisplay}`.length);
+    expect(current.state.lines).toEqual([`Zorp ${topNextDisplay}`]); // ONE space
+    expect(current.state.cursorCol).toBe(`Zorp ${topNextDisplay}`.length);
     const colAfterFirstHop = current.state.cursorCol;
 
     // Space again → the next word start → the successor's own top
@@ -896,7 +898,7 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     expectSingleWordItems(offer2?.items ?? []);
     provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer2!.items[0]!, offer2!.prefix);
     expect(chain.state()).toEqual({ word: "noria" });
-    expect(current.state.lines).toEqual(["Acme Zephyr Noria"]);
+    expect(current.state.lines).toEqual(["Zorp Zephra Noria"]);
 
     // Space again → the next word start → energy's successor:
     current.typeSpace();
@@ -907,15 +909,15 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
 
     // Full insertion sequence landed; the chain rests armed at the final
     // word (it still has successors, so it does not disarm).
-    expect(current.state.lines).toEqual(["Acme Zephyr Noria Inverter"]);
-    expect(current.state.cursorCol).toBe("Acme Zephyr Noria Inverter".length);
+    expect(current.state.lines).toEqual(["Zorp Zephra Noria Inverter"]);
+    expect(current.state.cursorCol).toBe("Zorp Zephra Noria Inverter".length);
     expect(chain.state()).toEqual({ word: "inverter" });
 
     // Zero-word-char-typing proof: cursor movement between accepts came
     // only from accepts and the separating spaces (every offer was
     // queried at a zero-typed-char word start), and hapax answered every
     // query — no delegation anywhere in the chain.
-    expect(colAfterFirstHop).toBe("Acme Zephyr".length);
+    expect(colAfterFirstHop).toBe("Zorp Zephra".length);
     expect(current.getSuggestions).not.toHaveBeenCalled();
   });
 
@@ -927,8 +929,8 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
     await replayChain(pipeline, entries.slice(0, CHAIN_PHASE1));
-    await provider.getSuggestions(["acme"], 0, 4, opts());
-    provider.applyCompletion(["acme"], 0, 4, { value: "Acme", label: "Acme" }, "acme");
+    await provider.getSuggestions(["zorp"], 0, 4, opts());
+    provider.applyCompletion(["zorp"], 0, 4, { value: "Zorp", label: "Zorp" }, "zorp");
     await replayChain(pipeline, entries.slice(CHAIN_PHASE1));
 
     // FIRST post-accept query at the word start ("National ") — the
@@ -936,18 +938,18 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     // values, prefix "") and the chain STAYS armed: the offer fires at
     // EVERY word start for the whole chain duration (plan 002
     // P1.M2.T1.S1), not just once after the arm.
-    const offer = await provider.getSuggestions(["Acme "], 0, 5, opts());
+    const offer = await provider.getSuggestions(["Zorp "], 0, 5, opts());
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => [i.label, i.value])).toEqual([
-      ["Zephyr", "Zephyr"],
-      ["turbine", "turbine"],
+      ["Zephra", "Zephra"],
+      // 2026-09: turbine (q26) table-rejects — single-successor offer
     ]);
-    expect(chain.state()).toEqual({ word: "acme" });
+    expect(chain.state()).toEqual({ word: "zorp" });
 
     // Punctuation (word-less, NOT a word start) still disarms + delegates
     // on the same keystroke (T2.S1 semantics preserved).
     const options = opts();
-    const result = await provider.getSuggestions(["Acme!"], 0, 5, options);
+    const result = await provider.getSuggestions(["Zorp!"], 0, 5, options);
     expect(result).toBeNull();
     expect(current.getSuggestions).toHaveBeenCalledOnce();
     expect(current.getSuggestions.mock.calls[0][3]).toBe(options);
@@ -962,25 +964,25 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
     await replayChain(pipeline, entries.slice(0, CHAIN_PHASE1));
-    await provider.getSuggestions(["acme"], 0, 4, opts());
-    provider.applyCompletion(["acme"], 0, 4, { value: "Acme", label: "Acme" }, "acme");
+    await provider.getSuggestions(["zorp"], 0, 4, opts());
+    provider.applyCompletion(["zorp"], 0, 4, { value: "Zorp", label: "Zorp" }, "zorp");
     await replayChain(pipeline, entries.slice(CHAIN_PHASE1));
 
     // First post-accept query carries a typed fragment "r": the armed
     // branch's FRAGMENT rules answer — live-filtered successors at the
     // fragment, threshold 0 (chain duration), no disarm.
-    const filtered = await provider.getSuggestions(["Acme z"], 0, 7, opts());
+    const filtered = await provider.getSuggestions(["Zorp z"], 0, 7, opts());
     expect(filtered?.prefix).toBe("z");
     expect(filtered?.items).toEqual([
-      { value: "Zephyr", label: "Zephyr", description: "chain" },
+      { value: "Zephra", label: "Zephra", description: "chain" },
     ]);
-    expect(chain.state()).toEqual({ word: "acme" });
+    expect(chain.state()).toEqual({ word: "zorp" });
 
     // Further typing keeps filtering live (never re-offers unfiltered):
-    const narrowed = await provider.getSuggestions(["Acme ze"], 0, 8, opts());
+    const narrowed = await provider.getSuggestions(["Zorp ze"], 0, 8, opts());
     expect(narrowed?.prefix).toBe("ze");
-    expect(narrowed?.items.map((i) => i.label)).toEqual(["Zephyr"]);
-    expect(chain.state()).toEqual({ word: "acme" });
+    expect(narrowed?.items.map((i) => i.label)).toEqual(["Zephra"]);
+    expect(chain.state()).toEqual({ word: "zorp" });
   });
 
   it("reset (new user turn) clears the arm", async () => {
@@ -991,17 +993,17 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
     await replayChain(pipeline, entries.slice(0, CHAIN_PHASE1));
-    await provider.getSuggestions(["acme"], 0, 4, opts());
-    provider.applyCompletion(["acme"], 0, 4, { value: "Acme", label: "Acme" }, "acme");
+    await provider.getSuggestions(["zorp"], 0, 4, opts());
+    provider.applyCompletion(["zorp"], 0, 4, { value: "Zorp", label: "Zorp" }, "zorp");
     await replayChain(pipeline, entries.slice(CHAIN_PHASE1));
 
     chain.reset(); // the before_agent_start handler
 
     // Adjacent cursor position, but the arm is gone: the armed branch
     // never runs, so plain threshold matching answers — plain word menu.
-    const menu = await provider.getSuggestions(["Acme"], 0, 4, opts());
-    expect(menu?.prefix).toBe("Acme");
-    expect(menu?.items.map((i) => i.value)).toContain("Acme");
+    const menu = await provider.getSuggestions(["Zorp"], 0, 4, opts());
+    expect(menu?.prefix).toBe("Zorp");
+    expect(menu?.items.map((i) => i.value)).toContain("Zorp");
     expect(chain.state()).toBeNull();
   });
 
@@ -1016,8 +1018,8 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     await replayChain(pipeline, entries.slice(0, CHAIN_PHASE1));
     // Arm on the inner provider (Tab resolves against the live cache —
     // the display layer never gates the inner query, S3 rule 1).
-    await inner.getSuggestions(["acme"], 0, 4, opts());
-    inner.applyCompletion(["acme"], 0, 4, { value: "Acme", label: "Acme" }, "acme");
+    await inner.getSuggestions(["zorp"], 0, 4, opts());
+    inner.applyCompletion(["zorp"], 0, 4, { value: "Zorp", label: "Zorp" }, "zorp");
     await replayChain(pipeline, entries.slice(CHAIN_PHASE1));
 
     // The word-start offer through the DISPLAY provider: live prefix ""
@@ -1025,9 +1027,9 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     // (first paint of this stack is never delayed, S3 rule 4a). The
     // buffer carries the user's separating space — the redesign's
     // zero-typed-char word start (plan 002 P1.M2.T1.S1).
-    const painted = await display.getSuggestions(["Acme "], 0, 5, opts());
+    const painted = await display.getSuggestions(["Zorp "], 0, 5, opts());
     expect(painted?.prefix).toBe("");
-    expect(painted?.items.map((i) => i.label)).toEqual(["Zephyr", "turbine"]);
+    expect(painted?.items.map((i) => i.label)).toEqual(["Zephra"]);
     expect(display.dispose).toBeDefined();
   });
 });
@@ -1059,146 +1061,34 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("acceptance item 7 — NREL phrase (nrel-chain.jsonl, bugfix 001_0f4b641cf9ce)", () => {
-  it("fixture sanity — the four phrase words admit (BUG-002 inverted) and build the exact national→renewable→energy→laboratory successor chain", async () => {
+  // 2026-09 retighten: the proper-noun relief is RETIRED-IN-PLACE (ceiling
+  // == reject band), and dictionary attestation is near-disqualifying —
+  // the entire phrase rejects at the table now (national q=90, renewable
+  // 19, energy 94, laboratory 57; all ≥ 12). These tests pin the
+  // RETIREMENT: nothing stores, no chain forms, every probe delegates.
+  // The historical BUG-002/relief story (why the fixture exists) lives in
+  // spec 04 + score.ts calibration history. Restoring named-entity
+  // completion is an allowlist design question (docs/HANDOFF.md).
+  it("retirement pin — the four phrase words all REJECT; store empty, no chain, probes delegate", async () => {
     const { store, pipeline } = makeChainPipeline(true);
     const entries = parseSessionFixture(`${FIXTURES}/nrel-chain.jsonl`);
     await replayChain(pipeline, entries);
 
-    // BUG-002's failing assertion, inverted: under the retuned bands all
-    // three capitalized phrase words came back undefined. renewable (q=19)
-    // admits in the normal band; the other three admit under the relief.
     for (const w of ["national", "renewable", "energy", "laboratory"]) {
-      expect(store.get(w), w).toBeDefined();
+      expect(store.get(w), `${w} must reject (relief retired, q ≥ 12)`).toBeUndefined();
     }
-    // Display casing: every fixture sighting is identically cased, so the
-    // most-recent-casing-wins display is the phrase casing itself.
-    expect(store.get("national")!.display).toBe("National");
-    expect(store.get("renewable")!.display).toBe("Renewable");
-    expect(store.get("energy")!.display).toBe("Energy");
-    expect(store.get("laboratory")!.display).toBe("Laboratory");
-    // The relief admits at group 2 (S1 contract). renewable (q=19) is
-    // below MID_FREQ_THRESHOLD — rare-but-attested group 1, never touched
-    // by the band retunes. A retune that moves a word out of the relief
-    // band fails on the get() above; one that changes the admission group
-    // fails here.
-    expect(store.get("national")!.rankGroup).toBe(2);
-    expect(store.get("renewable")!.rankGroup).toBe(1);
-    expect(store.get("energy")!.rankGroup).toBe(2);
-    expect(store.get("laboratory")!.rankGroup).toBe(2);
+    expect(store.size).toBe(0);
+    expect(store.bigramSize).toBe(0);
+    expect(store.topSuccessors("national")).toEqual([]);
 
-    // Sterile fixture: exactly the four phrase words stored, exactly three
-    // bigrams. Count 6 = the fixture's six verbatim phrase occurrences.
-    expect(store.size).toBe(4);
-    expect(store.bigramSize).toBe(3);
-    expect(store.topSuccessors("national")).toEqual([{ next: "renewable", count: 6 }]);
-    expect(store.topSuccessors("renewable")).toEqual([{ next: "energy", count: 6 }]);
-    expect(store.topSuccessors("energy")).toEqual([{ next: "laboratory", count: 6 }]);
-    // laboratory is the chain TAIL: is (2 chars, shape gate), again (142)
-    // and today (132) all reject, so no successor is ever recorded for it.
-    expect(store.topSuccessors("laboratory")).toEqual([]);
+    // The PRD's own probe inverts: 'na' → zero candidates.
+    expect(rankMatches(store, "na")).toEqual([]);
 
-    // The PRD's own probe: 'na' → National is the sole candidate, display
-    // is the exact cased insertion string (PRD §09 item 7's "National").
-    const menu = rankMatches(store, "na");
-    expect(menu.map((m) => m.display)).toEqual(["National"]);
-    expect(menu[0]!.key).toBe("national");
-    assertWordsOnly(menu, "na");
-  });
-
-  it("zero-typing chain — na → accept National → space → Renewable → Tab → Energy → Tab → Laboratory, zero typed word-chars (PRD §09 DoD M2 item 7)", async () => {
-    const entries = parseSessionFixture(`${FIXTURES}/nrel-chain.jsonl`);
-    const { store, pipeline } = makeChainPipeline(true);
-    const current = editingCurrent();
-    const chain = createChainMachine();
-    const provider = createHapaxProvider(store, cfg(), current, chain);
-
-    /** One-word invariant on pi's menu shape (same gate as the zephyr
-     *  chain test's local helper; assertWordsOnly covers RankedMatch
-     *  outputs, chain menus are pi items — PRD §07 h2.38/h2.44). */
-    const expectSingleWordItems = (items: readonly AutocompleteItem[]): void => {
-      for (const i of items) expect(i.value).not.toContain(" ");
-    };
-
-    await replayChain(pipeline, entries);
-
-    // Type "na": the live menu offers National (the PRD's own assertion,
-    // mirrored from rankMatches — the menu is word-only, PRD 002 delta R1).
-    const menu = await provider.getSuggestions(["na"], 0, 2, opts());
-    expect(menu?.prefix).toBe("na");
-    expect(menu?.items.map((i) => i.value)).toEqual(["National"]);
-    expectSingleWordItems(menu?.items ?? []);
-
-    // Tab accepts the word item → the harness buffer "na" becomes
-    // "National"; the arming intercept arms the chain at the LOWERCASE key.
-    provider.applyCompletion(["na"], 0, 2, menu!.items[0]!, "na");
-    expect(chain.state()).toEqual({ word: "national" });
-    expect(current.state.lines).toEqual(["National"]);
-    expect(current.state.cursorCol).toBe(8);
-
-    // The user types the separating space (harness typeSpace — a word
-    // BOUNDARY, never a word char): the cursor is at the empty next word
-    // with ZERO typed word-chars, where the armed branch's zero-char offer
-    // fires. Every offer below is asserted at prefix "".
-    const offerPrefixes: string[] = [];
-    current.typeSpace();
-    expect(current.state.lines).toEqual(["National "]);
-    const offer1 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
-    // Top item IS the store's top successor — the value carries the
-    // successor's CANDIDATE DISPLAY CASING, asserted store-driven, never a
-    // hardcoded casing assumption:
-    const succR = store.topSuccessors("national")[0]!; // { next: "renewable", count: 6 }
-    const succRDisplay = store.get(succR.next)!.display;
-    expect(offer1?.prefix).toBe("");
-    offerPrefixes.push(offer1!.prefix);
-    expect(offer1?.items.map((i) => [i.label, i.value])).toEqual([[succRDisplay, succRDisplay]]);
-    expect(provider.__hapaxLive()?.prefix).toBe("");
-    expectSingleWordItems(offer1?.items ?? []);
-    provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer1!.items[0]!, offer1!.prefix);
-    expect(chain.state()).toEqual({ word: "renewable" }); // armed at the lowercase key
-    expect(current.state.lines).toEqual([`National ${succRDisplay}`]); // ONE space
-    expect(current.state.cursorCol).toBe(`National ${succRDisplay}`.length);
-
-    // Space → offer → accept: the energy hop, again bare at prefix "".
-    current.typeSpace();
-    const offer2 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
-    const succE = store.topSuccessors("renewable")[0]!; // { next: "energy", count: 6 }
-    const succEDisplay = store.get(succE.next)!.display;
-    expect(offer2?.prefix).toBe("");
-    offerPrefixes.push(offer2!.prefix);
-    expect(offer2?.items.map((i) => [i.label, i.value])).toEqual([[succEDisplay, succEDisplay]]);
-    expectSingleWordItems(offer2?.items ?? []);
-    provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer2!.items[0]!, offer2!.prefix);
-    expect(chain.state()).toEqual({ word: "energy" });
-    expect(current.state.lines).toEqual([`National ${succRDisplay} ${succEDisplay}`]);
-
-    // Space → offer → accept: the laboratory hop — the chain's tail.
-    current.typeSpace();
-    const offer3 = await provider.getSuggestions(current.state.lines, 0, current.state.cursorCol, opts());
-    const succL = store.topSuccessors("energy")[0]!; // { next: "laboratory", count: 6 }
-    const succLDisplay = store.get(succL.next)!.display;
-    expect(offer3?.prefix).toBe("");
-    offerPrefixes.push(offer3!.prefix);
-    expect(offer3?.items.map((i) => [i.label, i.value])).toEqual([[succLDisplay, succLDisplay]]);
-    expectSingleWordItems(offer3?.items ?? []);
-    provider.applyCompletion(current.state.lines, 0, current.state.cursorCol, offer3!.items[0]!, offer3!.prefix);
-
-    // The full PRD phrase landed — the separating spaces were the only
-    // keystrokes between accepts (zero additional typed word-chars).
-    expect(current.state.lines).toEqual(["National Renewable Energy Laboratory"]);
-    expect(current.state.cursorCol).toBe("National Renewable Energy Laboratory".length);
-
-    // The machine rests ARMED at the tail: applyCompletion arms
-    // synchronously, and laboratory's lack of successors only resets the
-    // chain on the NEXT query (provider.ts armed branch (a): succ.length
-    // === 0 → chain.reset() then fall through). The successor-less tail is
-    // asserted so the resting state is measured machine reality.
-    expect(store.topSuccessors("laboratory")).toEqual([]);
-    expect(chain.state()).toEqual({ word: "laboratory" });
-
-    // Zero-word-char-typing proof: every offer fired at prefix "" (the
-    // separating spaces were the only typed characters), and hapax answered
-    // every query — the wrapped provider was never consulted mid-chain.
-    expect(offerPrefixes).toEqual(["", "", ""]);
-    expect(current.getSuggestions).not.toHaveBeenCalled();
+    // And through the provider: delegation (pi's completion untouched).
+    const current = mockCurrent(SENTINEL);
+    const provider = createHapaxProvider(store, cfg(), current);
+    const result = await provider.getSuggestions(["na"], 0, 2, opts());
+    expect(result).toBe(SENTINEL);
+    expect(provider.__hapaxLive()).toBeNull();
   });
 });

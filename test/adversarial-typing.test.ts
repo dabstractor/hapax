@@ -27,10 +27,10 @@
  *     impossible only while every response prefix stays anchor-safe.
  *   Probe C — chain post-restore → BUG-005 (PRD §h2.2 / §h3.4): full
  *     zephyr-chain.jsonl replay via restoreFromHistory (the /resume
- *     scenario), then the bare word 'Acme' (present thanks to
+ *     scenario), then the bare word 'Zorp' (present thanks to
  *     P1.M4.T2.S1's suppression exemption) is accepted via the provider's
  *     real applyCompletion — whose arming side effect (P1.M4.T2.S2)
- *     drives the PRD §09 M2 item 7 sequence: Zephyr → Noria → Inverter,
+ *     drives the PRD §09 M2 item 7 sequence: Zephra → Noria → Inverter,
  *     each hop asserted individually so a failure names the broken link.
  *
  * The chain-arming route (accept a successor item) and the ingest-path
@@ -149,12 +149,12 @@ const put = (
 };
 
 /** BUG-002 repro store (provider-display convention) — exactly zendesk
- *  (display "Zendesk") ×3 + zephyr ×1: 'z' stays below the 2-char
- *  threshold, 'ze' paints both, 'zep' live-narrows to zephyr. */
+ *  (display "Zendesk") ×3 + zephra ×1: 'z' stays below the 2-char
+ *  threshold, 'ze' paints both, 'zep' live-narrows to zephra. */
 const reproStore = (): CandidateStore => {
   const s = new CandidateStore();
   put(s, "zendesk", 3, 9, { display: "Zendesk" });
-  put(s, "zephyr", 1, 9);
+  put(s, "zephra", 1, 9);
   return s;
 };
 
@@ -288,9 +288,11 @@ describe("adversarial Probe A — prose no-menu (BUG-001)", () => {
   }, 60_000);
 
   it("ingests prose.jsonl into a live (non-empty) store", () => {
-    // Positive control, half 1: the replay really admitted words. Every
-    // no-menu assertion below would be vacuous against an empty store.
-    expect(store.size).toBeGreaterThan(0);
+    // 2026-09 retighten: ordinary English prose admits NOTHING — the
+    // store is empty by design and the no-menu assertions below are true
+    // for the right reason. The live-menu control in this file uses a
+    // direct store upsert, keeping the suite non-vacuous.
+    expect(store.size).toBe(0);
   });
 
   it.each(PROSE_PROBES)("prose probe '$fragment' → $title", async ({ fragment, full, expected }) => {
@@ -382,14 +384,14 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     // 'z' — auto-open contract (effective threshold 1): the word-start
     // request already publishes the live set.
     expect((await type(wrapper, "z"))!.items.map((i) => i.value)).toEqual([
-      "zephyr",
+      "zephra",
       "Zendesk",
     ]);
     expect(base.__hapaxLive()).not.toBeNull();
 
-    // 'e' — first qualifying keystroke paints {Zendesk, zephyr} @"ze".
+    // 'e' — first qualifying keystroke paints {Zendesk, zephra} @"ze".
     const ze = await type(wrapper, "ze");
-    expect(ze!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
+    expect(ze!.items.map((i) => i.value)).toEqual(["zephra", "Zendesk"]);
     expect(
       prefixIsAnchorSafe("ze", 2, ze!.prefix),
       "'ze' response prefix must be the buffer's exact suffix",
@@ -401,7 +403,7 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     vi.advanceTimersByTime(50);
     const zep = await type(wrapper, "zep");
     expect(zep, "'zep' must paint the narrowed live menu").not.toBeNull();
-    expect(zep!.items.map((i) => i.value)).toEqual(["zephyr"]);
+    expect(zep!.items.map((i) => i.value)).toEqual(["zephra"]);
     expect(zep!.prefix).toBe("zep");
     expect(prefixIsAnchorSafe("zep", 3, zep!.prefix)).toBe(true);
 
@@ -410,7 +412,7 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     // like the editor). The ALLOWLIST pins every legitimate outcome; any
     // doubled-prefix shape ('zzendesk', 'zeZendesk', …) falls outside it.
     const completed = editorApplyCompletion("zep", 3, zep!.items[0]!.value, zep!.prefix);
-    expect(["zephyr", "Zendesk"], `Tab-apply corrupted the line: '${completed}'`).toContain(
+    expect(["zephra", "Zendesk"], `Tab-apply corrupted the line: '${completed}'`).toContain(
       completed,
     );
   });
@@ -420,12 +422,12 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     const base = createHapaxProvider(reproStore(), cfg(), current);
     const wrapper = createDisplayProvider(base);
 
-    const ze = await type(wrapper, "ze"); // paints {Zendesk, zephyr} @"ze" at t=0
-    expect(ze!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
+    const ze = await type(wrapper, "ze"); // paints {Zendesk, zephra} @"ze" at t=0
+    expect(ze!.items.map((i) => i.value)).toEqual(["zephra", "Zendesk"]);
 
     vi.advanceTimersByTime(50);
     const zep = await type(wrapper, "zep"); // immediate paint @"zep" (anchor moved)
-    expect(zep!.items.map((i) => i.value)).toEqual(["zephyr"]);
+    expect(zep!.items.map((i) => i.value)).toEqual(["zephra"]);
     expect(zep!.prefix).toBe("zep");
 
     // Pause PAST the debounce: the immediate paint superseded every timer
@@ -440,7 +442,7 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     expect(prefixIsAnchorSafe("zep", 3, zep!.prefix)).toBe(true);
     const completed = editorApplyCompletion("zep", 3, zep!.items[0]!.value, zep!.prefix);
     expect(
-      ["zephyr", "Zendesk"],
+      ["zephra", "Zendesk"],
       `post-pause Tab-apply corrupted the line: '${completed}'`,
     ).toContain(completed);
   });
@@ -450,12 +452,13 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
   let store: CandidateStore;
 
   beforeAll(async () => {
-    // FULL zephyr-chain replay — the /resume scenario — through a REAL
+    // FULL zephra-chain replay — the /resume scenario — through a REAL
     // pipeline with the SHIPPED dict and the bigram hook wired exactly
     // like src/pi/index.ts's session_start: successor index complete
-    // (store.topSuccessors: acme→zephyr/turbine — the old
-    // "license" entry was a gate-rejected-"lab" bridge, removed by
-    // P1.M1.T3.S2's strict adjacency — zephyr→noria, noria→inverter).
+    // (store.topSuccessors: zorp→zephra — turbine (q26) table-rejects
+    // since the 2026-09 retighten; the old "license" entry was a
+    // gate-rejected-"lab" bridge, removed by
+    // P1.M1.T3.S2's strict adjacency — zephra→noria, noria→inverter).
     const entries = parseSessionFixture(NREL);
     const s = new CandidateStore();
     const pipeline = new IngestPipeline({
@@ -467,28 +470,28 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     await replay(pipeline, entries);
   }, 60_000);
 
-  it("replay is live and the bare word 'Acme' is co-present with its chain successors (P1.M4.T2.S1 exemption)", async () => {
+  it("replay is live and the bare word 'Zorp' is co-present with its chain successors (P1.M4.T2.S1 exemption)", async () => {
     expect(store.size, "fixture replay admitted nothing — the probes below would be vacuous").toBeGreaterThan(0);
 
     const current = mockCurrent();
     const chain = createChainMachine();
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
-    const menu = await provider.getSuggestions(["acme"], 0, 4, opts());
-    expect(menu, "'acme' must open a menu in the resumed session").not.toBeNull();
-    const acme = menu!.items.find((i) => i.value === "Acme");
+    const menu = await provider.getSuggestions(["zorp"], 0, 4, opts());
+    expect(menu, "'zorp' must open a menu in the resumed session").not.toBeNull();
+    const zorp = menu!.items.find((i) => i.value === "Zorp");
     expect(
-      acme,
-      "bare 'Acme' missing from the 'acme' menu — the BUG-005 constituent-suppression exemption regressed",
+      zorp,
+      "bare 'Zorp' missing from the 'zorp' menu — the BUG-005 constituent-suppression exemption regressed",
     ).toBeDefined();
     expect(
-      acme!.description,
+      zorp!.description,
       "bare word must carry word-provenance ('session xN'), not chain markers",
     ).toMatch(/^session x\d+$/);
     expect(chain.state(), "suggestions alone must never arm the chain").toBeNull();
   });
 
-  it("§09 M2 item 7 post-restore: bare-word accept arms 'acme' → Zephyr → Noria → Inverter", async () => {
+  it("§09 M2 item 7 post-restore: bare-word accept arms 'zorp' → Zephra → Noria → Inverter", async () => {
     const current = editingCurrent(); // pi-shaped persistent buffer
     const chain = createChainMachine();
     const provider = createHapaxProvider(store, cfg(), current, chain);
@@ -496,21 +499,21 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     // Hop 0 — accept the BARE word from a live menu, in the SAME query
     // cycle (liveKeyByValue rebuilds on every query). The provider's real
     // applyCompletion arms the chain as a side effect (P1.M4.T2.S2).
-    const menu = await provider.getSuggestions(["acme"], 0, 4, opts());
-    const acme = menu!.items.find((i) => i.value === "Acme")!;
-    provider.applyCompletion(["acme"], 0, 4, acme, "acme");
-    expect(chain.state(), "hop 0: accepting bare 'Acme' must arm 'acme'").toEqual({
-      word: "acme",
+    const menu = await provider.getSuggestions(["zorp"], 0, 4, opts());
+    const zorp = menu!.items.find((i) => i.value === "Zorp")!;
+    provider.applyCompletion(["zorp"], 0, 4, zorp, "zorp");
+    expect(chain.state(), "hop 0: accepting bare 'Zorp' must arm 'zorp'").toEqual({
+      word: "zorp",
     });
     expect(current.state.lines, "hop 0: the editor must have inserted the bare word").toEqual([
-      "Acme",
+      "Zorp",
     ]);
 
     // Hop 1 — the user types the separating space; the word-start offer
-    // (plan 002 redesign) serves topSuccessors('acme') at prefix ""
+    // (plan 002 redesign) serves topSuccessors('zorp') at prefix ""
     // (zero typed characters of the NEXT word) in candidate display
     // casing (PRD §07; Issue-2 fix).
-    current.state.lines = ["Acme "];
+    current.state.lines = ["Zorp "];
     current.state.cursorCol = 5;
     const offer1 = await provider.getSuggestions(
       current.state.lines,
@@ -519,9 +522,8 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       opts(),
     );
     expect(offer1!.prefix, "hop 1: word-start offer must answer with zero typed chars").toBe("");
-    expect(offer1!.items.map((i) => i.label), "hop 1: 'acme' successors (count-desc)").toEqual([
-      "Zephyr",
-      "turbine",
+    expect(offer1!.items.map((i) => i.label), "hop 1: 'zorp' successors (count-desc)").toEqual([
+      "Zephra", // 2026-09: turbine (q26) table-rejects — sole successor
     ]);
     provider.applyCompletion(
       current.state.lines,
@@ -530,16 +532,16 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       offer1!.items[0]!,
       offer1!.prefix,
     );
-    expect(chain.state(), "hop 1: Tab-accepting 'Zephyr' must re-arm to it").toEqual({
-      word: "zephyr",
+    expect(chain.state(), "hop 1: Tab-accepting 'Zephra' must re-arm to it").toEqual({
+      word: "zephra",
     });
-    expect(current.state.lines, "hop 1: buffer after accepting 'Zephyr'").toEqual([
-      "Acme Zephyr",
+    expect(current.state.lines, "hop 1: buffer after accepting 'Zephra'").toEqual([
+      "Zorp Zephra",
     ]);
 
-    // Hop 2 — space again, then 'Noria' offered as zephyr's successor
+    // Hop 2 — space again, then 'Noria' offered as zephra's successor
     // and accepted.
-    current.state.lines = ["Acme Zephyr "];
+    current.state.lines = ["Zorp Zephra "];
     current.state.cursorCol = 12;
     const offer2 = await provider.getSuggestions(
       current.state.lines,
@@ -548,7 +550,7 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       opts(),
     );
     expect(offer2!.prefix).toBe("");
-    expect(offer2!.items.map((i) => i.label), "hop 2: 'zephyr' successors").toEqual(["Noria"]);
+    expect(offer2!.items.map((i) => i.label), "hop 2: 'zephra' successors").toEqual(["Noria"]);
     provider.applyCompletion(
       current.state.lines,
       0,
@@ -559,12 +561,12 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     expect(chain.state(), "hop 2: Tab-accepting 'Noria' must re-arm to it").toEqual({
       word: "noria",
     });
-    expect(current.state.lines).toEqual(["Acme Zephyr Noria"]);
+    expect(current.state.lines).toEqual(["Zorp Zephra Noria"]);
 
     // Hop 3 — space again, then 'Inverter' offered as noria's
     // successor: the exact link the original bug hunt found dead in
     // resumed sessions (BUG-005).
-    current.state.lines = ["Acme Zephyr Noria "];
+    current.state.lines = ["Zorp Zephra Noria "];
     current.state.cursorCol = 18;
     const offer3 = await provider.getSuggestions(
       current.state.lines,
@@ -586,6 +588,6 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     expect(chain.state(), "hop 3: Tab-accepting 'Inverter' must re-arm to it").toEqual({
       word: "inverter",
     });
-    expect(current.state.lines).toEqual(["Acme Zephyr Noria Inverter"]);
+    expect(current.state.lines).toEqual(["Zorp Zephra Noria Inverter"]);
   });
 });

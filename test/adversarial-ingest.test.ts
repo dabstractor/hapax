@@ -152,7 +152,7 @@ describe("Probe A — realistic secrets never become candidates (BUG-003)", () =
   beforeAll(async () => {
     const pipeline = makePipeline((store = new CandidateStore()));
     // The PRD's exact repro text, verbatim.
-    await pipeline.processText(`aws secret: ${AWS_SECRET}\nslack: ${SLACK}\nturbine notes`, true);
+    await pipeline.processText(`aws secret: ${AWS_SECRET}\nslack: ${SLACK}\nturbine notes turbinez`, true);
     await pipeline.processText(`token: ${JWT} ok`, true);
     await pipeline.processText(`token: ${JWT_DOZJG} ok`, true);
     await pipeline.processText(`key: ${OPENAI} ok`, true);
@@ -160,7 +160,7 @@ describe("Probe A — realistic secrets never become candidates (BUG-003)", () =
     // Positive control rides the SAME store: a rare prose word from these
     // messages must admit, so the no-leak assertions can never pass
     // vacuously against a dead store.
-    await pipeline.processText("a zephyr drifted over the vestibule", true);
+    await pipeline.processText("a zephra drifted over the vestibule", true);
   });
 
   const FRAGMENTS: [string, string][] = [
@@ -188,17 +188,18 @@ describe("Probe A — realistic secrets never become candidates (BUG-003)", () =
     ).toBe(false);
   });
 
-  it("positive control: the rare prose word 'zephyr' from the same messages admits", () => {
-    expect(rankMatches(store, "zeph").map((m) => m.key)).toContain("zephyr");
+  it("positive control: the rare prose word 'zephra' from the same messages admits", () => {
+    expect(rankMatches(store, "zeph").map((m) => m.key)).toContain("zephra");
   });
 
   it("masking is surgical: ordinary prose words of the repro message still admit", () => {
-    // "turbine" (q=26) admits; "secret" (q=108) and "slack" (q=51; joined
-    // the reject band in the 2026-09 Issue-1 retune) are rejected at
-    // ADMISSION for commonness and "aws" is gate-tooShort — all unmasked
-    // gate deaths, never masking damage (shipped-dict facts per
-    // test/mask-secrets.test.ts).
-    expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbine");
+    // 2026-09 retighten: "turbine" (q=26) now REJECTS at admission too —
+    // the masking-surgical control needs an admitted prose word, so the
+    // repro corpus carries "turbinez" (dictionary-absent). "secret"
+    // (q=108), "slack" (q=51), and now "turbine" are all admission
+    // deaths; "aws" is gate-tooShort — unmasked gate deaths, never
+    // masking damage (shipped-dict facts per test/mask-secrets.test.ts).
+    expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbinez");
   });
 });
 
@@ -214,12 +215,12 @@ describe("Probe C — synthetic-token paste battery (BUG-003, PRD h3.2)", () => 
     await pipeline.processText(`npm short: ${NPM_SHORT} end`, true);
     await pipeline.processText(`gitlab: ${GLPAT_HYPHEN} end`, true);
     await pipeline.processText(`stripe: ${SK_LIVE} end`, true);
-    await pipeline.processText(`auth: Bearer ${BEARER_PAYLOAD} end`, true);
+    await pipeline.processText(`auth: Bearer ${BEARER_PAYLOAD} end bearerz`, true);
     await pipeline.processText(`synthetic: ${ALPHA_RUN} end`, true);
     // Positive control rides the SAME store (Probe A convention): rare prose
     // words from these very messages must admit, so the no-leak assertions
     // can never pass vacuously against a dead store.
-    await pipeline.processText("a zephyr drifted over the vestibule", true);
+    await pipeline.processText("a zephra drifted over the vestibule", true);
   });
 
   // Each row: [fragment, provenance]. The PRD-documented leaks plus every
@@ -278,15 +279,19 @@ describe("Probe C — synthetic-token paste battery (BUG-003, PRD h3.2)", () => 
     }
   });
 
-  it("positive control: the rare prose word 'zephyr' from the same messages admits", () => {
-    expect(rankMatches(store, "zeph").map((m) => m.key)).toContain("zephyr");
+  it("positive control: the rare prose word 'zephra' from the same messages admits", () => {
+    expect(rankMatches(store, "zeph").map((m) => m.key)).toContain("zephra");
   });
 
   it("positive control: 'bearer' stays prose — the ordinary word itself admits", () => {
     // 'Bearer' must never become a secret prefix: the word lands in the
     // store like any prose word, proving the Bearer line reached ingest
     // while its payload contributed nothing (the residual-class contract).
-    expect(rankMatches(store, "bear").map((m) => m.key)).toContain("bearer");
+    // 2026-09 retighten: "bearer" (q=38) rejects at admission — the
+    // control word is "bearerz" (absent). The Bearer-line contract
+    // (payload contributes nothing) is unchanged; the word-class control
+    // just tracks the tighter bands.
+    expect(rankMatches(store, "bear").map((m) => m.key)).toContain("bearerz");
   });
 });
 
@@ -394,7 +399,7 @@ describe("Probe B — bad-dict restore is a total no-op (BUG-004)", () => {
     // The sticky disable must cover the LIVE path too: a real message_end
     // after the failure enqueues, the debounce fires, the drain runs —
     // and the top gate stops it before a single word is seen.
-    pipeline.onMessageEnd(userMsg("more common prose here with zephyr"));
+    pipeline.onMessageEnd(userMsg("more common prose here with zephra"));
     await settle(); // > 300 ms: debounce fired and the drain finished
 
     expect(store.size).toBe(0);
