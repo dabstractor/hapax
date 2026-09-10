@@ -48,30 +48,35 @@ tests couldn't see.
    words used both ways (`national` lowercase AND the capitalized NREL
    phrase). Alternative: drop relief entirely and rely on the
    dictionary-absent class (identifiers rarely need it).
-DELETED_MARKER_2 but unconfirmed.** Rationale is
-   measured (word-boundary gaps 150–250 ms at 100+ WPM), but only the
-   owner's real typing validates it. If menus still pop in flow:
-   raise; if help feels laggy: lower. Knob is in `~/.pi/agent/hapax.json`.
-2. **Enter-submits + keystroke clock + hesitation gate all depend on
+2. **`menuDelayMs` — hesitation gate is now OFF by default (0).**
+   Calibration history: 150 ms still popped, 300 ms never popped —
+   the owner's word-boundary gaps straddle any fixed threshold, and
+   the original popping complaint was actually chain-offer stickiness
+   + relief clutter (both fixed since). Auto-open is immediate again;
+   the knob remains for owners with a measured pause length. If
+   flow-popping returns as a complaint, instrument REAL keystroke
+   gaps first (gate logging technique in git history) before picking
+   any value.
+3. **Enter-submits + keystroke clock + hesitation gate all depend on
    the editor proxy**, which only installs when an extension set an
    editor factory (here: pi-vim). With pi's stock editor: no Enter
    guard (Enter accepts the highlighted word — the owner called this
    disqualifying), degraded gate timing. The durable fix is upstream
    in pi-tui: non-slash `tui.select.confirm` should cancel + fall
    through to submit (mirroring the slash case). Worth filing.
-3. **pi-tui version pin risk.** hapax devDeps pin ~0.84.4; runtime is
+4. **pi-tui version pin risk.** hapax devDeps pin ~0.84.4; runtime is
    0.85.1. Contracts leaned on (documented as PINs in
    `src/pi/provider.ts`): single-item forced fast path, trigger-char
    branch shadowing (letters registered ⇒ continuation branch
    unreachable), one-query-per-word when the menu is closed, and the
    editor's space-updates-open-menu flow. Re-verify on pi upgrades.
-4. **Editor-slot ecosystem is fragile by design.** pi has ONE custom
+5. **Editor-slot ecosystem is fragile by design.** pi has ONE custom
    editor slot; split-editor restores previousFactory on shutdown,
    pi-vim's factory has per-call cursor-shape side effects. hapax's
    proxy composes last via capture-previous (spec 07 records the v1
    monkey-patch recursion crash as binding history — never mutate a
    shared editor instance).
-5. **Known leaks, accepted/by-design:** derivational suffixes
+6. **Known leaks, accepted/by-design:** derivational suffixes
    (`deletion`) not stem-stripped; absent-stem conjugations
    (`parses` — `parse` itself is dictionary-absent) leak →
    `rejectCommonness` knob covers them; message-START capitals still

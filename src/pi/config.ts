@@ -62,19 +62,17 @@ export interface HapaxConfig {
    * word's q with: node tools/calibrate-bands.mjs <word...> */
   rejectCommonness: number;
   /** Hesitation gate for the menu's first appearance (ms; 0–2000).
-   *  While the menu is closed, a word-completion paints only when the
-   *  keystroke arrived ≥ this many ms after the previous one — typing
-   *  full speed never pops the menu; hesitating does. MEASURED AT THE
-   *  WORD BOUNDARY: queries only ever fire at word starts (pi-tui asks
-   *  once per word), and the space→letter transition is the LONGEST
-   *  natural gap in typing (150–250 ms at 100+ WPM) — 150 suppressed
-   *  almost nothing in real rhythm (live-reported) despite passing
-   *  uniformly-paced tests; 300 clears real flow while a genuine
-   *  "what was that word" hesitation (400 ms+) still opens. True
-   *  keystroke timing comes from the editor proxy's input clock;
-   *  without an editor factory it degrades to query-gap timing (rarely
-   *  suppresses). Trigger-char and Tab-chain results bypass the gate
-   *  (explicit intent). 0 = always immediate. */
+   *  **Default 0 (OFF, 2026-09 final):** the gate was introduced to
+   *  stop constant popping, but that symptom was actually caused by the
+   *  stuck chain offers and relief-word clutter (both since fixed);
+   *  calibration attempts at 150 ms (still popped) and 300 ms (never
+   *  popped) both failed against real typing — the only query a word
+   *  ever gets is its first letter, so any threshold above the owner's
+   *  word-boundary gap suppresses that word permanently. Auto-open is
+   *  immediate by default; owners who find flow-popping noisy can set
+   *  this to their own measured pause length (e.g. 200) — gaps BELOW
+   *  the value are suppressed, at or above show. Explicit intent
+   *  (trigger char, Tab chains) always bypasses. */
   menuDelayMs: number;
   /** PRIMARY chaining flag (PRD §08 h2.46): gates the successor-index
    *  chain layer ONLY — word completion is unaffected either way. The
@@ -90,7 +88,7 @@ export const DEFAULT_CONFIG: HapaxConfig = {
   threshold: 2,
   maxSuggestions: 8,
   rejectCommonness: REJECT_COMMON_THRESHOLD,
-  menuDelayMs: 300,
+  menuDelayMs: 0,
   enableChaining: true,
   debug: false,
 };

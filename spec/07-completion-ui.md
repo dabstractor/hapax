@@ -90,25 +90,27 @@ Four interacting rules, implemented in the provider:
    against this live result — **never gated by the debounce**. (Known minor:
    tab may insert a top item before the popup painted it; accepted, see 01.)
    Tab resolves to a completion, never to a menu-open action.
-2. **Display debounce: 100 ms — and a hesitation gate on first
-   appearance (`menuDelayMs`, default 300 ms — measured at the word
-   boundary, the longest natural inter-key gap: 150–250 ms at 100+ WPM,
-   which is why 150 suppressed almost nothing in real rhythm).**
-   Suggestions are
+2. **Display debounce: 100 ms — and an OPTIONAL hesitation gate on
+   first appearance (`menuDelayMs`, **default 0 = OFF**).** Suggestions
+   are
    *returned* to pi immediately from the live query, but:
-   - First appearance: while the menu is CLOSED, a word-completion
-     paints only when the keystroke that triggered the query arrived
-     ≥ `menuDelayMs` after the PREVIOUS keystroke — typing full speed
-     (gaps under the threshold) never pops the menu; hesitating
-     mid-sentence does. Keystroke times come from the editor proxy's
-     input clock (07's Enter wrapper ticks once per real input event —
-     the ONLY seam that sees every keystroke: a closed menu yields one
-     getSuggestions call per WORD, and word-start-to-word-start gaps
-     are a whole word apart, so inter-QUERY timing can never suppress
-     flow typing — the first cut shipped with exactly that bug and was
-     live-verified broken, then live-verified fixed). Without an editor
-     factory (stock editor) the gate degrades to query-gap timing and
-     rarely suppresses — documented limitation. Explicit intent —
+   - First appearance: with `menuDelayMs: 0` (default) the menu paints
+     immediately at the word-start query — the auto-open behavior. A
+     non-zero value arms a hesitation gate: while the menu is CLOSED,
+     a word-completion paints only when the keystroke that triggered
+     the query arrived ≥ `menuDelayMs` after the PREVIOUS keystroke
+     (typing with gaps under the threshold never pops the menu).
+     CALIBRATION HISTORY (binding): the gate was built to stop
+     constant popping that was actually caused by stuck chain offers
+     and relief-word clutter (both since fixed). Thresholds 150 ms
+     (still popped) and 300 ms (never popped) both failed against
+     real typing — the owner's word-boundary gaps straddle any fixed
+     value, and because a word's first-letter query is its ONLY one
+     (pi-tui asks once per word), suppression is permanent per word.
+     Default is therefore OFF; the knob stays for owners with a
+     measured pause length. Keystroke times come from the editor
+     proxy's input clock; without an editor factory the gate degrades
+     to query-gap timing (rarely suppresses). Explicit intent —
      trigger-char results and armed-chain successors — bypasses the
      gate and shows immediately. Forced (Tab) requests are unaffected
      (rule 0/1.5). `menuDelayMs: 0` restores the pre-2026-09 immediate
