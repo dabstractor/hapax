@@ -528,6 +528,31 @@ export function createHapaxProvider(
         }
         } // end still-armed (one-shot check passed)
       }
+
+      // 1.8 CLOSE-ON-SPACE (2026-09, "stuck file menu" fix): a non-forced
+      // query at a plain trailing space — no '@', no '/', menu not in a
+      // stock context — must CLOSE the menu (return null), never
+      // delegate. Rationale: pi's stock provider treats text ending in a
+      // space as the start of a file-completion context
+      // (extractPathPrefix returns "" → the ENTIRE cwd listing), which in
+      // stock pi is only reachable through deliberate flows (Tab-forced
+      // file menu, '@' attachments). With hapax menus opening during
+      // prose typing, the space after a word delegated straight into that
+      // rule and REPLACED our menu with pi's file listing. Forced (Tab)
+      // requests keep native delegation; '@'/'/'-bearing text keeps stock
+      // path/mention behavior; the armed chain's zero-char offer (handled
+      // above, before this guard) is untouched.
+      const beforeText = lines[cursorLine]?.slice(0, cursorCol) ?? "";
+      if (
+        options.force !== true &&
+        /\s$/.test(beforeText) &&
+        !beforeText.includes("@") &&
+        !beforeText.includes("/")
+      ) {
+        lastLive = null;
+        liveKeyByValue.clear();
+        return null;
+      }
       // 2. No hapax match state (S1 null) → pi's completion stays in charge.
       // AUTO-OPEN (PRD §07 live-editor reality): pi-tui's handleChar fires
       // getSuggestions for plain letters ONLY at a word start (the

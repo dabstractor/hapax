@@ -268,12 +268,13 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
 
     const options = opts();
     const lines = ["Acme "];
-    // Zero-typed-char word start — the exact query the armed branch
-    // would answer with successors. Gated → falls through to pi.
+    // Zero-typed-char word start with a trailing space — 2026-09
+    // close-on-space rule: return null WITHOUT delegating (pi's stock
+    // provider answers a trailing space with the whole-cwd file
+    // listing; that delegation stuck a file menu where hapax's menu
+    // closed). The gated chain layer never publishes.
     expect(await provider.getSuggestions(lines, 0, 5, options)).toBeNull();
-    expect(current.getSuggestions).toHaveBeenCalledTimes(1);
-    expect(current.getSuggestions.mock.calls[0]![0]).toBe(lines); // identity
-    expect(current.getSuggestions.mock.calls[0]![3]).toBe(options); // identity
+    expect(current.getSuggestions).not.toHaveBeenCalled();
     // The machine's own state is untouched — never consulted, never
     // disqualified: the branch simply never ran.
     expect(chain.state()).toEqual({ word: "acme" });

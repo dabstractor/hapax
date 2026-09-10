@@ -190,6 +190,17 @@ applies it in the same keypress. Rules:
 - No key handling outside `applyCompletion`/Tab semantics — with the one
   sanctioned exception of the Enter-submits proxy (below), which cancels
   hapax's own menu and alters no text.
+- **Close-on-space (2026-09, "stuck file menu" fix):** a NON-forced
+  query at a plain trailing space — no `@`, no `/` in the text before
+  the cursor — returns null (menu closes) instead of delegating. pi's
+  stock provider treats text-ending-in-space as the start of file
+  completion (`extractPathPrefix` returns `""` → the whole cwd
+  listing); in stock pi that is reachable only through deliberate
+  flows (Tab-forced file menu, `@` attachments), but a hapax menu open
+  at a word delegated straight into it on space and got REPLACED by a
+  file listing nobody asked for. Forced (Tab) requests keep native
+  delegation; `@`/`/`-bearing text keeps stock behavior; the armed
+  chain's zero-char offer (evaluated earlier) is untouched.
 - **Tab never opens the menu.** Menu opening is automatic (typing-driven)
   only: 1st-char word match, 1st char after the trigger char, or the
   zero-char chain offer. There is no manual open gesture; Tab completes,

@@ -74,8 +74,13 @@ import type { RawToken } from "./types.js";
 /** PRD §04 rule 1: base tokens are [A-Za-z][A-Za-z0-9_]* capped at 64. */
 const BASE_RE = /[A-Za-z][A-Za-z0-9_]{0,63}/g;
 
-/** PRD §04 rule 2: 6–40 hex chars, at least one letter a–f, \b-anchored. */
+/** PRD §04 rule 2: 6–40 hex chars, at least one letter a-f, \b-anchored. */
 const HEXISH_RE = /(?=[0-9a-fA-F]*[A-Fa-f])(?:[0-9a-fA-F]{6,40})\b/g;
+
+/** 2026-09 filename rule: word run with ≥1 dotted part whose FINAL part
+ *  is 1–5 letters (AGENTS.md, package.json, file.tar.gz). Version
+ *  numbers and decimals never match (final part must be letters). */
+const FILENAME_RE = /\b[A-Za-z][A-Za-z0-9_]{0,30}(?:\.[A-Za-z0-9_]{1,16}){0,2}\.[A-Za-z]{1,5}\b/g;
 
 /** Hash-shape discriminator for letter-initial tokens both passes matched. */
 const HAS_DIGIT_RE = /[0-9]/;
@@ -255,6 +260,58 @@ export function tokenize(text: string): RawToken[] {
       end: t.end,
       sentenceStart: isSentenceStartBefore(text, t.start),
     });
+  }
+
+  // Pass 3 — dotted filename-shaped tokens (2026-09 rule): a word run
+  // with ONE OR MORE dotted alnum parts whose FINAL part is 1–5 letters
+  // ("AGENTS.md", "package.json", "file.tar.gz"). The '.' is not a word
+  // boundary here — the filename is the completion target ("agent"
+  // should offer "AGENTS.md", not the bare "AGENTS"). Version numbers
+  // ("v1.2.3" — final part numeric) and decimals ("3.14") do NOT match;
+  // they keep the base-pass split. Every base/hexish token fully inside
+  // a filename span is absorbed (dropped) so the filename wins
+  // exclusively — same absorption semantics as the hexish pass.
+  FILENAME_RE.lastIndex = 0;
+  const filenames: Array<{ raw: string; start: number; end: number }> = [];
+  for (let m = FILENAME_RE.exec(text); m !== null; m = FILENAME_RE.exec(text)) {
+    filenames.push({ raw: m[0], start: m.index, end: m.index + m[0].length });
+  }
+  if (filenames.length > 0) {
+    const mk = (fn: { raw: string; start: number; end: number }): RawToken => ({
+      raw: fn.raw,
+      hexish: false,
+      start: fn.start,
+      end: fn.end,
+      sentenceStart: isSentenceStartBefore(text, fn.start),
+    });
+    const kept: RawToken[] = [];
+    let f = 0;
+    let lastEmitted = -1;
+    const emitFn = (idx: number): void => {
+      if (idx !== lastEmitted) {
+        kept.push(mk(filenames[idx]));
+        lastEmitted = idx;
+      }
+    };
+    for (const tok of out) {
+      // filenames entirely before this token (none absorbed it) emit first
+      while (f < filenames.length && filenames[f].end <= tok.start) {
+        emitFn(f);
+        f++;
+      }
+      const fn = filenames[f];
+      if (fn !== undefined && fn.start <= tok.start && tok.end <= fn.end) {
+        emitFn(f); // token absorbed by the filename span
+        continue;
+      }
+      if (fn !== undefined && fn.start < tok.end) {
+        emitFn(f); // overlap safety (\b boundaries make this unreachable)
+        f++;
+      }
+      kept.push(tok);
+    }
+    for (; f < filenames.length; f++) emitFn(f);
+    return kept;
   }
   return out;
 }

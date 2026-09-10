@@ -38,6 +38,14 @@ Rules:
    (`state-of-the-art` segments into three words; multi-word terms are M2
    successor-index territory — chained one word at a time, never a single
    multi-word insertion).
+5. **Dotted filename-shaped tokens stay whole (2026-09 rule).** A word
+   run with one or more dotted alphanumeric parts whose FINAL part is
+   1–5 letters is ONE token: `AGENTS.md`, `package.json`, `file.tar.gz`.
+   The `.` is not a word boundary here — filenames are completion
+   targets as typed ("agent" should offer `AGENTS.md`, not the bare
+   `AGENTS`). Base/hexish tokens inside the span are absorbed. Version
+   numbers (`v1.2.3` — final part numeric) and decimals (`3.14`) do not
+   match and keep the base-pass split.
 
 ### camelCase / snake_case splitting
 

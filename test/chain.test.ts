@@ -809,9 +809,12 @@ describe("replayed-store arming end-to-end (real ingest pipeline, zephyr-chain f
     chain.arm("acme");
     const options = opts();
     const lines = ["Acme "];
+    // 2026-09 close-on-space rule: a plain trailing space returns null
+    // WITHOUT delegating (pi's stock provider answers a trailing space
+    // with the whole-cwd file listing; that delegation stuck a file
+    // menu where hapax's menu closed).
     expect(await provider.getSuggestions(lines, 0, 5, options)).toBeNull();
-    expect(current.getSuggestions).toHaveBeenCalledOnce();
-    expect(current.getSuggestions.mock.calls[0]![3]).toBe(options); // args identity
+    expect(current.getSuggestions).not.toHaveBeenCalled();
     expect(chain.state()).toEqual({ word: "acme" }); // inert, never consulted
   });
 });

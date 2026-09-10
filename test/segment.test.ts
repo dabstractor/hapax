@@ -552,3 +552,34 @@ describe("sentence-start flag + properName suppression (2026-09 rule)", () => {
     expect(subs[1]!.properName).toBe(true); // mid-token camel capital keeps the hint
   });
 });
+
+describe("dotted filename tokens (2026-09 rule)", () => {
+  const rawsOf = (text: string): string[] => tokenize(text).map((t) => t.raw);
+
+  it("'AGENTS.md' is ONE token; the bare 'AGENTS' is absorbed", () => {
+    expect(rawsOf("see AGENTS.md please")).toEqual(["see", "AGENTS.md", "please"]);
+  });
+
+  it("multi-dot extensions and ordinary filenames", () => {
+    expect(rawsOf("package.json file.tar.gz")).toEqual(["package.json", "file.tar.gz"]);
+  });
+
+  it("version numbers and decimals do NOT become filename tokens", () => {
+    expect(rawsOf("v1.2.3 and 3.14")).toEqual(["v1", "and"]); // numeric finals keep the base split
+  });
+
+  it("the filename token carries sentenceStart and properName correctly", () => {
+    const toks = tokenize("done. See AGENTS.md now");
+    const fn = toks.find((t) => t.raw === "AGENTS.md")!;
+    expect(fn.sentenceStart).toBe(false); // preceded by "See " — mid-sentence
+    const [draft] = expandCandidates(fn);
+    expect(draft.key).toBe("agents.md");
+    expect(draft.properName).toBe(true); // 'A' capitalized, not sentence-initial
+
+    const initialToks = tokenize(". AGENTS.md please");
+    const initFn = expandCandidates(
+      initialToks.find((t) => t.raw === "AGENTS.md")!,
+    ).filter((d) => d.key === "agents.md");
+    expect(initFn[0]!.properName).toBe(false); // directly after ". " — orthographic
+  });
+});

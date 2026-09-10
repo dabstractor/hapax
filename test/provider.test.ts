@@ -164,7 +164,7 @@ describe("never-hijack acceptance (PRD §07)", () => {
       expect(result).toBe(PATH_SENTINEL); // identity — pi's result, not a copy
     });
 
-    it("prose 'hello ' after a space (threshold 2) → match state null → delegates, even a null result passes through", async () => {
+    it("prose 'hello ' after a space → CLOSE (2026-09 close-on-space rule), never delegate into pi's file listing", async () => {
       const current = makeCurrent(); // getSuggestions → null
       const { provider } = makeStack(new CandidateStore(), current);
       const lines = ["hello "];
@@ -173,8 +173,12 @@ describe("never-hijack acceptance (PRD §07)", () => {
       expect(extractMatchState(lines, 0, 6, cfg())).toBeNull();
       const result = await provider.getSuggestions(lines, 0, 6, options);
 
-      expectUntouchedArgs(current, lines, 0, 6, options);
-      expect(result).toBeNull(); // current's null returned unchanged
+      // pi's stock provider treats a trailing space as the start of file
+      // completion (extractPathPrefix → "" → the whole cwd listing);
+      // delegating there replaced hapax's closing menu with a stuck file
+      // menu. The rule: plain trailing space (no '@', no '/') closes.
+      expect(result).toBeNull();
+      expect(current.getSuggestions).not.toHaveBeenCalled();
     });
 
     it("quoted path 'read \"src/co' → delegated so pi's path completion keeps working", async () => {
