@@ -169,7 +169,8 @@ describe("BUG-006 — same-call cap drain through the real ingest path", () => {
     });
     // 11,000 single-pair lines — each line is one run, every pair distinct.
     // 'v0ax'/'v0bx' pass the shape gate (4 chars, 4 distinct chars →
-    // entropy 2.0 ≥ 1.5; no runs), unlike 3-char 'v0a' (tooShort).
+    // entropy 2.0 ≥ 1.5; no runs); 3-char 'v0a' would pass length too
+    // since the 2026 floor drop, but this fixture never uses it.
     const text = Array.from(
       { length: 11_000 },
       (_, i) => `v${i}ax v${i}bx`,

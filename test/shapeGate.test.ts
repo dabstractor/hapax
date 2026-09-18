@@ -27,11 +27,17 @@ const draft = (key: string, isSubword = false): CandidateDraft => ({
 });
 
 describe("passesShape — length (PRD §04 h2.23 rule 1)", () => {
-  it("rejects a 3-char whole token as tooShort", () => {
-    expect(passesShape(draft("abc"))).toEqual({ ok: false, reason: "tooShort" });
+  it("rejects a 1-char whole token as tooShort (length precedes entropy)", () => {
+    // H("a") = 0 too, but the floor fires first — precedence pinned.
+    expect(passesShape(draft("a"))).toEqual({ ok: false, reason: "tooShort" });
   });
 
-  it("accepts a 4-char all-distinct whole token (lower bound)", () => {
+  it("accepts a 3-char all-distinct whole token (TUI class — 2026 floor drop)", () => {
+    // H = log2(3) ≈ 1.585 ≥ 1.5; "tui" is the floor drop's motivating case.
+    expect(passesShape(draft("tui"))).toEqual({ ok: true });
+  });
+
+  it("accepts a 4-char all-distinct whole token", () => {
     expect(passesShape(draft("abcd"))).toEqual({ ok: true });
   });
 
@@ -50,8 +56,8 @@ describe("passesShape — length (PRD §04 h2.23 rule 1)", () => {
     expect(passesShape(draft("aghi".repeat(16)))).toEqual({ ok: true });
   });
 
-  it("rejects a 3-char sub-word as tooShort", () => {
-    expect(passesShape(draft("abc", true))).toEqual({
+  it("rejects a 1-char sub-word as tooShort", () => {
+    expect(passesShape(draft("a", true))).toEqual({
       ok: false,
       reason: "tooShort",
     });
@@ -183,10 +189,10 @@ describe("passesShape — reason precedence (first failure wins)", () => {
     });
   });
 
-  it("qqq → tooShort (length precedes everything)", () => {
+  it("qqq → lowEntropy (3-char passes length since the 2026 floor drop)", () => {
     expect(passesShape(draft("qqq"))).toEqual({
       ok: false,
-      reason: "tooShort",
+      reason: "lowEntropy",
     });
   });
 
@@ -313,10 +319,13 @@ describe("secret rules (PRD §04 h2.23 rule 3 / §09 item 5)", () => {
     });
   });
 
-  it("length precedes secret: 3-char 'sk-' is tooShort, 65-char prefixed is tooLong", () => {
+  it("'sk-' (3 chars) rejects as secret since the floor drop; 65-char prefixed is tooLong", () => {
+    // Length still precedes secret — but no secret rule can fire under
+    // 2 chars (shortest prefix is 3), so the boundary case is only the
+    // cap: a secret-shaped draft over MAX_WHOLE_LENGTH is tooLong.
     expect(passesShape(draft("sk-"))).toEqual({
       ok: false,
-      reason: "tooShort",
+      reason: "secret",
     });
     expect(passesShape(draft("sk-" + "a".repeat(62)))).toEqual({
       ok: false,

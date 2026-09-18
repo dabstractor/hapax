@@ -78,8 +78,12 @@ function deepFreeze<T>(value: T): T {
  *  group 1 — the rarest-attested tail — values built from the score.ts
  *  constants so a retune can't silently invert intent:
  *  q ≥ REJECT_COMMON_THRESHOLD → 'reject'; q just under it → group 1
- *  (the old group-2 mid band is unreachable with REJECT=12); null → 0. */
-const COMMON = new Set(["context", "contextlwlock"]);
+ *  (the old group-2 mid band is unreachable with REJECT=12); null → 0.
+ *  "the"/"of" joined COMMON with the 2026 MIN_LENGTH floor drop: they used
+ *  to die at the GATE (tooShort) and the stub never needed to attest
+ *  them; now only the commonness band rejects them, exactly as the
+ *  shipped dictionary does (q=240/230, deep in the reject band). */
+const COMMON = new Set(["context", "contextlwlock", "the", "of"]);
 const MIDFREQ = new Set(["granite", "graniteore"]);
 const stubDict = (): Dictionary => ({
   lookup: (w) =>
@@ -210,10 +214,12 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     );
     await drainNow(h);
     const stats = h.pipeline.getStats();
-    expect(stats.wordsSeen).toBe(4); // lwlock×2, context, granite (gate-passed)
-    expect(stats.admitted).toBe(3); // lwlock×2 + granite ("context" is reject)
+    // 2026 floor drop: "abc" (3 chars, stub-absent) now PASSES the gate
+    // and ADMITS (group 0) — the old tooShort death is gone.
+    expect(stats.wordsSeen).toBe(5); // lwlock×2, abc, context, granite
+    expect(stats.admitted).toBe(4); // lwlock×2 + granite + abc ("context" is the lone admission reject)
     expect(stats.rejectedByGate).toEqual({
-      tooShort: 1, // "abc"
+      tooShort: 0,
       tooLong: 0,
       lowEntropy: 0,
       unigramRun: 0,
@@ -224,7 +230,7 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     expect(h.store.get("lwlock")?.rankGroup).toBe(0); // dictionary-absent
     expect(h.store.get("granite")?.rankGroup).toBe(1); // rarest-attested tail (q = REJECT − 2; the g2 mid band is retired)
     expect(h.store.get("context")).toBeUndefined(); // admission reject
-    expect(h.store.get("abc")).toBeUndefined();
+    expect(h.store.get("abc")?.rankGroup).toBe(0); // stub-absent → admits since the floor drop
     // getStats returns a copy — mutating it must not touch the pipeline.
     stats.rejectedByGate.secret = 99;
     expect(h.pipeline.getStats().rejectedByGate.secret).toBe(1);
@@ -249,11 +255,12 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(userMsg("lwlock deltaWave"));
     h.pipeline.onMessageEnd(assistantMsg([{ type: "text", text: "invert" }]));
-    h.pipeline.onMessageEnd(userMsg("abc")); // nothing admitted anywhere
+    h.pipeline.onMessageEnd(userMsg("context")); // COMMON → admission reject — nothing admitted
     await drainNow(h);
     // Whole tokens only ("delta"/"wave" subwords excluded), doc order,
-    // one call per message. Runs hold ≥ 1 word: "abc" admitted nothing,
-    // so its runs array is empty (the old per-line shape emitted []s).
+    // one call per message. Runs hold ≥ 1 word: "context" admitted nothing
+    // (COMMON reject), so its runs array is empty (the old per-line shape
+    // emitted []s).
     expect(calls).toEqual([[["lwlock", "deltawave"]], [["invert"]], []]);
     // Role plumbing: user → userTyped sticky, assistant → not.
     expect(h.store.get("lwlock")?.userTyped).toBe(true);
@@ -281,8 +288,7 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     // in test/shapeGate.test.ts.
     h.pipeline.onMessageEnd(
       userMsg(
-        "abc " + // 3 chars → tooShort
-          "aabbaabb " + // entropy 1.0 < 1.5 → lowEntropy
+        "aabbaabb " + // entropy 1.0 < 1.5 → lowEntropy
           "rhythmjs " + // 8-consonant run (y is not a vowel) → consonantRun
           "aaaabcdee " + // 4×'a' run, entropy 2.1 → unigramRun
           "noriasTabecidofuabecidofuabecidofuaheki", // 39 alnum chars → masked, zero drafts
@@ -290,7 +296,12 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     );
     await drainNow(h);
     expect(h.pipeline.getStats().rejectedByGate).toEqual({
-      tooShort: 1,
+      // tooShort is pipeline-unreachable since the 2026 floor drop
+      // (MIN_LENGTH=2): tokenize() emits whole tokens ≥ 2 chars, so no
+      // draft can fall under the floor — pinned 0 here, gate-level
+      // coverage lives in test/shapeGate.test.ts (mirrors the tooLong
+      // precedent below).
+      tooShort: 0,
       tooLong: 0, // masked pre-segmentation (BARE_RUN_MIN = 32) — see above
       lowEntropy: 1,
       unigramRun: 1,
@@ -429,7 +440,9 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
   it("digit runs and hexish tokens break the chain ACROSS them", async () => {
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-    // "v2" is gate-rejected (too short) → pure gap text → the run breaks.
+    // "v2" is gate-rejected (low entropy: H("v2") = 1.0 < 1.5 — since the
+    // 2026 floor drop it is length-legal but entropy-killed) → pure gap
+    // text → the run breaks.
     h.pipeline.onMessageEnd(userMsg("lwlock v2 quuxblat"));
     // "0f3a9c2" is hexish and ADMITS (rare) → it sits IN the run — but
     // only consecutive pairs bigram, so lwlock→quuxblat never happens.
@@ -452,8 +465,10 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
   it("a rejected word between two admitted words breaks the run (no stopword bridging)", async () => {
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-    // "of" is gate-rejected (2 chars) — its TEXT stays in the gap and must
-    // break, never bridge: the PRD §06 h3.6 exemplar. Same class: "the".
+    // "of" rejects at ADMISSION (COMMON since the 2026 floor drop — the
+    // shipped dictionary attests it at q=230) — its TEXT stays in the gap
+    // and must break, never bridge: the PRD §06 h3.6 exemplar. Same
+    // class: "the" (q=240).
     h.pipeline.onMessageEnd(userMsg("United States of America"));
     h.pipeline.onMessageEnd(userMsg("lwlock the quuxblat"));
     await drainNow(h);
@@ -475,7 +490,9 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     h.pipeline.onMessageEnd(userMsg("ZorpWibbleEngine, the quuxblat"));
     await drainNow(h);
     // ", " and ", the " both break — under the old per-line shape the
-    // first message's line array produced the bridged bigram.
+    // first message's line array produced the bridged bigram. ("the"
+    // rejects at admission under the COMMON stub, as it does under the
+    // shipped dictionary since the floor drop.)
     expect(calls).toEqual([
       [["zorpwibbleengine"], ["quuxblat"]],
       [["zorpwibbleengine"], ["quuxblat"]],

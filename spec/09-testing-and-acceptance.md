@@ -16,7 +16,9 @@
 **shapeGate.test.ts** (each rule is a case)
 - Accept: `zendesk`, `lwlock`, `NREL`, `f3a9c2e`.
 - Reject: `aaaaa`, `aaaaaaa`, `sk-abc123DEF456...`, `ghp_...`, `eyJhbG...`,
-  20+ pure hex, `qqqxxxzzzvvv` (consonant run), `ab` (too short), 65+ chars,
+  20+ pure hex, `qqqxxxzzzvvv` (consonant run), `ab` (low entropy — since
+  the 2026 floor drop it is length-legal; every 2-char key dies at
+  entropy, max H = 1.0), single chars (too short), 65+ chars,
   base64 ≥ 24 mixed.
 
 **score.test.ts**

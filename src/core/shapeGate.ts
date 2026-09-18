@@ -7,8 +7,12 @@
  * Rules, evaluated in order — first failure wins (the reason precedence
  * contract): length → secret → lowEntropy → unigramRun → consonantRun.
  *
- *  1. Length on draft.key: whole tokens 4–64, sub-words 4–32
- *     (`tooShort` / `tooLong`).
+ *  1. Length on draft.key: whole tokens 2–64, sub-words 2–32
+ *     (`tooShort` / `tooLong`). Floor dropped 4 → 2 (2026): short
+ *     dictionary-absent acronyms (TUI, API, CLI) are hapax's core class,
+ *     and common short English (the, and, for) is owned downstream by
+ *     score.ts's commonness rejection — the floor is shape noise
+ *     control, never the stopword filter.
  *  2. Secret (`secret`, PRD §04 h2.23 rule 3; security acceptance §09
  *     integration item 5): pasted API keys must never surface as
  *     suggestions, so this rule is always-on with no config escape hatch
@@ -50,8 +54,15 @@
 import type { CandidateDraft } from "./segment.js";
 import type { GateResult } from "./types.js";
 
-/** Admission minimum on draft.key (whole and sub-word alike). */
-const MIN_LENGTH = 4;
+/** Admission minimum on draft.key (whole and sub-word alike). 2 since
+ *  the 2026 floor drop (was 4): short dictionary-absent acronyms (TUI,
+ *  API, CLI) are hapax's core class, and common short English is
+ *  already rejected by the commonness band in score.ts — the floor was
+ *  never the stopword defense. tokenize() emits whole tokens ≥ 2 chars,
+ *  so the whole-token tooShort branch is defense-in-depth; the entropy
+ *  rule independently rejects every 2-char key (max H = 1.0 < 1.5),
+ *  making 3 the EFFECTIVE floor for all-distinct keys. */
+const MIN_LENGTH = 2;
 /** Whole-token cap. tokenize()'s base regex caps at 64, but the gate
  *  re-enforces the bound so it holds regardless of upstream. */
 const MAX_WHOLE_LENGTH = 64;

@@ -109,8 +109,10 @@ completion (`roun` → `Rounding` from `fixRoundingError`).
 
 Applied to **every** segmented candidate before dictionary lookup. Rejects:
 
-1. **Too short/long:** whole-token candidates must be 4–64 chars; sub-words
-   4–32.
+1. **Too short/long:** whole-token candidates must be 2–64 chars; sub-words
+   2–32. (Floor dropped 4 → 2, 2026: short dictionary-absent acronyms —
+   API, CLI — are hapax's core class; common short English is rejected
+   downstream by the commonness band, not by length.)
 2. **Low entropy:** character-entropy < 1.5 bits/char (kills `aaaaa`,
    `aaaaaaaargh`-ish repetition), or unigram-run of any single char ≥ 4.
 3. **Secret-shaped strings** (always reject, not configurable):

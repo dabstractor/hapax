@@ -197,8 +197,9 @@ describe("Probe A — realistic secrets never become candidates (BUG-003)", () =
     // the masking-surgical control needs an admitted prose word, so the
     // repro corpus carries "turbinez" (dictionary-absent). "secret"
     // (q=108), "slack" (q=51), and now "turbine" are all admission
-    // deaths; "aws" is gate-tooShort — unmasked gate deaths, never
-    // masking damage (shipped-dict facts per test/mask-secrets.test.ts).
+    // deaths; "aws" (absent, 3 chars) ADMITS since the 2026 MIN_LENGTH
+    // floor drop — unmasked gate passes, never masking damage
+    // (shipped-dict facts per test/mask-secrets.test.ts).
     expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbinez");
   });
 });
