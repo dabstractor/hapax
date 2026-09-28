@@ -18,12 +18,15 @@
  *     suggestions, so this rule is always-on with no config escape hatch
  *     (PRD §08). Evaluated on draft.display (raw casing) by
  *     isSecretShaped: known key prefixes (case-insensitive), '@' plus
- *     '.', digit+symbol ratio > 0.4 at length ≥ 16, base64-shaped runs
- *     ≥ 24 (mixed case + digit + '+'/'/'), pure-hex length ≥ 20, plus the
- *     BUG-003 residue rules: base64url runs ≥ 16 (mixed case + ≥ 2 digits,
- *     no '+'/'/' required) and charset-relative entropy floors (base64-
- *     charset runs ≥ 16 at ≥ 4.5 bits/char; whole-display hex ≥ 16 at
- *     ≥ 3.0).
+ *     '.', base64-shaped runs ≥ 24 (mixed case + digit + '+'/'/'),
+ *     whole-candidate pure-hex length ≥ 20 and pure-decimal ≥ 16
+ *     (private-key / card-shaped), plus the BUG-003 residue rules:
+ *     base64url runs ≥ 16 (mixed case + ≥ 2 digits, no '+'/'/'
+ *     required) and charset-relative entropy floors (base64-charset
+ *     runs ≥ 16 at ≥ 4.5 bits/char; whole-display hex ≥ 16 at ≥ 3.0).
+ *     The flat digit+symbol-ratio heuristic (> 0.4 at ≥ 16) was retired
+ *     2026-10 — it rejected the technical-literal class (IP:port, ISO
+ *     timestamps) hapax exists to complete.
  *  3. Entropy (`lowEntropy`): Shannon entropy of draft.key's character
  *     distribution < 1.5 bits/char. Computed over the lowercase key, never
  *     the display (PRD gotcha: casing would change the distribution).
@@ -110,11 +113,12 @@ const SECRET_PREFIXES: readonly string[] = [
   // mask-secrets identity + prose-replay suites pin this).
   "npm_",
 ];
-/** Digit+symbol ratio rule applies only from this length up (rule 3,
- *  second bullet). */
-const SECRET_RATIO_MIN_LENGTH = 16;
-/** Reject above this fraction of digit+symbol characters (strictly >). */
-const SECRET_MAX_NOISY_RATIO = 0.4;
+/** Whole-candidate pure-decimal floor (2026-10): 16+ digits with no
+ *  letters/symbols is card/account-number-shaped (PANs are 15–16
+ *  digits; IMEIs 15) and never a typing target — replaces the retired
+ *  digit+symbol ratio heuristic, which rejected legitimate technical
+ *  literals like `192.168.1.1:8080` (owner call, 2026-10). */
+const MIN_PURE_DECIMAL_LENGTH = 16;
 /** Base64-run rule: minimum contiguous base64-alphabet characters. */
 const MIN_BASE64_RUN = 24;
 /** Pure-hex rule: whole-candidate hex rejects at this length and above.
@@ -123,6 +127,8 @@ const MIN_PURE_HEX_LENGTH = 20;
 /** Whole-candidate hex alphabet, tested against the lowercased display
  *  (so a–f covers A–F too). No /g flag — no lastIndex state. */
 const PURE_HEX_RE = /^[0-9a-f]+$/;
+/** Whole-candidate decimal alphabet for the card-shape rule. */
+const PURE_DECIMAL_RE = /^[0-9]+$/;
 
 /** BUG-003 residue rule 6: minimum contiguous base64url-alphabet run
  *  ([A-Za-z0-9_-]; NO '+'/'/' requirement — base64url payloads never
@@ -166,7 +172,17 @@ export function passesShape(draft: CandidateDraft): GateResult {
   // Secret check sits between length and entropy so the precedence
   // contract (length → secret → entropy → …) holds.
   if (isSecretShaped(draft.display)) return { ok: false, reason: "secret" };
-  if (charEntropy(key) < MIN_ENTROPY_BITS) {
+  // Letter-free keys skip the entropy floor (2026-10 rule-4c interplay):
+  // the only letter-free candidates segmentation admits are technical
+  // literals (pure digit runs like "8080", digit+symbol codes like
+  // "10.0.0.1"), where sub-1.5-bit entropy is ordinary — two-char
+  // alternation ("8080" = 1.0 bits) is exactly a real port/code shape,
+  // not noise. The unigram-run rule below still rejects true repetition
+  // ("1111", "0000"), and every letter-bearing key keeps the floor
+  // unchanged ("aaaaa" stays dead). Pure-digit strings max out at
+  // log2(10) ≈ 3.3 bits/char, so the exemption cannot mint high-entropy
+  // secrets either — the secret rules above and maskSecrets own those.
+  if (/[a-z]/.test(key) && charEntropy(key) < MIN_ENTROPY_BITS) {
     return { ok: false, reason: "lowEntropy" };
   }
   if (hasUnigramRun(key, UNIGRAM_RUN_MIN)) {
@@ -180,22 +196,24 @@ export function passesShape(draft: CandidateDraft): GateResult {
 
 /**
  * True when the raw candidate text is secret-shaped (PRD §04 h2.23 rule 3;
- * security acceptance §09 integration item 5). Seven always-on sub-rules,
- * any one of which rejects — evaluated in this order:
+ * security acceptance §09 integration item 5). Six always-on sub-rules
+ * (the seven-rule list lost its digit+symbol-ratio member to the 2026-10
+ * retirement — see the RETIRED note inside), any one of which rejects —
+ * evaluated in this order:
  *
  *  1. Known key prefixes, case-insensitive on the lowercased display.
  *  2. '@' plus '.' — email belt-and-braces (segmentation excludes emails
  *     anyway; this only fires on unusually constructed drafts).
- *  3. Digit+symbol ratio > 0.4 for length ≥ 16 (underscore counts as a
- *     symbol; raw is lowercased so every non-a–z char is digit/symbol).
- *  4. Base64-shaped run ≥ 24 mixing case, digits, and at least one of
+ *  3. Base64-shaped run ≥ 24 mixing case, digits, and at least one of
  *     '+'/'/' (hasBase64SecretRun — needs ORIGINAL casing, hence display).
- *  5. Whole-candidate pure hex length ≥ 20 (private-key-shaped). Hexish
- *     6–12 stays admitted: per PRD only the dictionary/admission stage
- *     may demote those, never the gate.
- *  6. BUG-003 residue: base64url run ≥ 16 (BASE64URL_RUN_MIN) from
+ *  4. Long-number shapes: whole-candidate pure hex length ≥ 20
+ *     (private-key-shaped; hexish 6–12 stays admitted — per PRD only the
+ *     dictionary/admission stage may demote those, never the gate) and
+ *     pure decimal ≥ 16 (card/account-shaped — the 2026-10 replacement
+ *     for the retired ratio rule's numeric-soup coverage).
+ *  5. BUG-003 residue: base64url run ≥ 16 (BASE64URL_RUN_MIN) from
  *     [A-Za-z0-9_-] — NO '+'/'/' requirement, because base64url payloads
- *     never contain them and rule 4 therefore missed the leak — carrying
+ *     never contain them and rule 3 therefore missed the leak — carrying
  *     ≥ 1 lowercase, ≥ 1 uppercase, AND ≥ 2 digits (hasBase64UrlSecretRun).
  *     The ≥2-digit and ≥1-lowercase guards are load-bearing: camelCase
  *     identifiers ("fixRoundingError": zero digits) and SCREAMING_CASE
@@ -213,7 +231,7 @@ export function passesShape(draft: CandidateDraft): GateResult {
  * format-blind residue layer for fragments that reach the gate anyway.
  * Documented NON-goal: mixed-case no-digit fragments like "wJalrXUtnFEMI"
  * / "bPxRfiCYEXAMPLEKEY" (AWS-secret-shaped 13/18-char pieces) stay
- * gate-admitted on purpose — rules 6/7 require digits, and weakening that
+ * gate-admitted on purpose — rules 5/6 require digits, and weakening that
  * to catch them would false-positive camelCase identifiers wholesale;
  * maskSecrets' AWS catch-all owns them when the full key is present. The
  * same layering admits Slack-style lowercase tails ("abcdefghijklmnopqrstu
@@ -223,7 +241,7 @@ export function passesShape(draft: CandidateDraft): GateResult {
  * Probe C additions (P1.M2.T2.S3, BUG-003 PRD h3.2 battery): rule 1's
  * 'npm_' entry and maskSecrets' glpat- window exist only because the
  * battery proved them leaking — the whole `npm_<payload>` token (zero
- * digits → rules 6/7 never fire) and the bare 'npm_' remainder left after
+ * digits → rules 5/6 never fire) and the bare 'npm_' remainder left after
  * layer-1 payload masking were stored/ranked pre-fix, as were 'glpat'
  * (tokenization splits the hyphen format) and its payload's sub-words.
  * Documented residual: a <32-char vowel-bearing mixed-case no-digit
@@ -246,26 +264,30 @@ function isSecretShaped(display: string): boolean {
   // 2. '@' plus '.'
   if (raw.includes("@") && raw.includes(".")) return true;
 
-  // 3. Digit+symbol ratio (strictly > 0.4).
-  if (raw.length >= SECRET_RATIO_MIN_LENGTH) {
-    let noisy = 0;
-    for (let i = 0; i < raw.length; i++) {
-      const ch = raw.charAt(i);
-      if (ch < "a" || ch > "z") noisy++; // digits, symbols, anything else
-    }
-    if (noisy / raw.length > SECRET_MAX_NOISY_RATIO) return true;
-  }
+  // RETIRED 2026-10 (owner call): the digit+symbol ratio heuristic
+  // (> 0.4 at length ≥ 16). Written before technical literals existed,
+  // when nothing legitimate was digit-dominant at that length — it
+  // rejected the exact strings hapax exists for (`192.168.1.1:8080`,
+  // ISO timestamps, dotted versions). The numeric-soup tail it
+  // actually owned (undashed card/account numbers) is now covered by
+  // the pure-decimal floor inside the long-number rule below.
 
-  // 4. Base64-shaped run (evaluated on display — mixed case matters).
+  // 3. Base64-shaped run (evaluated on display — mixed case matters).
   if (hasBase64SecretRun(display)) return true;
 
-  // 5. Pure hex ≥ 20.
+  // 4. Long-number shapes: whole-candidate pure hex ≥ 20
+  //    (private-key-shaped; hexish 6–12 stays admitted) and pure
+  //    decimal ≥ 16 (card-shaped, 2026-10 replacement for the retired
+  //    ratio rule).
   if (raw.length >= MIN_PURE_HEX_LENGTH && PURE_HEX_RE.test(raw)) return true;
+  if (raw.length >= MIN_PURE_DECIMAL_LENGTH && PURE_DECIMAL_RE.test(raw)) {
+    return true;
+  }
 
-  // 6. Base64url residue run (BUG-003 — no '+'/'/' requirement).
+  // 5. Base64url residue run (BUG-003 — no '+'/'/' requirement).
   if (hasBase64UrlSecretRun(display)) return true;
 
-  // 7. Charset-relative entropy residue (BUG-003).
+  // 6. Charset-relative entropy residue (BUG-003).
   if (hasHighEntropySecretRun(display)) return true;
 
   return false;

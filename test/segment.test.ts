@@ -60,7 +60,7 @@ describe("tokenize — base tokens (PRD §04 rule 1)", () => {
     expect(raws(tokenize("state-of-the-art"))).toEqual(["state-of-the-art"]);
     expect(raws(tokenize("load-bearing wall"))).toEqual(["load-bearing", "wall"]);
     expect(raws(tokenize("e2e-test ok"))).toEqual(["e2e-test", "ok"]);
-    expect(raws(tokenize("2e-test ok"))).toEqual(["test", "ok"]); // digit-initial runs are never letter-initial compounds
+    expect(raws(tokenize("2e-test ok"))).toEqual(["2e-test", "ok"]); // 2026-10 rule 4c: digit-initial compounds are technical literals
     expect(raws(tokenize("don't"))).toEqual(["don"]); // "t" is length 1 → dropped
   });
 
@@ -108,9 +108,18 @@ describe("tokenize — hexish tokens (PRD §04 rule 2)", () => {
     ]);
   });
 
-  it("does not capture hex runs without letters", () => {
-    expect(tokenize("123456")).toEqual([]);
-    expect(tokenize("1234567890".repeat(5))).toEqual([]); // 50 digits
+  it("captures digit runs as literals, never as hexish (2026-10 rule 4c)", () => {
+    // Pure digits never hexish (no letters); ≥4-digit runs are now
+    // technical-literal tokens per the owner's "numbers over 3 digits"
+    // rule, opaque like hexish.
+    expect(strip(tokenize("123456"))).toEqual([{ raw: "123456", hexish: false }]);
+    // 50 digits: literal cap is 64, so the whole run is one literal
+    // token (the shape gate's ≥20-pure-hex rejection still owns it).
+    expect(strip(tokenize("1234567890".repeat(5)))).toEqual([
+      { raw: "1234567890".repeat(5), hexish: false },
+    ]);
+    // 3 digits stay out ("over 3 digits" floor).
+    expect(tokenize("123")).toEqual([]);
   });
 
   it("does not capture hexish from 41+ char all-letter runs", () => {
@@ -130,10 +139,12 @@ describe("tokenize — hexish tokens (PRD §04 rule 2)", () => {
     // \b + {6,40} take the run's LAST 40 chars when it exceeds 40 (digit-led,
     // so no base capture absorbs it). Bounds stay 6–40; the shape gate's
     // ≥20-pure-hex rejection handles noise downstream (P1.M2.T2).
+    // 2026-10 rule 4c: a 41-char digit-bearing run is ALSO a technical
+    // literal spanning all 41 chars, which absorbs the 40-char hexish
+    // match — same raw minus the first char, and the literal is the
+    // user-visible completion target (typed-shape unit).
     const run = "1a".repeat(20) + "1"; // 41 chars, digit-led
-    expect(strip(tokenize(`x ${run} y`))).toEqual([
-      { raw: run.slice(1), hexish: true }, // last 40 chars
-    ]);
+    expect(raws(tokenize(`x ${run} y`))).toEqual([run]); // whole run, literal
   });
 
   it("does not treat a 5-char hex-letter string as hexish (too short)", () => {
@@ -234,7 +245,7 @@ describe("tokenize — ordering and bounds invariants", () => {
       "f3a9c2e",
       "0f3a9c2",
       "abcdef",
-      "123456", // → nothing
+      "123456", // → literal (2026-10 rule 4c: ≥4-digit run)
       "前回の", // → nothing
       "session_token", // one token; splitting is S2's job
       "don't",
@@ -248,6 +259,7 @@ describe("tokenize — ordering and bounds invariants", () => {
       { raw: "f3a9c2e", hexish: true },
       { raw: "0f3a9c2", hexish: true },
       { raw: "abcdef", hexish: false },
+      { raw: "123456", hexish: false }, // pure-digit literal (rule 4c)
       { raw: "session_token", hexish: false },
       { raw: "don", hexish: false },
       { raw: longId, hexish: false },
@@ -579,8 +591,8 @@ describe("dotted filename tokens (2026-09 rule)", () => {
     expect(rawsOf("package.json file.tar.gz")).toEqual(["package.json", "file.tar.gz"]);
   });
 
-  it("version numbers and decimals do NOT become filename tokens", () => {
-    expect(rawsOf("v1.2.3 and 3.14")).toEqual(["v1", "and"]); // numeric finals keep the base split
+  it("version numbers and decimals ARE literal tokens (2026-10 rule 4c; were deliberately split by the filename rule)", () => {
+    expect(rawsOf("v1.2.3 and 3.14")).toEqual(["v1.2.3", "and", "3.14"]);
   });
 
   it("the filename token carries sentenceStart and properName correctly", () => {
@@ -596,5 +608,96 @@ describe("dotted filename tokens (2026-09 rule)", () => {
       initialToks.find((t) => t.raw === "AGENTS.md")!,
     ).filter((d) => d.key === "agents.md");
     expect(initFn[0]!.properName).toBe(false); // directly after ". " — orthographic
+  });
+});
+
+describe("technical literals (2026-10 rule 4c)", () => {
+  const raws = (text: string): string[] => tokenize(text).map((t) => t.raw);
+  const lit = (text: string): RawToken | undefined =>
+    tokenize(text).find((t) => t.literal === true);
+
+  it("the motivating case: '2560x1440@2' is ONE whole token, parts absorbed", () => {
+    // Owner report (2026-10): LLM output "…drop the virtual mode to
+    // 2560x1440@2." must Tab-complete whole. Pre-rule, the string
+    // fragmented to the base tail "x1440" only (digit-initial prefix
+    // and '@2' suffix lost). '@' is a single interior join symbol; the
+    // trailing sentence period is trimmed.
+    expect(raws("drop the virtual mode to 2560x1440@2.")).toContain(
+      "2560x1440@2",
+    );
+    expect(raws("drop the virtual mode to 2560x1440@2.")).not.toContain(
+      "x1440",
+    );
+    const t = lit("2560x1440@2");
+    expect(t).toMatchObject({ raw: "2560x1440@2", hexish: false });
+    // span points at the trimmed token (excludes the sentence period)
+    expect("2560x1440@2 to 2560x1440@2.".slice(t!.start, t!.end)).toBe(
+      "2560x1440@2",
+    );
+  });
+
+  it("pure digit runs ≥ 4 are literals; shorter ones stay out", () => {
+    expect(raws("port 8080")).toEqual(["port", "8080"]);
+    expect(raws("8080 1440 2026")).toEqual(["8080", "1440", "2026"]);
+    expect(raws("123 abc 45 7")).toEqual(["abc"]); // < 4 digits: nothing
+  });
+
+  it("digit-bearing dotted/joined strings: versions, IPs, decimals, dates", () => {
+    expect(raws("v1.2.3")).toEqual(["v1.2.3"]); // was base-split "v1"
+    expect(raws("see 192.168.1.1")).toEqual(["see", "192.168.1.1"]);
+    expect(raws("pi is 3.14 ok")).toEqual(["pi", "is", "3.14", "ok"]);
+    expect(raws("on 2026-09-15 then")).toEqual(["on", "2026-09-15", "then"]);
+    expect(raws("~2.1.0")).toEqual(["2.1.0"]); // leading '~' trimmed
+    expect(raws("4:36")).toEqual(["4:36"]);
+  });
+
+  it("digit-initial hyphen compounds are literals (2e-test)", () => {
+    expect(raws("2e-test ok")).toEqual(["2e-test", "ok"]);
+  });
+
+  it("mixed-class guard: digit-FREE letter+symbol runs stay with 4a/4b", () => {
+    // C++ / and/or are not literals (no digit); e.g. keeps the filename
+    // pass's "e.g"; don't keeps the apostrophe split.
+    expect(raws("C++ and/or")).toEqual(["and", "or"]);
+    expect(raws("see e.g. this")).toEqual(["see", "e.g", "this"]);
+    expect(raws("don't")).toEqual(["don"]);
+  });
+
+  it("symbol hygiene: no adjacent symbols, no prose punctuation glue", () => {
+    expect(raws("see http://x.com/a now")).toEqual([
+      "see",
+      "http",
+      "x.com",
+      "now",
+    ]); // '//' kills the URL run — today's behavior
+    expect(raws("fox. And tail,")).toEqual(["fox", "And", "tail"]); // sentence-final '.' never glues
+    expect(raws("a..b2")).toEqual(["b2"]); // adjacent dots kill the literal; the base tail "b2" keeps today's behavior
+    expect(raws("--mode=2")).toEqual(["mode=2"]); // leading '--' trimmed
+  });
+
+  it("literals are OPAQUE: no subword splitting; equal-span tokens keep their class", () => {
+    expect(
+      expandCandidates(lit("2560x1440@2")!).map((d) => d.key),
+    ).toEqual(["2560x1440@2"]);
+    expect(tokenize("utf8Reader")).toHaveLength(1); // equal-span BASE wins → subwords intact
+    expect(
+      expandCandidates(tokenize("utf8Reader")[0]!).map((d) => d.key),
+    ).toEqual(["utf8reader", "utf8", "reader"]);
+    expect(
+      expandCandidates(tokenize("2ndReader")[0]!).map((d) => d.key),
+    ).toEqual(["2ndreader"]); // digit-initial: literal, whole-only (net-new)
+  });
+
+  it("CJK adjacency rule applies to literals (rule 3)", () => {
+    expect(raws("草2560x1440@2 tail")).toEqual(["x1440", "tail"]);
+    // The literal run "2560x1440@2" abuts 草 → disqualified whole; the
+    // base tail "x1440" (not adjacent to the CJK char) keeps its
+    // pre-rule behavior.
+  });
+
+  it("hexish precedence: equal-span hex tokens stay hexish", () => {
+    const t = tokenize("0f3a9c2")[0]!;
+    expect(t).toMatchObject({ raw: "0f3a9c2", hexish: true });
+    expect(t.literal).toBeFalsy();
   });
 });

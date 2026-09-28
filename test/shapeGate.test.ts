@@ -230,13 +230,24 @@ describe("secret rules (PRD §04 h2.23 rule 3 / §09 item 5)", () => {
     }
   });
 
-  it("rejects digit+symbol ratio > 0.4 at length ≥ 16 (no prefix involved)", () => {
-    // 20 chars: 9 digits + 1 '_' = 10/20 = 0.5 > 0.4. Prefix-free and
-    // entropy-clean (20 distinct chars) so the ratio rule is what fires.
-    expect(passesShape(draft("ab12cd34ef56gh78ij9_"))).toEqual({
+  it("digit+symbol ratio rule RETIRED (2026-10): IP:port passes; card-shaped pure decimals still reject", () => {
+    // Owner call 2026-10: the flat "> 0.4 digit+symbol at ≥ 16" heuristic
+    // predated technical literals and rejected exactly the class hapax
+    // exists for. It is deleted; its numeric-soup coverage moved to the
+    // pure-decimal floor (≥ 16 digits, no letters/symbols — PAN shape).
+    expect(passesShape(draft("192.168.1.1:8080"))).toEqual({ ok: true });
+    expect(passesShape(draft("2026-09-15T10:30:00Z"))).toEqual({ ok: true });
+    expect(passesShape(draft("5105105105210510"))).toEqual({
+      // 16 digits, no separators — card-shaped; the replacement rule fires
       ok: false,
       reason: "secret",
     });
+    expect(passesShape(draft("123456789012345"))).toEqual({ ok: true }); // 15 digits: IMEI/epoch scale, under the floor
+    // The old rule's own exemplar (lowercase alnum+underscore, 20 chars,
+    // ratio 0.5) now sails through — accepted residue: all-lowercase
+    // non-hex random alnum is prose-guarded, and maskSecrets owns real
+    // key formats.
+    expect(passesShape(draft("ab12cd34ef56gh78ij9_"))).toEqual({ ok: true });
   });
 
   it("ratio exactly 0.4 does not fire (reject is strictly > 0.4)", () => {
@@ -469,3 +480,40 @@ describe(
     });
   }
 );
+describe("technical-literal interplay (2026-10 rule 4c)", () => {
+  const draft = (key: string): CandidateDraft => ({
+    key,
+    display: key,
+    properName: false,
+    isSubword: false,
+  });
+
+  it("letter-free keys skip the entropy floor: repeating digit codes pass", () => {
+    // "8080" = 1.0 bits/char — a real port shape, not noise.
+    expect(passesShape(draft("8080"))).toEqual({ ok: true });
+    expect(passesShape(draft("10.0.0.1"))).toEqual({ ok: true });
+    expect(passesShape(draft("12:34"))).toEqual({ ok: true });
+  });
+
+  it("unigram-run still rejects pure repetition in digit codes", () => {
+    expect(passesShape(draft("1111"))).toEqual({ ok: false, reason: "unigramRun" });
+    expect(passesShape(draft("0000"))).toEqual({ ok: false, reason: "unigramRun" });
+  });
+
+  it("letter-bearing keys keep the entropy floor unchanged", () => {
+    expect(passesShape(draft("aaaaa"))).toEqual({ ok: false, reason: "lowEntropy" });
+  });
+
+  it("digit-bearing email-shaped literals reject as secrets (unchanged)", () => {
+    // The literal pass segments "user2@host.com" whole; the gate's
+    // '@' + '.' rule still owns it.
+    expect(passesShape(draft("user2@host.com"))).toEqual({ ok: false, reason: "secret" });
+  });
+
+  it("the motivating literal passes the gate", () => {
+    expect(passesShape(draft("2560x1440@2"))).toEqual({ ok: true });
+    expect(passesShape(draft("v1.2.3"))).toEqual({ ok: true });
+    expect(passesShape(draft("192.168.1.1"))).toEqual({ ok: true });
+    expect(passesShape(draft("4:36"))).toEqual({ ok: true });
+  });
+});

@@ -11,12 +11,15 @@ Two independent scores, deliberately conflated nowhere:
 
 ### What counts as a word
 
-Run a single regex pass over input text:
+Regex passes over input text (base + hexish, then the compound/literal
+sweep of rules 4a–4c below):
 
 ```
 /[A-Za-z][A-Za-z0-9_]{0,63}/g          → identifiers/words
 plus a second scan for hexish tokens:
 /(?=[0-9a-fA-F]*[A-Fa-f])(?:[0-9a-fA-F]{6,40})\b/g  → letter-containing hex
+plus the 4c literal scan (trim/composition rules below):
+/[A-Za-z0-9._@:+/~=-]{4,80}/g          → technical literals (digit-bearing)
 ```
 
 Rules:
@@ -54,12 +57,58 @@ Rules:
        target; the parts are absorbed (never separate candidates),
        exactly like the filename pass. Leading, doubled, or trailing
        hyphens never form tokens — CLI `--flag` and `-v` are not
-       candidates (and digit-initial runs like `2e-test` stay
-       letter-initial-only). Admission falls out naturally: compound
-       keys are dictionary-absent → group 0, the identifier class.
+       candidates (and digit-initial runs like `2e-test` are owned by
+       4c). Admission falls out naturally: compound keys are
+       dictionary-absent → group 0, the identifier class.
        Rules 4a/4b are one family: COMPOUND TOKENS — typed-shape units
        (`.`-joined or `-`-joined) that complete whole, with contained
        base tokens absorbed by a shared sweep.
+       Known gap (accepted): the compound sweep predates rule 3's
+       Unicode-letter adjacency guard and never gained it — a non-ASCII
+       letter adjacent to a compound span does not disqualify it
+       (`草AGENTS.md` yields `AGENTS.md`), unlike the base, hexish, and
+       literal passes, which all guard.
+   4c. **Technical literals stay whole (2026-10 owner rule — digit-bearing
+       mixed strings and long numbers are completion targets).** A
+       maximal run of `[A-Za-z0-9]` joined by SINGLE INTERIOR symbols
+       from `._@:+/~=-` qualifies as ONE literal token when, after
+       trimming leading/trailing symbols, it is 4–64 chars, has no two
+       adjacent symbols, and CONTAINS A DIGIT plus a letter or symbol —
+       or is pure digits of length ≥ 4: `2560x1440@2`, `v1.2.3`,
+       `192.168.1.1`, `3.14`, `8080`, `2026-09-15`, `4:36`, `2e-test`,
+       `mode=2`. Motivation (owner, 2026-10): hapax exists to type
+       strange identifiers, codes, and ARGUMENTS — LLM output like
+       "drop the virtual mode to 2560x1440@2" must complete whole;
+       pre-rule it fragmented to the base tail `x1440` only. Guards
+       (each is load-bearing against a prose-noise class):
+       - **Digit-bearing requirement.** Digit-FREE letter+symbol strings
+         (`C++`, `and/or`, `e.g.`) do NOT qualify — that class stays
+         with 4a/4b, where prose-shaped noise is already curated. The
+         owner's phrase was "any two of numbers, symbols or letters";
+         digit-free joins are the deliberately dropped corner.
+       - **Single interior symbols, edges trimmed.** `..`, `//`, `::`
+         reject (URLs die at `://` exactly as before); trailing
+         sentence periods never glue (`fox.` stays `fox`); leading
+         `--`/`~` trim (`--mode=2` → `mode=2`, `~2.1.0` → `2.1.0`).
+       - **Length floor 4** mirrors "numbers over 3 digits": `123` and
+         two-char codes (`4K`) stay out.
+       - **Strictly additive.** A literal with EXACTLY the span of a
+         kept base/hexish/compound token defers to that token
+         (`utf8Reader` keeps camelCase subword splitting; `0f3a9c2`
+         stays hexish-flagged); literals absorb only strictly-contained
+         tokens (`2560x1440@2` absorbs its `x1440` tail). Rule 3
+         (Unicode-letter adjacency) applies to literals like every
+         pass. Literals are OPAQUE to subword splitting — codes
+         complete whole as typed.
+
+       Shape-gate interplay: letter-free keys (pure digits,
+         digit+symbol codes) skip the character-entropy floor —
+         `8080` (1.0 bits/char) is a real port shape and unigram-run
+         still rejects `1111`. The secret rules apply unchanged
+         (`user2@host.com` rejects `@`+`.`; pure-hex ≥ 20 and pure
+         decimal ≥ 16 reject) — `192.168.1.1:8080` and ISO
+         timestamps pass (the ratio heuristic that killed them is
+         retired, 2026-10).
 
 ### camelCase / snake_case splitting
 
@@ -113,15 +162,33 @@ Applied to **every** segmented candidate before dictionary lookup. Rejects:
    2–32. (Floor dropped 4 → 2, 2026: short dictionary-absent acronyms —
    API, CLI — are hapax's core class; common short English is rejected
    downstream by the commonness band, not by length.)
-2. **Low entropy:** character-entropy < 1.5 bits/char (kills `aaaaa`,
-   `aaaaaaaargh`-ish repetition), or unigram-run of any single char ≥ 4.
+2. **Low entropy:** character-entropy < 1.5 bits/char, for LETTER-BEARING
+   keys only (kills `aaaaa`, `aaaaaaaargh`-ish repetition), or unigram-run
+   of any single char ≥ 4. Letter-free keys — the 2026-10 rule-4c literal
+   class: `8080`, `10.0.0.1` — skip the entropy floor (two-char digit
+   alternation is a real code shape, not noise; `1111` still dies by the
+   unigram run, and pure-digit strings cap at log2(10) ≈ 3.3 bits/char so
+   the exemption cannot mint secrets).
 3. **Secret-shaped strings** (always reject, not configurable):
    - matches known key prefixes: `sk-`, `sk_`, `ghp_`, `gho_`, `github_pat_`,
      `xox[bpars]-`, `AKIA`, `AIza`, `eyJ` (JWT bodies);
-   - digit+symbol character ratio > 0.4 for length ≥ 16;
+   - `@` plus a dot (emails are segmented out anyway; belt and braces);
    - base64-shaped run ≥ 24 chars with mixed case+digits+`+/`;
-   - pure-hex length ≥ 20 (private-key-shaped);
-   - contains `@` plus a dot (emails are segmented out anyway; belt and braces).
+   - whole-candidate pure hex ≥ 20 (private-key-shaped) or pure
+     decimal ≥ 16 (card/account-shaped);
+   - base64url/entropy residue rules (BUG-003; see shapeGate.ts).
+
+   RETIRED 2026-10 (owner): the digit+symbol-ratio heuristic (> 0.4 at
+   length ≥ 16) — written before technical literals existed, it
+   rejected `192.168.1.1:8080`, ISO timestamps, and dotted versions,
+   the exact class hapax exists to complete. Residue accepted:
+   separator-bearing card numbers (`5105-1051-0521-0510`) and
+   all-lowercase non-hex random alnum ≥ 16 pass the token gate;
+   maskSecrets' format rules own real leaked keys, and PAN-shaped
+   pure decimals (≥ 16 digits) still reject via the long-number rule.
+   Binding layering rule: future card/secret SHAPE rejection belongs
+   in maskSecrets (raw layer — it runs before tokenization and covers
+   live and restore paths alike), never in a token-shape rule.
 4. **Pure noise:** consonant run ≥ 6 with no vowel and no digits.
 
 Hexish tokens 6–12 chars (commit-hash-like) **pass** the gate — they are

@@ -90,6 +90,25 @@ const FILENAME_RE = /\b[A-Za-z][A-Za-z0-9_]{0,30}(?:\.[A-Za-z0-9_]{1,16}){0,2}\.
  *  "-v" are not tokens); inner segments may hold digits/underscores. */
 const HYPHEN_RE = /\b[A-Za-z][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)+\b/g;
 
+/** 2026-10 technical-literal rule (rule 4c): maximal runs over the
+ *  literal charset — alphanumerics joined by single INTERIOR symbols
+ *  from LITERAL_SYMBOL_CHARS. Raw pass regex (bounds pre-trim); the
+ *  per-match composition/trim validation lives in classifyLiteral. */
+const LITERAL_RE = /[A-Za-z0-9._@:+/~=-]{4,80}/g;
+
+/** Join symbols for rule 4c technical literals. Curated: sentence/
+ *  prose punctuation (, ; ! ? quotes brackets % & * #) is excluded so
+ *  prose never glues; `#` additionally excluded because it is the
+ *  completion trigger char. Symbols must be SINGLE and INTERIOR
+ *  (alphanumeric on both sides after edge trimming). */
+const LITERAL_SYMBOL_CHARS = new Set("._@:+/~=-");
+
+/** Post-trim length floor for technical literals (2026-10 rule 4c).
+ *  Mirrors the owner's "numbers over 3 digits" floor — pure digit
+ *  runs qualify at ≥ 4 digits, and mixed runs need ≥ 4 chars too, so
+ *  two-char codes ("4K") and three-digit numbers stay out. */
+const LITERAL_MIN_LENGTH = 4;
+
 /** Hash-shape discriminator for letter-initial tokens both passes matched. */
 const HAS_DIGIT_RE = /[0-9]/;
 
@@ -130,6 +149,49 @@ function isUniLetterBefore(text: string, index: number): boolean {
     return isUniLetter(text.codePointAt(index - 2));
   }
   return isUniLetter(text.codePointAt(index - 1));
+}
+
+/** Validate one rule-4c raw match (a maximal literal-charset run) and
+ *  return its post-trim [from, to) bounds, or null when it does not
+ *  qualify as a technical literal. A literal must:
+ *   1. Trim leading/trailing symbol chars — symbols never start or end
+ *      a candidate (kills sentence-final `fox.`-gluing and CLI `--`
+ *      prefixes alike; `2560x1440@2.` → `2560x1440@2`).
+ *   2. Be 4–64 chars post-trim (LITERAL_MIN_LENGTH mirrors the owner's
+ *      "numbers over 3 digits" floor).
+ *   3. Contain NO two adjacent interior symbols — `..`, `//`, `::`
+ *      reject (URLs `http://…` die here exactly as today; the run falls
+ *      back to the base/filename passes). After trimming, every kept
+ *      symbol is single and interior by construction.
+ *   4. Contain a digit — the owner's "any two of numbers/symbols/
+ *      letters" rule with the digit-bearing guard: digit+letter,
+ *      digit+symbol, or all three qualify (pure digit runs ≥ 4 qualify
+ *      trivially). Digit-FREE letter+symbol strings (`C++`, `and/or`,
+ *      `e.g.`) do NOT — that class stays with the 4a/4b compound rules,
+ *      where prose-shaped noise is already curated away. Digits are the
+ *      code-shape discriminator: prose almost never glues into a
+ *      digit-bearing run.
+ */
+function classifyLiteral(raw: string): { from: number; to: number } | null {
+  let from = 0;
+  let to = raw.length;
+  while (from < to && LITERAL_SYMBOL_CHARS.has(raw.charAt(from))) from++;
+  while (to > from && LITERAL_SYMBOL_CHARS.has(raw.charAt(to - 1))) to--;
+  const len = to - from;
+  if (len < LITERAL_MIN_LENGTH || len > 64) return null;
+  let digit = false;
+  let prevSymbol = false;
+  for (let i = from; i < to; i++) {
+    const ch = raw.charAt(i);
+    if (LITERAL_SYMBOL_CHARS.has(ch)) {
+      if (prevSymbol) return null; // adjacent symbols: `..` `//` `::`
+      prevSymbol = true;
+    } else {
+      prevSymbol = false;
+      if (ch >= "0" && ch <= "9") digit = true;
+    }
+  }
+  return digit ? { from, to } : null;
 }
 
 /** Internal token with span + liveness for dedupe/merge bookkeeping. */
@@ -309,17 +371,79 @@ export function tokenize(text: string): RawToken[] {
   // overlap (dots and hyphens are mutually exclusive inside a span).
   FILENAME_RE.lastIndex = 0;
   HYPHEN_RE.lastIndex = 0;
+  LITERAL_RE.lastIndex = 0;
   const compounds: Array<{ raw: string; start: number; end: number }> = [];
   for (const re of [FILENAME_RE, HYPHEN_RE]) {
     for (let m = re.exec(text); m !== null; m = re.exec(text)) {
       compounds.push({ raw: m[0], start: m.index, end: m.index + m[0].length });
     }
   }
-  if (compounds.length > 0) {
-    compounds.sort((a, b) => a.start - b.start);
-    const mk = (fn: { raw: string; start: number; end: number }): RawToken => ({
+  // Pass 4 — TECHNICAL LITERALS (2026-10 rule 4c): digit-bearing mixed
+  // strings ("2560x1440@2", "v1.2.3", "192.168.1.1", "2e-test") and
+  // pure digit runs ≥ 4 ("8080"). Feeds the SAME absorber list as the
+  // 4a/4b compound family — literals absorb every base/hexish token
+  // STRICTLY inside their span ("2560x1440@2" absorbs its base tail
+  // "x1440", "v1.2.3" absorbs "v1") exactly like compound absorption.
+  // Guards:
+  //  - rule-3 Unicode-letter adjacency disqualifies ("草2560x1440@2"
+  //    yields NOTHING, matching the base/hexish passes);
+  //  - a literal with EXACTLY the span of a kept token (base, hexish, or
+  //    compound) defers to that token — the pass is STRICTLY ADDITIVE.
+  //    Equal spans mean identical raw, and the existing token's class
+  //    carries richer semantics: letter-initial mixed identifiers
+  //    ("utf8Reader") keep camelCase subword splitting as base tokens,
+  //    and hexish flags (opacity, gate interplay) stay intact. The
+  //    literal class exists for what the other passes CANNOT see:
+  //    digit-initial runs and symbol-joined codes.
+  const literals: Array<{ raw: string; start: number; end: number }> = [];
+  // `out` ascends by start and regex scanning yields literals in ascending
+  // start order too, so one monotonic cursor answers the equal-span check
+  // in O(out + literals) — an out.some() here made ingest quadratic and
+  // blew the 800 KB perf gate (2026-10, mirrors the hexish pass cursor).
+  let ck = 0;
+  for (let m = LITERAL_RE.exec(text); m !== null; m = LITERAL_RE.exec(text)) {
+    const lit = classifyLiteral(m[0]);
+    if (lit === null) continue;
+    const start = m.index + lit.from;
+    const end = m.index + lit.to;
+    if (isUniLetterBefore(text, start) || isUniLetter(text.codePointAt(end))) {
+      continue;
+    }
+    while (ck < out.length && out[ck].end <= start) ck++; // ends before us
+    const o = out[ck];
+    if (o !== undefined && o.start === start && o.end === end) {
+      continue; // equal-span token wins — pass is additive-only
+    }
+    literals.push({ raw: text.slice(start, end), start, end });
+  }
+  if (compounds.length > 0 || literals.length > 0) {
+    // Union with containment dedupe: sort by start asc, longer span first,
+    // compound before literal on exact ties (same raw either way), then
+    // drop any span fully covered by an already-kept span's end. Overlaps
+    // between the families are almost impossible by construction (a
+    // compound match inside a literal run can only start at the run's
+    // first char), but the filter makes "never overlapping spans" a
+    // structural invariant instead of a proof obligation.
+    const spans = [
+      ...compounds.map((c) => ({ ...c, literal: false })),
+      ...literals.map((l) => ({ ...l, literal: true })),
+    ].sort(
+      (a, b) =>
+        a.start - b.start ||
+        b.end - a.end ||
+        (a.literal ? 1 : 0) - (b.literal ? 1 : 0),
+    );
+    const absorbers: typeof spans = [];
+    let maxEnd = -1;
+    for (const s of spans) {
+      if (s.end <= maxEnd) continue; // contained in a kept span
+      absorbers.push(s);
+      maxEnd = s.end;
+    }
+    const mk = (fn: (typeof spans)[number]): RawToken => ({
       raw: fn.raw,
       hexish: false,
+      literal: fn.literal,
       start: fn.start,
       end: fn.end,
       sentenceStart: isSentenceStartBefore(text, fn.start),
@@ -329,19 +453,19 @@ export function tokenize(text: string): RawToken[] {
     let lastEmitted = -1;
     const emitFn = (idx: number): void => {
       if (idx !== lastEmitted) {
-        kept.push(mk(compounds[idx]));
+        kept.push(mk(absorbers[idx]));
         lastEmitted = idx;
       }
     };
     for (const tok of out) {
-      // compounds entirely before this token (none absorbed it) emit first
-      while (f < compounds.length && compounds[f].end <= tok.start) {
+      // absorbers entirely before this token (none absorbed it) emit first
+      while (f < absorbers.length && absorbers[f].end <= tok.start) {
         emitFn(f);
         f++;
       }
-      const fn = compounds[f];
+      const fn = absorbers[f];
       if (fn !== undefined && fn.start <= tok.start && tok.end <= fn.end) {
-        emitFn(f); // token absorbed by the compound span
+        emitFn(f); // token absorbed by the compound/literal span
         continue;
       }
       if (fn !== undefined && fn.start < tok.end) {
@@ -350,7 +474,7 @@ export function tokenize(text: string): RawToken[] {
       }
       kept.push(tok);
     }
-    for (; f < compounds.length; f++) emitFn(f);
+    for (; f < absorbers.length; f++) emitFn(f);
     return kept;
   }
   return out;
@@ -437,7 +561,11 @@ export function expandCandidates(token: RawToken): CandidateDraft[] {
     properName: nameInitial,
     isSubword: false,
   };
-  if (token.hexish) return [whole];
+  // Opaque classes — never subword-split: hexish (2026-09, S2 rule) and
+  // technical literals (2026-10 rule 4c). A code like "2560x1440@2" or a
+  // commit-hash-shaped token completes whole as typed; splitting codes at
+  // camel/underscore boundaries would manufacture junk sub-candidates.
+  if (token.hexish || token.literal) return [whole];
 
   const parentKey = whole.key;
   const subs: CandidateDraft[] = [];

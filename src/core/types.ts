@@ -77,6 +77,13 @@ export interface RawToken {
    *  at least one letter a–f; commit-hash-shaped). Hexish tokens are
    *  opaque — subword splitting (S2) skips them. */
   hexish: boolean;
+  /** true when the token came from the technical-literal scan (2026-10
+   *  rule 4c: digit-bearing mixed-class strings like `2560x1440@2`,
+   *  `v1.2.3`, `192.168.1.1`, and pure digit runs ≥ 4). Like hexish,
+   *  literals are opaque — subword splitting (S2) skips them; codes
+   * complete whole as typed. Optional because base/hexish/compound
+   * tokens are not literals. */
+  literal?: boolean;
   /** UTF-16 offset of the token's first char, into the exact string passed
    *  to tokenize() — i.e. into the POST-maskSecrets segment string by the
    *  time ingest calls it (maskSecrets blanks in place, preserving length).
