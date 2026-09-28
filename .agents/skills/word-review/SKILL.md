@@ -1,11 +1,15 @@
 ---
-description: Trace a word/string through hapax's admission pipeline — diagnose why it appears or doesn't, or propose a rule change with side effects
+name: word-review
+description: Trace a word or string through hapax's admission pipeline — reproduce its actual fate (tokenize → shape gate → admission → menu), name the governing rules with file cites, and lay out side effects of any proposed rule change. Use when asking why a word, identifier, code, or string appears in or is missing from the autocomplete menu, or when proposing to change admission/tokenization/secret-gate rules.
 argument-hint: <question about a word or string, e.g. '"--mode" should be in'>
 ---
 
-The user's question: $ARGUMENTS
+The user's question arrives one of two ways: as the task itself, or —
+when invoked as `/skill:word-review <question>` — appended after this
+document as a `User: <question>` line.
 
-(If the question is empty or names no string, ask which word/string to review before doing anything else.)
+(If no question is present or it names no string, ask which word/string
+ to review before doing anything else.)
 
 You are reviewing admission/menu behavior for the **hapax** extension — this
 repo. Do the same job a careful senior reviewer would: reproduce the string's
