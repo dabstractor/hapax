@@ -25,6 +25,12 @@ correct: replace the matched prefix with `item.value`). Only override
 insertion if validation proves a need. The one sanctioned exception to
 "never touch the editor" is the Enter-submits wrapper below.
 
+The wired stack (`src/pi/index.ts`) composes bottom-up: hapax core
+provider → startup gate → display layer (hesitation gate + 100 ms swap
+debounce) → registration. The editor proxy (below) wraps whichever
+factory the extension ecosystem installed and feeds the shared input
+clock.
+
 ## Auto-open: how the menu ever appears
 
 pi-tui's editor only CALLS `getSuggestions` while the user types plain
@@ -113,7 +119,10 @@ Four interacting rules, implemented in the provider:
      value, and because a word's first-letter query is its ONLY one
      (pi-tui asks once per word), suppression is permanent per word.
      Default is therefore OFF; the knob stays for owners with a
-     measured pause length. Keystroke times come from the editor
+     measured pause length. If popping ever returns as a complaint,
+     instrument real keystroke gaps before picking any value —
+     thresholds chosen without measurement failed twice (150, 300).
+     Keystroke times come from the editor
      proxy's input clock; without an editor factory the gate degrades
      to query-gap timing (rarely suppresses). Explicit intent —
      trigger-char results and armed-chain successors — bypasses the
@@ -191,6 +200,21 @@ applies it in the same keypress. Rules:
   `force && explicitTab && items.length === 1` branch; if pi-tui ever
   changes that contract, the mitigation needs revisit (the zero-char
   chain offer and auto-open rules are unaffected).
+
+### pi-tui contract dependencies (re-verify on upgrades)
+
+Four runtime contracts are leaned on (marked as PINs at their
+consumption sites in `src/pi/provider.ts`); none is enforced by types.
+On any pi-tui upgrade, re-verify each:
+
+- the single-item forced fast path (`force && explicitTab &&
+  items.length === 1` applies the completion without opening a menu);
+- trigger-char branch shadowing (letters registered ⇒ the stock
+  letter-continuation branch is unreachable);
+- one-query-per-word while the menu is closed (the word-start request
+  is that word's only one — the startup gate exists because of it);
+- the editor's space-updates-open-menu flow (close-on-space depends on
+  being consulted at trailing space).
 
 ## Never-hijack rules (acceptance-critical)
 

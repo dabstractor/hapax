@@ -269,7 +269,7 @@ describe("admit — proper-noun relief (RETIRED-IN-PLACE, 2026-09)", () => {
   // Laboratory" (q 57–94) could chain. A live audit showed it admitting
   // ~483 capitalized common words (echo, windows, failed) — retired by
   // setting the ceiling to the reject band; restoring named entities is
-  // an allowlist design question (docs/HANDOFF.md), not a band change.
+  // an allowlist design question (spec/04), not a band change.
   it("capitalized attested English no longer relieves (ceiling == reject band)", () => {
     expect(
       admit(

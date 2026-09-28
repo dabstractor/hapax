@@ -1068,7 +1068,7 @@ describe("acceptance item 7 — NREL phrase (nrel-chain.jsonl, bugfix 001_0f4b64
   // RETIREMENT: nothing stores, no chain forms, every probe delegates.
   // The historical BUG-002/relief story (why the fixture exists) lives in
   // spec 04 + score.ts calibration history. Restoring named-entity
-  // completion is an allowlist design question (docs/HANDOFF.md).
+  // completion is an allowlist design question (spec/04).
   it("retirement pin — the four phrase words all REJECT; store empty, no chain, probes delegate", async () => {
     const { store, pipeline } = makeChainPipeline(true);
     const entries = parseSessionFixture(`${FIXTURES}/nrel-chain.jsonl`);

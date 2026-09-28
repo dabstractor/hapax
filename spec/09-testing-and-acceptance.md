@@ -106,6 +106,27 @@
 6. **Path completion regression:** quoted path completion, slash commands,
    and `@`-mention behaviors identical to stock pi.
 
+## Live verification technique (binding)
+
+Unit tests have repeatedly encoded wrong platform models — the editor,
+the trigger plumbing, and the menu lifecycle behave differently in a
+real TTY than in test doubles. UI-layer changes are verified live, not
+by unit tests alone:
+
+- Run an ephemeral instance: `pi --no-session` inside a tmux pane
+  (pi's TUI needs a real TTY — piping stdout makes it exit silently).
+  Seed the store by submitting one short user message, then Ctrl+C the
+  turn.
+- Drive keys with `tmux send-keys`, one char at a time with 0.08–0.12 s
+  sleeps between them. A whole string sent at once is a burst, and
+  bursts CANCEL in-flight autocomplete queries — different behavior
+  from human typing, and the source of at least one false conclusion.
+- Verify visible state via `tmux capture-pane`.
+- Temporary instrumentation (`appendFileSync` behind an env var) in
+  `src/pi/provider.ts` is the sanctioned way to observe internal state
+  live; two bugs invisible to every test were found this way. Remove
+  instrumentation before committing.
+
 ## Performance gates (CI-scriptable micro-benchmarks)
 
 | Gate | Limit |

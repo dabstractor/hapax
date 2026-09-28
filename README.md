@@ -64,7 +64,7 @@ keep it current; this README is a summary).
   capitalized common words (`echo`, `windows`, `failed`). Mechanism and
   calibration history live in `src/core/score.ts`; named-entity
   completion, if wanted back, is an allowlist design question
-  (`docs/HANDOFF.md`).
+  (spec 04).
 - **Session salience retention** — recency, repetition, and a sticky
   user-typed feed the eviction score that decides which candidates
   stay in the bounded store (`src/core/score.ts`).

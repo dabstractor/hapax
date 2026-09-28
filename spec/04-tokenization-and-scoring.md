@@ -150,9 +150,11 @@ completion (`roun` → `Rounding` from `fixRoundingError`).
   relief from occasional MID-SENTENCE capitalized sightings — a mix
   of legitimate names (Windows, Intel) and noise (echo, reject,
   device). The proposed next lever — relief requires the word to have
-  no lowercase sightings in-session — is an OPEN DESIGN ITEM
-  (docs/HANDOFF.md): it would also filter words like `national` that
-  appear both ways.
+  no lowercase sightings in-session — is an OPEN DESIGN ITEM: it would
+  also filter words like `national` that appear both ways. The
+  alternative is retiring relief outright and relying on the
+  dictionary-absent class (identifiers rarely need relief). No decision
+  recorded; nothing changes until the owner calls it.
 
 ## Shape gate (`src/core/shapeGate.ts`)
 
@@ -234,7 +236,7 @@ Renewable Energy Laboratory" (q 57–94) could chain; a live audit showed
 it admitting ~483 capitalized common words (`echo`, `windows`,
 `failed`, `file`). The owner retired it ("not half of the english
 language"); restoring named-entity completion is a user-allowlist design
-question (docs/HANDOFF.md), not a band change.
+question (config layer), not a band change.
 
 **Conjugation guard.** An inflection whose STEM is a common word rejects
 too, whatever its own `q`. The dictionary ranks inflections separately
@@ -252,7 +254,10 @@ With R=12 the second tier is largely subsumed by the first (any stem
 q ≥ 12 already rejects); it stays for words whose stem sits in
 [12, 20). Capitalized (properName) candidates skip the guard — casing
 evidence outranks morphology (a relief-restoring change would need this
-intact). Derivational suffixes (`-tion`, `-ment`, `-er`) are
+intact). Known leak (accepted): an inflection whose stem is ALSO
+dictionary-absent admits as group 0 — no tier can fire (`parse` and
+`parses` are both absent from the table, so `parses` stores as a rare
+word). Derivational suffixes (`-tion`, `-ment`, `-er`) are
 deliberately NOT stripped: `deletion` is a distinct lexeme.
 
 Sub-word candidates require their own admission (same table, plus the

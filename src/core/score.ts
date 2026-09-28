@@ -115,7 +115,7 @@ export const MID_FREQ_THRESHOLD = 20 as const;
  *  and spec per the owner's "don't take them out just yet" — restoring
  *  it is a one-constant change. The design answer for wanting named
  *  entities back is a user allowlist (config), not a band change
- *  (docs/HANDOFF.md).
+ *  (spec/04).
  *
  *  Calibration history (condensed, was binding until the 2026-09
  *  retighten): BUG-002 fix — relief existed so M2's "National Renewable
@@ -209,7 +209,7 @@ function inflectionStems(word: string): string[] {
  * relief admitting ~483 capitalized common words (echo, windows,
  * failed, file) — the owner retired it in place: ceiling == reject
  * band. Restoring named-entity completion is a user-allowlist design
- * question (docs/HANDOFF.md), not a band change.
+ * question (spec/04), not a band change.
  *
  * @param draft the shape-gated candidate (key must be lowercase)
  * @param dictionary quantized commonness dictionary (0–255 rank or null)
