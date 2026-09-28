@@ -15,3 +15,6 @@ venv/
 *.tmp
 *.bak
 *.swp
+
+# Local agent-mesh config (machine-specific, not repo material)
+.pi/remote-pi/
