@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  classifyPath,
   expandCandidates,
   tokenize,
   type CandidateDraft,
@@ -699,5 +700,133 @@ describe("technical literals (2026-10 rule 4c)", () => {
     const t = tokenize("0f3a9c2")[0]!;
     expect(t).toMatchObject({ raw: "0f3a9c2", hexish: true });
     expect(t.literal).toBeFalsy();
+  });
+});
+
+describe("path tokens (2026-10 rule 4d)", () => {
+  const raws = (text: string): string[] => tokenize(text).map((t) => t.raw);
+  const pathTok = (text: string): RawToken | undefined =>
+    tokenize(text).find((t) => t.path === true);
+  const draftOf = (t: RawToken): CandidateDraft => expandCandidates(t)[0]!;
+
+  it("'use src/core/query.ts here' → ONE path token; parts never surface alone", () => {
+    const text = "use src/core/query.ts here";
+    const paths = tokenize(text).filter((t) => t.path === true);
+    expect(paths).toHaveLength(1);
+    const p = paths[0]!;
+    expect(p.raw).toBe("src/core/query.ts"); // display = original run
+    expect(p.start).toBe(4);
+    expect(p.end).toBe(21);
+    expect(p.trimFrom).toBe(0); // no edge symbols to trim
+    expect(p.trimTo).toBe(17);
+    const d = draftOf(p);
+    expect(d.key).toBe("src/core/query.ts");
+    expect(d.path).toBe(true);
+    expect(d.isSubword).toBe(false);
+    // Absorption: components never surface alone.
+    expect(raws(text)).toEqual(["use", "src/core/query.ts", "here"]);
+  });
+
+  it("'/home/user/projects/hapax' → key trims the leading '/', display keeps it", () => {
+    const text = "edit /home/user/projects/hapax now";
+    const p = pathTok(text)!;
+    expect(p).toBeDefined();
+    expect(p.raw).toBe("/home/user/projects/hapax");
+    expect(p.start).toBe(5);
+    expect(p.trimFrom).toBe(1);
+    expect(p.trimTo).toBe(p.raw.length);
+    const d = draftOf(p);
+    expect(d.key).toBe("home/user/projects/hapax");
+    expect(d.display).toBe("/home/user/projects/hapax"); // edge kept for insertion
+    // The FIRST intentional key≠display divergence beyond casing.
+    expect(d.display.toLowerCase()).not.toBe(d.key);
+  });
+
+  it("'docs/architecture.md' → path (1 slash + dotted component)", () => {
+    const p = pathTok("see docs/architecture.md first")!;
+    expect(p).toBeDefined();
+    expect(p.raw).toBe("docs/architecture.md");
+    expect(draftOf(p).key).toBe("docs/architecture.md");
+    // the filename-class match 'architecture.md' is absorbed
+    expect(raws("see docs/architecture.md first")).toEqual([
+      "see",
+      "docs/architecture.md",
+      "first",
+    ]);
+  });
+
+  it("'../tools/build.mjs' → key trims '../', display keeps it", () => {
+    const p = pathTok("run ../tools/build.mjs")!;
+    expect(p).toBeDefined();
+    expect(p.raw).toBe("../tools/build.mjs");
+    expect(p.trimFrom).toBe(3);
+    const d = draftOf(p);
+    expect(d.key).toBe("tools/build.mjs");
+    expect(d.display).toBe("../tools/build.mjs");
+  });
+
+  it("'example.com/a/b' → path (host+path form, 2 slashes)", () => {
+    const p = pathTok("open example.com/a/b now")!;
+    expect(p).toBeDefined();
+    expect(p.raw).toBe("example.com/a/b");
+    expect(draftOf(p).key).toBe("example.com/a/b");
+  });
+
+  it("'src/foo.ts:42:13' → ':line:col' trimmed from the KEY, display keeps the run", () => {
+    const p = pathTok("fix src/foo.ts:42:13 please")!;
+    expect(p).toBeDefined();
+    expect(p.raw).toBe("src/foo.ts:42:13");
+    expect(p.trimFrom).toBe(0);
+    expect(p.trimTo).toBe(10); // "src/foo.ts"
+    const d = draftOf(p);
+    expect(d.key).toBe("src/foo.ts");
+    expect(d.display).toBe("src/foo.ts:42:13");
+  });
+
+  it("'4:36' and 'localhost:8080' are NOT paths (existing literal behavior)", () => {
+    expect(raws("4:36")).toEqual(["4:36"]);
+    expect(tokenize("4:36")[0]!.path).toBeFalsy();
+    expect(raws("hit localhost:8080 now")).toContain("localhost:8080");
+    expect(tokenize("hit localhost:8080 now").every((t) => !t.path)).toBe(
+      true,
+    );
+    expect(tokenize("hit localhost:8080 now")[1]!.literal).toBe(true);
+  });
+
+  it("'a/b.ts:42:13:99' → falls back to the 4c literal class (pinned)", () => {
+    // strip ':13:99' leaves 'a/b.ts:42' — still coloned → restore → the
+    // unstripped key contains ':' → not path-shaped → 4c literal wins.
+    const text = "open a/b.ts:42:13:99 now";
+    expect(raws(text)).toContain("a/b.ts:42:13:99");
+    expect(tokenize(text).every((t) => !t.path)).toBe(true);
+    expect(tokenize(text)[1]!.literal).toBe(true);
+  });
+
+  it("'and/or' → NOT a token (1 slash, no dot, digit-free: 4d and 4c both reject)", () => {
+    expect(raws("C++ and/or")).toEqual(["and", "or"]);
+    expect(tokenize("and/or").every((t) => !t.path)).toBe(true);
+  });
+
+  it("'a/../b' → interior '..' rejects the WHOLE run; no junk fragments", () => {
+    expect(raws("a/../b")).toEqual([]);
+    expect(tokenize("a/../b").every((t) => !t.path)).toBe(true);
+  });
+
+  it("key cap: a 96-char post-trim key admits; 97 rejects (classifyPath-level)", () => {
+    const k96 = `${"a".repeat(91)}/x.ts`; // 1 slash + dotted tail → path-shaped
+    expect(k96.length).toBe(96);
+    expect(classifyPath(k96)).toEqual({ from: 0, to: 96 });
+    const k97 = `${"a".repeat(92)}/x.ts`;
+    expect(k97.length).toBe(97);
+    expect(classifyPath(k97)).toBeNull();
+  });
+
+  it("rule-3 guard fires at the TRIMMED bounds: 草 before the key kills the run", () => {
+    // 草 abuts the KEY's first char (after '/…' the trimmed bound is what
+    // counts) → the path run is disqualified whole; no path token ever
+    // surfaces (contained base captures keep their historical behavior).
+    const tokens = tokenize("草src/core/query.ts");
+    expect(tokens.some((t) => t.path === true)).toBe(false);
+    expect(raws("草src/core/query.ts")).not.toContain("src/core/query.ts");
   });
 });

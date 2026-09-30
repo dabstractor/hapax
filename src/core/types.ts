@@ -84,6 +84,25 @@ export interface RawToken {
    * complete whole as typed. Optional because base/hexish/compound
    * tokens are not literals. */
   literal?: boolean;
+  /** true when the token came from the path scan (2026-10 rule 4d):
+   *  slash-joined path-shaped runs — `src/core/query.ts`,
+   *  `/home/user/x`, `../tools/build.mjs`, `example.com/a/b`. Paths are
+   *  opaque (never subword-split) and carry the codebase's first
+   *  key≠display divergence beyond casing: the STORE KEY is the
+   *  edge/line:col-trimmed lowercase slice `raw.slice(trimFrom,
+   *  trimTo)`, while `raw` — the insertion display — keeps the original
+   *  edge symbols. `start`/`end` remain the ORIGINAL run bounds (the
+   *  display span), so ingest's whitespace-adjacency bigram rule (which
+   *  reads the raw span) stays correct. Optional: base/hexish/
+   *  compound/literal tokens are not paths. */
+  path?: boolean;
+  /** Present iff `path`: start of the trimmed KEY inside `raw` — leading
+   *  `/`, `~`, `./`, `../` and combinations are trimmed (rule 4d). */
+  trimFrom?: number;
+  /** Present iff `path`: end of the trimmed KEY inside `raw` — a trailing
+   *  `/` and one `:line(:col)?` suffix are trimmed. Invariant:
+   *  `raw.slice(trimFrom, trimTo).toLowerCase()` is the store key source. */
+  trimTo?: number;
   /** UTF-16 offset of the token's first char, into the exact string passed
    *  to tokenize() — i.e. into the POST-maskSecrets segment string by the
    *  time ingest calls it (maskSecrets blanks in place, preserving length).

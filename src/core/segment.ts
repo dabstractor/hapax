@@ -90,11 +90,15 @@ const FILENAME_RE = /\b[A-Za-z][A-Za-z0-9_]{0,30}(?:\.[A-Za-z0-9_]{1,16}){0,2}\.
  *  "-v" are not tokens); inner segments may hold digits/underscores. */
 const HYPHEN_RE = /\b[A-Za-z][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)+\b/g;
 
-/** 2026-10 technical-literal rule (rule 4c): maximal runs over the
- *  literal charset — alphanumerics joined by single INTERIOR symbols
- *  from LITERAL_SYMBOL_CHARS. Raw pass regex (bounds pre-trim); the
- *  per-match composition/trim validation lives in classifyLiteral. */
-const LITERAL_RE = /[A-Za-z0-9._@:+/~=-]{4,80}/g;
+/** 2026-10 technical-literal rule (rule 4c) + path rule (4d) shared scan:
+ *  maximal runs over the literal charset — alphanumerics joined by single
+ *  INTERIOR symbols from LITERAL_SYMBOL_CHARS (4c), and slash-joined
+ *  path-shaped runs (4d, spec/04 adopted 2026-10; window widened
+ *  {4,80} → {4,96} per spec/04 so long paths fit). Raw pass regex (bounds
+ *  pre-trim); per-match classification lives in classifyLiteral /
+ *  classifyPath — a run qualifying as BOTH takes the path class (4d
+ *  first). */
+const LITERAL_RE = /[A-Za-z0-9._@:+/~=-]{4,96}/g;
 
 /** Join symbols for rule 4c technical literals. Curated: sentence/
  *  prose punctuation (, ; ! ? quotes brackets % & * #) is excluded so
@@ -111,6 +115,11 @@ const LITERAL_MIN_LENGTH = 4;
 
 /** Hash-shape discriminator for letter-initial tokens both passes matched. */
 const HAS_DIGIT_RE = /[0-9]/;
+
+/** Rule 4d ':line:col' tail on a path key ('src/foo.ts:42:13'). No /g
+ *  flag — no shared lastIndex. Used against a per-match slice (allocated
+ *  only when the run actually contains a ':'). */
+const LINECOL_TAIL_RE = /(?::\d+){1,2}$/;
 
 /** Any Unicode letter (PRD §04 rule 3, R2 delta): CJK, Latin-1, Greek, … */
 const UNI_LETTER_RE = /\p{L}/u;
@@ -192,6 +201,85 @@ function classifyLiteral(raw: string): { from: number; to: number } | null {
     }
   }
   return digit ? { from, to } : null;
+}
+
+/** Path-shape predicate over [from, to) of `raw` (rule 4d step 4): no
+ *  ':' anywhere (a colon outside a successfully-trimmed line:col tail
+ *  disqualifies — `localhost:8080`, `a/b.ts:42` stay non-paths); at
+ *  least 2 INTERIOR single '/' separators, or exactly 1 interior '/'
+ *  plus a dotted component ('docs/architecture.md' yes, 'and/or' no).
+ *  The adjacent-symbol guard has already rejected doubled separators, so
+ *  every '/' is single by construction. O(to - from), allocation-free. */
+function pathShaped(raw: string, from: number, to: number): boolean {
+  let slashes = 0;
+  let dot = false;
+  for (let i = from; i < to; i++) {
+    const ch = raw.charAt(i);
+    if (ch === ":") return false;
+    if (ch === "/") {
+      if (i > from && i < to - 1) slashes++; // interior only
+    } else if (ch === ".") {
+      dot = true;
+    }
+  }
+  return slashes >= 2 || (slashes === 1 && dot);
+}
+
+/** Validate one rule-4d raw match (a maximal literal-charset run) and
+ *  return the TRIMMED KEY bounds [from, to) inside `raw`, or null when
+ *  it does not qualify as a path. Runs in the pass-4 loop try this
+ *  BEFORE classifyLiteral — a slash-bearing run qualifying both ways
+ *  takes the path class (spec/04:128-131). A path must:
+ *   1. Trim EDGE symbols from the key: leading `/`, `~`, `./`, `../` and
+ *      combinations (every char in "/~."), and one trailing `/`. The raw
+ *      span itself is NOT trimmed — it stays the display/insertion form
+ *      (the key≠display divergence is the point of 4d).
+ *   2. Carry no two adjacent interior symbols — interior `..` ('a/../b')
+ *      rejects the WHOLE run, exactly like 4c's `//`/`::`. Leading `../`
+ *      was already trimmed as an edge, so only interior doubles die.
+ *   3. Trim ONE `:line(:col)?` tail — but only when the REMAINDER is
+ *      path-shaped and colon-free ('src/foo.ts:42:13' → 'src/foo.ts');
+ *      otherwise restore and continue with the unstripped key
+ *      ('4:36', 'localhost:8080' fall to 4c; 'a/b.ts:42:13:99' — whose
+ *      remainder 'a/b.ts:42' still holds a colon — is PINNED to the 4c
+ *      literal class).
+ *   4. Be path-shaped: ≥ 2 interior single '/' separators, or exactly 1
+ *      interior '/' plus a dotted component.
+ *   5. Be 4–96 chars post-trim (the window caps the raw at 96; the floor
+ *      rejects shrink-to-nothing trims).
+ *
+ *  Exported for the §09 h2.55 key-cap cases (tokenize cannot surface a
+ *  >96-char key — the window truncates the match first).
+ *  O(len), allocation-free except in the colon-tail branch. */
+export function classifyPath(raw: string): { from: number; to: number } | null {
+  let from = 0;
+  let to = raw.length;
+  while (from < to && "/~.".includes(raw.charAt(from))) from++;
+  if (to > from && raw.charAt(to - 1) === "/") to--;
+  const len = to - from;
+  if (len < LITERAL_MIN_LENGTH || len > 96) return null;
+  let prevSymbol = false;
+  for (let i = from; i < to; i++) {
+    const ch = raw.charAt(i);
+    if (LITERAL_SYMBOL_CHARS.has(ch)) {
+      if (prevSymbol) return null; // interior '..', '//', '::' — whole run
+      prevSymbol = true;
+    } else {
+      prevSymbol = false;
+    }
+  }
+  // ':line:col' trim — ONE iteration, restore-on-doubt (see doc above).
+  if (raw.lastIndexOf(":", to - 1) >= from) {
+    const tail = LINECOL_TAIL_RE.exec(raw.slice(from, to));
+    if (tail !== null) {
+      const candTo = to - tail[0].length;
+      if (pathShaped(raw, from, candTo)) {
+        to = candTo; // remainder is path-shaped and colon-free
+      }
+    }
+  }
+  if (!pathShaped(raw, from, to)) return null;
+  return { from, to };
 }
 
 /** Internal token with span + liveness for dedupe/merge bookkeeping. */
@@ -396,12 +484,47 @@ export function tokenize(text: string): RawToken[] {
   //    literal class exists for what the other passes CANNOT see:
   //    digit-initial runs and symbol-joined codes.
   const literals: Array<{ raw: string; start: number; end: number }> = [];
+  // Rule 4d path spans: raw/start/end are the ORIGINAL match (the display
+  // span — never the trimmed bounds, unlike literals); trimFrom/trimTo
+  // carry the KEY bounds inside raw (raw.slice(trimFrom, trimTo) is the
+  // store key source; expandCandidates lowercases it).
+  const paths: Array<{
+    raw: string;
+    start: number;
+    end: number;
+    trimFrom: number;
+    trimTo: number;
+  }> = [];
   // `out` ascends by start and regex scanning yields literals in ascending
   // start order too, so one monotonic cursor answers the equal-span check
   // in O(out + literals) — an out.some() here made ingest quadratic and
   // blew the 800 KB perf gate (2026-10, mirrors the hexish pass cursor).
   let ck = 0;
   for (let m = LITERAL_RE.exec(text); m !== null; m = LITERAL_RE.exec(text)) {
+    // Rule 4d FIRST — a run qualifying as both path and literal takes the
+    // path class (spec/04:128-131).
+    const p = classifyPath(m[0]);
+    if (p !== null) {
+      const start = m.index;
+      const end = start + m[0].length;
+      // Rule-3 guard at the TRIMMED bounds (the KEY's edges — a Unicode
+      // letter glued to the key disqualifies the run whole; this is why
+      // the guard cannot reuse the raw match bounds).
+      if (
+        isUniLetterBefore(text, start + p.from) ||
+        isUniLetter(text.codePointAt(start + p.to))
+      ) {
+        continue;
+      }
+      while (ck < out.length && out[ck].end <= start) ck++; // ends before us
+      const o = out[ck];
+      if (o !== undefined && o.start === start && o.end === end) {
+        continue; // equal-span defer — structurally impossible for paths
+        // (they contain '/'), kept for symmetry with the literal pass
+      }
+      paths.push({ raw: m[0], start, end, trimFrom: p.from, trimTo: p.to });
+      continue;
+    }
     const lit = classifyLiteral(m[0]);
     if (lit === null) continue;
     const start = m.index + lit.from;
@@ -416,22 +539,51 @@ export function tokenize(text: string): RawToken[] {
     }
     literals.push({ raw: text.slice(start, end), start, end });
   }
-  if (compounds.length > 0 || literals.length > 0) {
+  if (compounds.length > 0 || literals.length > 0 || paths.length > 0) {
     // Union with containment dedupe: sort by start asc, longer span first,
-    // compound before literal on exact ties (same raw either way), then
-    // drop any span fully covered by an already-kept span's end. Overlaps
-    // between the families are almost impossible by construction (a
-    // compound match inside a literal run can only start at the run's
-    // first char), but the filter makes "never overlapping spans" a
-    // structural invariant instead of a proof obligation.
-    const spans = [
-      ...compounds.map((c) => ({ ...c, literal: false })),
-      ...literals.map((l) => ({ ...l, literal: true })),
+    // compound before literal before path on exact ties (same raw either
+    // way for compound/literal; a path tie is structurally impossible —
+    // paths contain '/', no other family can produce that span — the
+    // rank is symmetry only), then drop any span fully covered by an
+    // already-kept span's end. Overlaps between the families are almost
+    // impossible by construction (a compound match inside a literal/path
+    // run can only start at the run's first char), but the filter makes
+    // "never overlapping spans" a structural invariant instead of a
+    // proof obligation.
+    const spans: Array<{
+      raw: string;
+      start: number;
+      end: number;
+      literal: boolean;
+      path: boolean;
+      trimFrom: number;
+      trimTo: number;
+    }> = [
+      ...compounds.map((c) => ({
+        ...c,
+        literal: false,
+        path: false,
+        trimFrom: 0,
+        trimTo: 0,
+      })),
+      ...literals.map((l) => ({
+        ...l,
+        literal: true,
+        path: false,
+        trimFrom: 0,
+        trimTo: 0,
+      })),
+      ...paths.map((p) => ({
+        ...p,
+        literal: false,
+        path: true,
+      })),
     ].sort(
       (a, b) =>
         a.start - b.start ||
         b.end - a.end ||
-        (a.literal ? 1 : 0) - (b.literal ? 1 : 0),
+        (a.literal ? 1 : 0) - (b.literal ? 1 : 0) ||
+        (a.path ? 1 : 0) - (b.path ? 1 : 0),
     );
     const absorbers: typeof spans = [];
     let maxEnd = -1;
@@ -444,6 +596,10 @@ export function tokenize(text: string): RawToken[] {
       raw: fn.raw,
       hexish: false,
       literal: fn.literal,
+      path: fn.path,
+      // trim bounds exist only on path tokens (the key source; see
+      // RawToken.trimFrom/trimTo in types.ts)
+      ...(fn.path ? { trimFrom: fn.trimFrom, trimTo: fn.trimTo } : {}),
       start: fn.start,
       end: fn.end,
       sentenceStart: isSentenceStartBefore(text, fn.start),
@@ -494,6 +650,12 @@ export interface CandidateDraft {
   isSubword: boolean;
   /** lowercase key of the parent whole token; set iff isSubword */
   parentKey?: string;
+  /** true for path-shaped candidates (2026-10 rule 4d): the key is the
+   *  edge/line:col-trimmed lowercase path while display keeps the
+   *  original edge symbols (the first key≠display divergence beyond
+   *  casing). Paths are never proper names. Downstream: T2.S2 applies
+   *  class-conditional shape-gate caps via this flag. */
+  path?: boolean;
 }
 
 /** A–Z test (ASCII only — tokenize() never emits non-ASCII into tokens). */
@@ -561,10 +723,31 @@ export function expandCandidates(token: RawToken): CandidateDraft[] {
     properName: nameInitial,
     isSubword: false,
   };
-  // Opaque classes — never subword-split: hexish (2026-09, S2 rule) and
-  // technical literals (2026-10 rule 4c). A code like "2560x1440@2" or a
-  // commit-hash-shaped token completes whole as typed; splitting codes at
-  // camel/underscore boundaries would manufacture junk sub-candidates.
+  // Opaque classes — never subword-split: hexish (2026-09, S2 rule),
+  // technical literals (2026-10 rule 4c), and paths (2026-10 rule 4d).
+  // A code like "2560x1440@2" or a commit-hash-shaped token completes
+  // whole as typed; splitting codes at camel/underscore boundaries would
+  // manufacture junk sub-candidates.
+  //
+  // PATHS (rule 4d) — the ONLY key≠display site beyond casing: the key
+  // is the trimmed lowercase slice (edge `/~.` chains and one
+  // ':line(:col)?' tail stripped) while display is the ORIGINAL raw run
+  // (insertion preserves the leading '/' and '..' exactly as typed).
+  // properName is pinned FALSE — a documented choice: paths are not
+  // names (spec is silent; recorded for T2.S3's display-flow audit).
+  if (token.path) {
+    return [
+      {
+        key: token.raw
+          .slice(token.trimFrom ?? 0, token.trimTo ?? token.raw.length)
+          .toLowerCase(),
+        display: token.raw, // ORIGINAL edges preserved for insertion
+        properName: false,
+        isSubword: false,
+        path: true,
+      },
+    ];
+  }
   if (token.hexish || token.literal) return [whole];
 
   const parentKey = whole.key;
