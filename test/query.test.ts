@@ -442,3 +442,54 @@ describe("rankMatches — plural pruning (2026-09 owner rule)", () => {
     ]);
   });
 });
+
+// ── rule 4d path candidates under the CURRENT prefix matcher ────────────────
+// P1.M1.T2.S4 pre-fuzzy baseline (spec §07 auto-open, spec §09 integration
+// item 7): keys are WHOLE trimmed-lowercase paths, so byte-lex prefix
+// matching surfaces a path at its FIRST segment only ("sr" →
+// "src/core/query.ts") and can never match a mid-path component. How far a
+// typed fragment may travel before hapax is consulted at all is upstream's
+// business — the threshold regex admits no '/' and the stock-context gate
+// delegates every '/'-preceded cursor (order pins in test/provider-match
+// and test/provider). This suite pins the query seam those gates protect:
+// when "sr" DOES arrive, the whole path comes back with its display.
+
+describe("path candidates under the prefix matcher (rule 4d, pre-fuzzy baseline)", () => {
+  /** Store holding the rule-4d path candidate; display = key. */
+  const pathStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    put(s, "src/core/query.ts", 2, 4);
+    return s;
+  };
+
+  it("'sr' (first-segment prefix) surfaces the whole-path candidate with its display", () => {
+    const [m] = rankMatches(pathStore(), "sr");
+    expect(m!.key).toBe("src/core/query.ts");
+    expect(m!.display).toBe("src/core/query.ts"); // display outflow intact — Tab inserts the whole path
+    expect(m!.description).toBe("session x2"); // ordinary item contract rides along
+  });
+
+  it("uppercase prefix 'SR' works identically (rankMatches lowercases before prefixRange)", () => {
+    expect(rankMatches(pathStore(), "SR").map((m) => m.key)).toEqual([
+      "src/core/query.ts",
+    ]);
+  });
+
+  it("absolute-path key: pre-first-slash prefix matches; display keeps the leading '/'", () => {
+    const s = new CandidateStore();
+    put(s, "home/dustin/projects/hapax", 1, 3, {
+      display: "/home/dustin/projects/hapax",
+    });
+    const [m] = rankMatches(s, "home/dus");
+    expect(m!.key).toBe("home/dustin/projects/hapax");
+    expect(m!.display).toBe("/home/dustin/projects/hapax"); // edge character rides along (rule 4d)
+  });
+
+  it("a mid-path component is never matchable: 'core' does not return the path", () => {
+    // Keys are whole paths — components are absorbed at admission — so a
+    // component word only completes as itself, never as a step into a path.
+    const s = pathStore();
+    put(s, "coreutils", 1, 2); // a genuine word sharing the component prefix
+    expect(rankMatches(s, "core").map((m) => m.key)).toEqual(["coreutils"]);
+  });
+});

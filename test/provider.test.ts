@@ -35,6 +35,7 @@ import type {
   AutocompleteSuggestions,
 } from "@earendil-works/pi-tui";
 import type { CandidateDraft } from "../src/core/segment.js";
+import { rankMatches } from "../src/core/query.js";
 import { admit, REJECT_COMMON_THRESHOLD } from "../src/core/score.js";
 import { CandidateStore } from "../src/core/store.js";
 import type { Dictionary, Sighting } from "../src/core/types.js";
@@ -566,5 +567,107 @@ describe("stock-context delegation (BUG-001)", () => {
     expect(result).not.toBe(STOCK_SENTINEL);
     expect(result?.items.map((i) => i.value)).toContain("renewable");
     expect(inner.__hapaxLive()).not.toBeNull();
+  });
+});
+
+// ── path-candidate interaction (rule 4d baseline, P1.M1.T2.S4) ─────────────
+// Spec §07 auto-open + §09 integration items 6–7, made CI-executable at the
+// provider seam (the live-TTY half is P1.M3.T4.S1's job): a stored rule-4d
+// path candidate surfaces at its FIRST segment; the moment a '/' precedes
+// the cursor — threshold mode, trigger mode, quoted or bare — the stock
+// gate delegates and hapax never answers, even though a match WOULD exist.
+// That counterfactual is proven below with a direct rankMatches call, so
+// these tests pin the GATE (classifyStockContext before extractMatchState
+// in getSuggestions), never candidate absence. P1.M2's fuzzy rewrite must
+// keep this suite green except where it deliberately re-derives the
+// matcher-specific assertions.
+
+describe("path-candidate interaction (rule 4d: first segment surfaces, then stock owns)", () => {
+  /** Sentinel pi's stock completion returns in path contexts. */
+  const STOCK_SENTINEL: AutocompleteSuggestions = {
+    items: [{ value: "/resume", label: "/resume", description: "stock" }],
+    prefix: "/re",
+  };
+
+  /** Store holding the rule-4d path candidate; display = key. */
+  const pathStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    put(s, "src/core/query.ts", 2, 4);
+    return s;
+  };
+
+  it("'edit sr' with the candidate seeded → hapax answers with the whole path (integration item 7, CI half)", async () => {
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { inner, provider } = makeStack(pathStore(), current);
+    const lines = ["edit sr"];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 7, options);
+
+    expect(current.getSuggestions).not.toHaveBeenCalled();
+    expect(result?.items.map((i) => i.value)).toContain("src/core/query.ts");
+    expect(result?.prefix).toBe("sr");
+    expect(inner.__hapaxLive()).not.toBeNull(); // hapax owns this menu
+  });
+
+  it("'edit src/co' delegates even with the path candidate seeded (gate, not absence)", async () => {
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { inner, provider } = makeStack(pathStore(), current);
+    const lines = ["edit src/co"];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 11, options);
+
+    expect(result).toBe(STOCK_SENTINEL);
+    expectUntouchedArgs(current, lines, 0, 11, options);
+    expect(inner.__hapaxLive()).toBeNull(); // no hapax menu ever painted
+  });
+
+  it("'#src/co' (trigger fragment with '/') delegates — although it WOULD prefix-match the seeded key (gate order pin)", async () => {
+    const store = pathStore();
+    // Counterfactual proof: the query layer is pure byte-lex prefix, so the
+    // slash-bearing trigger fragment matches the seeded key. Delegation is
+    // therefore the stock gate's doing — a reordering that ran
+    // extractMatchState first would surface a hapax menu here and fail.
+    expect(rankMatches(store, "src/co").map((m) => m.key)).toContain(
+      "src/core/query.ts",
+    );
+
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { inner, provider } = makeStack(store, current);
+    const lines = ["#src/co"];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 7, options);
+
+    expect(result).toBe(STOCK_SENTINEL);
+    expectUntouchedArgs(current, lines, 0, 7, options);
+    expect(inner.__hapaxLive()).toBeNull();
+  });
+
+  it("'#sr/co' (trigger fragment with '/') delegates", async () => {
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { inner, provider } = makeStack(pathStore(), current);
+    const lines = ["#sr/co"];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 6, options);
+
+    expect(result).toBe(STOCK_SENTINEL);
+    expectUntouchedArgs(current, lines, 0, 6, options);
+    expect(inner.__hapaxLive()).toBeNull();
+  });
+
+  it("'edit \"src/co' (quoted path) delegates with the candidate seeded", async () => {
+    const current = makeCurrent({ getSuggestions: vi.fn(async () => STOCK_SENTINEL) });
+    const { inner, provider } = makeStack(pathStore(), current);
+    const lines = ['edit "src/co'];
+    const options = opts();
+
+    const result = await provider.getSuggestions(lines, 0, 12, options);
+
+    expect(result).toBe(STOCK_SENTINEL);
+    expectUntouchedArgs(current, lines, 0, 12, options);
+    expect(inner.__hapaxLive()).toBeNull();
   });
 });

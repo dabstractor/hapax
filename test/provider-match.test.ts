@@ -392,3 +392,66 @@ describe("classifyStockContext — stock pi contexts (BUG-001)", () => {
     expect(lines).toEqual(["src/roun"]);
   });
 });
+
+// ── path fragments never reach hapax matching (rule 4d order pins) ───────────
+// P1.M1.T2.S4 baseline (spec §07 auto-open, spec §09 integration items 6–7):
+// paths surface at a path's FIRST segment ("sr" → "src/core/query.ts"); once
+// a '/' precedes the cursor, stock pi file completion owns the rest. The
+// mechanism, verified against the live regexes (never guessed):
+//   - threshold mode matches /[A-Za-z][A-Za-z0-9_-]*$/ — a '/' can never
+//     enter a threshold fragment; "edit src/co" yields fragment "co" (the
+//     regex takes the trailing identifier AFTER the slash).
+//   - trigger mode excludes only whitespace + the trigger char, so
+//     "#sr/co" IS trigger mode with fragment "sr/co" — but
+//     classifyStockContext runs BEFORE extractMatchState in
+//     getSuggestions, and a '/' earlier in the line with a whitespace-free
+//     cursor tail classifies as "path" → delegate, whatever the mode.
+// The provider-level counterfactuals (a match WOULD have existed) live in
+// test/provider.test.ts.
+
+describe("path fragments never reach hapax matching (rule 4d order pins)", () => {
+  it("threshold regex takes the trailing identifier: 'edit src/co' → fragment 'co' ('/' never enters)", () => {
+    expect(extractMatchState(["edit src/co"], 0, 11, cfg())).toEqual({
+      mode: "threshold",
+      fragment: "co",
+      prefix: "co",
+    });
+  });
+
+  it("'edit src/co' classifies as 'path' — the stock gate disarms the hypothetical 'co' query", () => {
+    expect(classifyStockContext(["edit src/co"], 0, 11)).toBe("path");
+  });
+
+  it("trigger fragments CAN contain '/': '#sr/co' → mode 'trigger', fragment 'sr/co'", () => {
+    expect(extractMatchState(["#sr/co"], 0, 6, cfg())).toEqual({
+      mode: "trigger",
+      fragment: "sr/co",
+      prefix: "#sr/co",
+    });
+  });
+
+  it("'#sr/co' STILL classifies as 'path' (gate order pin: stock gate outranks trigger mode)", () => {
+    expect(classifyStockContext(["#sr/co"], 0, 6)).toBe("path");
+  });
+
+  it("'#src/co' trigger fragment classifies as 'path' too (deeper path, same disarm)", () => {
+    expect(classifyStockContext(["#src/co"], 0, 7)).toBe("path");
+  });
+
+  it("quoted beats path: 'edit \"src/co' → 'quoted-path'", () => {
+    expect(classifyStockContext(['edit "src/co'], 0, 12)).toBe("quoted-path");
+  });
+
+  it("first-segment seam: 'edit sr' → no stock context (hapax owns; the '/' has not been typed yet)", () => {
+    expect(classifyStockContext(["edit sr"], 0, 7)).toBe(null);
+  });
+
+  it("'sr.co' (no slash) is a plain word continuation: threshold fragment 'co', stock context null", () => {
+    expect(extractMatchState(["edit sr.co"], 0, 10, cfg())).toEqual({
+      mode: "threshold",
+      fragment: "co",
+      prefix: "co",
+    });
+    expect(classifyStockContext(["edit sr.co"], 0, 10)).toBe(null);
+  });
+});

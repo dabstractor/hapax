@@ -187,6 +187,19 @@ describe("perf gate c — ingest 800 KB synthetic session text", () => {
     // the measured floor: a failure means a genuine regression, not
     // hardware calibration.
     //
+    // 2026-10 re-measure (P1.M1.T2.S4, post rule-4d window widening
+    // {4,80}→{4,96}): gate c best-of-3 = 120–129 ms across four runs —
+    // green with ~1.4× headroom over the 180 ms bound, but ~2× the
+    // ISSUE-4 floor. The widening is PROVEN not to be the cause: the
+    // gate text (space-separated synthetic words) matches the literal
+    // regex 87,798 times under BOTH windows — max run length 15 chars,
+    // zero matches in the newly-admitted 81–96 range — so pass 4's
+    // per-match work is unchanged. The floor movement tracks the R_eff
+    // admission-ramp commits (length-conditioned curve + conjugation
+    // guard) that landed after ISSUE-4, not this item; a future ingest
+    // pass should either re-optimize pass 4 or recalibrate the floor
+    // comment (bound stays).
+    //
     // Fresh empty store: the text's bounded vocab (~5k distinct keys) stays
     // under STORE_CAP, so eviction can never fire inside the measurement.
     const text = makeSessionText(800_000, 7, dictWords.slice(0, 4000));
