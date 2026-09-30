@@ -38,7 +38,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { REJECT_COMMON_THRESHOLD } from "../core/score.js";
-import { DEFAULT_FUZZ_THRESHOLD } from "../core/query.js";
+import {
+  DEFAULT_FUZZ_THRESHOLD,
+  TRIGGER_FUZZ_THRESHOLD,
+} from "../core/query.js";
 
 /**
  * Extension settings — deliberately tiny (PRD §08). Never extend this
@@ -69,8 +72,21 @@ export interface HapaxConfig {
    *  exact-prefix-only mode, 0 admits every match. Default: the baked
    *  DEFAULT_FUZZ_THRESHOLD in src/core/query.ts (the rejectCommonness
    *  pattern — one number, never two). Out-of-range values clamp
-   *  silently; wrong types repair with one warning. */
+   *  silently; wrong types repair with one warning. Per-mode semantics
+   *  (§04 trigger loosening): an EXPLICITLY set value overrides both
+   *  mode defaults; unset → 60 ambient / 45 under the trigger char —
+   *  resolve per mode via resolveFuzzThreshold, never by reading this
+   *  field alone. */
   fuzzThreshold: number;
+  /** INTERNAL (not a config-file key): true when a config layer supplied a
+   *  valid numeric fuzzThreshold (post-clamp). Absent/undefined = unset →
+   *  consumers resolve per-mode via resolveFuzzThreshold (60 ambient / 45
+   *  trigger, §08 h2.52). Set ONLY by applyLayer on present-and-number;
+   *  wrong-type repair leaves it as-is (repaired-from-default stays unset
+   *  → per-mode defaults). Never read from JSON — applyLayer is per-key
+   *  explicit, so a literal "fuzzThresholdSet" key in hapax.json is
+   *  ignored like any other unknown key. */
+  fuzzThresholdSet?: boolean;
   /** Hesitation gate for the menu's first appearance (ms; 0–2000).
    *  **Default 0 (OFF, 2026-09 final):** the gate was introduced to
    *  stop constant popping, but that symptom was actually caused by the
@@ -262,7 +278,11 @@ function applyLayer(
     const v = raw.fuzzThreshold;
     if (typeof v === "number") {
       next.fuzzThreshold = clampNumber(v, 0, 100); // round-then-clamp, silent
+      next.fuzzThresholdSet = true; // explicit beats per-mode (§04/§08 h2.52)
     } else {
+      // wrong type: repair keeps BOTH the previous value AND its
+      // explicitness (repaired-from-default stays unset → per-mode
+      // defaults: 60 ambient / 45 trigger)
       notify(
         `hapax: invalid fuzzThreshold in ${filePath}, using ${formatValue(current.fuzzThreshold)}`,
         "warning",
@@ -333,6 +353,25 @@ function applyLayer(
   }
 
   return next;
+}
+
+/** Resolve the effective fuzzThreshold for a query mode (PRD §04 trigger
+ *  loosening / §08 h2.52): an explicitly configured value overrides both
+ *  mode defaults; unset → DEFAULT_FUZZ_THRESHOLD (60) ambient /
+ *  TRIGGER_FUZZ_THRESHOLD (45) under the trigger char. The SINGLE shared
+ *  resolver — provider and widget both consume this (P1.M1.T2.S2 wires
+ *  the call sites; mode comes from extractMatchState's discriminated
+ *  union: state.mode === "trigger" ? "trigger" : "ambient") — never
+ *  duplicate the logic per call site. The string-union mode (not a
+ *  boolean) keeps future modes expressible and mirrors MatchState. */
+export function resolveFuzzThreshold(
+  config: HapaxConfig,
+  mode: "trigger" | "ambient",
+): number {
+  if (config.fuzzThresholdSet) return config.fuzzThreshold;
+  return mode === "trigger"
+    ? TRIGGER_FUZZ_THRESHOLD
+    : DEFAULT_FUZZ_THRESHOLD;
 }
 
 /**

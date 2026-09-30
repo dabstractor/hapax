@@ -20,11 +20,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_FUZZ_THRESHOLD } from "../src/core/query.js";
+import { DEFAULT_FUZZ_THRESHOLD, TRIGGER_FUZZ_THRESHOLD } from "../src/core/query.js";
 import {
   clampNumber,
   DEFAULT_CONFIG,
   loadConfig,
+  resolveFuzzThreshold,
   validateTriggerChar,
 } from "../src/pi/config.js";
 import type { HapaxConfig, LoadConfigOptions } from "../src/pi/config.js";
@@ -149,6 +150,7 @@ describe("layer precedence — defaults → user → project, later wins", () =>
     maxSuggestions: 20,
     rejectCommonness: 49,
     fuzzThreshold: 90,
+    fuzzThresholdSet: true, // explicit override (plan 004 P1.M1.T2.S1)
     menuDelayMs: 200,
     enableChaining: false,
     debug: true,
@@ -402,6 +404,101 @@ describe("fuzzThreshold — clamp in range, repair on type (PRD §08 h2.52, plan
     expect(h.warnings[0]!.msg).toContain("fuzzThreshold");
     expect(h.warnings[0]!.msg).toContain(projectPath());
     expect(h.warnings[0]!.msg).toContain("using 90");
+  });
+
+  it("unset config resolves per-mode: 60 ambient / 45 trigger (§04 trigger loosening, §08 h2.52)", () => {
+    const cfg = loadConfig(loadOpts());
+    // The internal signal is ABSENT on a fresh load — never initialized
+    // to false (toEqual identity on DEFAULT_CONFIG is the canary).
+    expect(cfg.fuzzThresholdSet).toBeUndefined();
+    expect(resolveFuzzThreshold(cfg, "ambient")).toBe(DEFAULT_FUZZ_THRESHOLD);
+    expect(resolveFuzzThreshold(cfg, "trigger")).toBe(TRIGGER_FUZZ_THRESHOLD);
+    expect(resolveFuzzThreshold(cfg, "ambient")).toBe(60);
+    expect(resolveFuzzThreshold(cfg, "trigger")).toBe(45);
+  });
+
+  it("explicit fuzzThreshold overrides BOTH mode defaults (round-trip, silent)", () => {
+    writeUserConfig({ fuzzThreshold: 80 });
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.fuzzThresholdSet).toBe(true);
+    expect(resolveFuzzThreshold(cfg, "ambient")).toBe(80);
+    expect(resolveFuzzThreshold(cfg, "trigger")).toBe(80);
+    expect(h.warnings).toEqual([]);
+  });
+
+  it("clamped explicit values stay explicit — explicit 60 overrides trigger's 45", () => {
+    writeUserConfig({ fuzzThreshold: -5 });
+    let cfg = loadConfig(loadOpts());
+    expect(cfg.fuzzThreshold).toBe(0);
+    expect(cfg.fuzzThresholdSet).toBe(true);
+    expect(resolveFuzzThreshold(cfg, "ambient")).toBe(0);
+    expect(resolveFuzzThreshold(cfg, "trigger")).toBe(0); // explicit 0 = legal
+
+    h.warnings.length = 0;
+    writeUserConfig({ fuzzThreshold: 150 });
+    cfg = loadConfig(loadOpts());
+    expect(resolveFuzzThreshold(cfg, "ambient")).toBe(100);
+    expect(resolveFuzzThreshold(cfg, "trigger")).toBe(100);
+
+    h.warnings.length = 0;
+    writeUserConfig({ fuzzThreshold: 100.7 });
+    expect(resolveFuzzThreshold(loadConfig(loadOpts()), "trigger")).toBe(100);
+
+    h.warnings.length = 0;
+    writeUserConfig({ fuzzThreshold: 60.4 });
+    cfg = loadConfig(loadOpts());
+    expect(cfg.fuzzThreshold).toBe(60);
+    // Explicit 60 is NOT the ambient default masquerading: the flag makes
+    // it override the trigger mode's 45.
+    expect(cfg.fuzzThresholdSet).toBe(true);
+    expect(resolveFuzzThreshold(cfg, "trigger")).toBe(60);
+    expect(h.warnings).toEqual([]);
+  });
+
+  it.each(["80", null, true])(
+    "wrong-type fuzzThreshold %p repairs per-mode: value 60, flag unset, one warning",
+    (bad) => {
+      writeUserConfig({ fuzzThreshold: bad as unknown });
+      const p = userPath();
+      const cfg = loadConfig(loadOpts());
+      expect(cfg.fuzzThreshold).toBe(60);
+      // Repair must NOT set the flag — repaired-from-default resolves
+      // per-mode (45 under trigger), never locked to 60.
+      expect(cfg.fuzzThresholdSet).toBeUndefined();
+      expect(resolveFuzzThreshold(cfg, "trigger")).toBe(45);
+      expect(h.warnings).toHaveLength(1);
+      expect(h.warnings[0]!.msg).toContain("fuzzThreshold");
+      expect(h.warnings[0]!.msg).toContain(p);
+      expect(h.warnings[0]!.msg).toContain("using 60");
+    },
+  );
+
+  it("layering preserves explicitness: presence wins, later presence wins, repair keeps the flag", () => {
+    // user explicit + project absent → the user value stays explicit
+    writeUserConfig({ fuzzThreshold: 80 });
+    let cfg = loadConfig(loadOpts());
+    expect(cfg.fuzzThreshold).toBe(80);
+    expect(cfg.fuzzThresholdSet).toBe(true);
+    expect(resolveFuzzThreshold(cfg, "trigger")).toBe(80);
+
+    // project explicit → later presence wins over earlier presence
+    writeProjectConfig({ fuzzThreshold: 50 });
+    cfg = loadConfig(loadOpts());
+    expect(cfg.fuzzThreshold).toBe(50);
+    expect(cfg.fuzzThresholdSet).toBe(true);
+    expect(resolveFuzzThreshold(cfg, "trigger")).toBe(50);
+
+    // project wrong-type → repairs to the CURRENT (user) value, flag
+    // untouched, exactly one warning naming the project file
+    writeProjectConfig({ fuzzThreshold: "x" });
+    cfg = loadConfig(loadOpts());
+    expect(cfg.fuzzThreshold).toBe(80);
+    expect(cfg.fuzzThresholdSet).toBe(true);
+    expect(resolveFuzzThreshold(cfg, "trigger")).toBe(80);
+    expect(h.warnings).toHaveLength(1);
+    expect(h.warnings[0]!.msg).toContain("fuzzThreshold");
+    expect(h.warnings[0]!.msg).toContain(projectPath());
+    expect(h.warnings[0]!.msg).toContain("using 80");
   });
 });
 

@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Core matching (query.ts + config + both paths)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Implement the tier-0 anchorless pass with its ambient zero-result precondition, ranking slot, RankedMatch.tier diagnostic and perf gate; then the per-mode fuzzThreshold plumbing (config explicit-vs-default signal, shared resolver, 45 trigger default) wired through both display paths (provider fallback + widget primary) with chain-arm suppression on tier-0 acceptance.",
           "tasks": [
             {
@@ -63,14 +63,14 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "`#` loose mode + per-mode threshold plumbing",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Make fuzzThreshold explicit-vs-default resolvable (config layer signal), add the 45 trigger-mode default beside the ambient 60 with ONE shared resolver, wire mode-aware calls through both display paths (provider fallback :599–603, widget primary :436–440), add the loose-mode rankMatches entry (tier-0 always consulted, deduped against anchored results), and suppress chain arming on tier-0 acceptance. Pin: #cfg → config_manager_service (tier-1 visible at 45), #query → src/core/query.ts directly.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "Config explicit-vs-default resolution + per-mode defaults (60 ambient / 45 trigger)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -89,7 +89,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "Provider + widget loose-mode wiring, tier-0 always consulted, chain-arm suppression",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1",
@@ -132,7 +132,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "README sweep to landed tier-0 + loose-mode behavior",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",

@@ -129,6 +129,16 @@ export const TIER0_SKIP_FACTOR = 40 as const;
  *  THIS constant, so the seam stays honest for direct callers. */
 export const DEFAULT_FUZZ_THRESHOLD = 60 as const;
 
+/** Default fuzzThreshold under the trigger char (PRD §04 trigger
+ *  loosening, §08 h2.52): 45 sits under tier-1's max score of 50, so the
+ *  strongest scattered matches (≤1 gap run, ≤5 gap chars) admit only in
+ *  `#` mode. Calibration starting point (§09 tuning protocol), exactly
+ *  like DEFAULT_FUZZ_THRESHOLD (60) for ambient matching. An explicitly
+ *  set config fuzzThreshold overrides BOTH mode defaults — resolution
+ *  lives in config.ts's resolveFuzzThreshold (the single shared
+ *  helper); unset configs get this constant under `#` only. */
+export const TRIGGER_FUZZ_THRESHOLD = 45 as const;
+
 /** Options for rankMatches. Everything is optional; {} means defaults. */
 export interface RankOptions {
   /** Max results; default 8 (DEFAULT_LIMIT — maxSuggestions / menu
