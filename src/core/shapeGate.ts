@@ -7,12 +7,12 @@
  * Rules, evaluated in order — first failure wins (the reason precedence
  * contract): length → secret → lowEntropy → unigramRun → consonantRun.
  *
- *  1. Length on draft.key: whole tokens 2–64, sub-words 2–32
- *     (`tooShort` / `tooLong`). Floor dropped 4 → 2 (2026): short
- *     dictionary-absent acronyms (TUI, API, CLI) are hapax's core class,
- *     and common short English (the, and, for) is owned downstream by
- *     score.ts's commonness rejection — the floor is shape noise
- *     control, never the stopword filter.
+ *  1. Length on draft.key: whole tokens 2–64, sub-words 2–32,
+ *     path-class candidates 4–96 (`tooShort` / `tooLong`). Floor dropped
+ *     4 → 2 (2026): short dictionary-absent acronyms (TUI, API, CLI)
+ *     are hapax's core class, and common short English (the, and, for)
+ *     is owned downstream by score.ts's commonness rejection — the floor
+ *     is shape noise control, never the stopword filter.
  *  2. Secret (`secret`, PRD §04 h2.23 rule 3; security acceptance §09
  *     integration item 5): pasted API keys must never surface as
  *     suggestions, so this rule is always-on with no config escape hatch
@@ -71,6 +71,14 @@ const MIN_LENGTH = 2;
 const MAX_WHOLE_LENGTH = 64;
 /** Sub-word cap (h3.4 sub-words are ≤ 32). */
 const MAX_SUBWORD_LENGTH = 32;
+/** Path-class floor (2026-10 rule 4d, spec/04 h2.25 rule 1): sub-4 path
+ *  fragments (e.g. the trimmed key "a/b") are shape noise. Deliberately
+ *  NOT the global MIN_LENGTH — only path drafts branch here. */
+const PATH_MIN_LENGTH = 4;
+/** Path-class ceiling (2026-10 rule 4d, spec/04 h2.25 rule 1): matches the
+ *  widened literal scan window segmentation scans, not MAX_WHOLE_LENGTH —
+ *  deep repo paths are exactly the technical class hapax completes. */
+const PATH_MAX_LENGTH = 96;
 /** Reject below this many bits/char of character entropy. */
 const MIN_ENTROPY_BITS = 1.5;
 /** Single-character run length that rejects (exactly this many is enough). */
@@ -160,14 +168,31 @@ const VOWELS = "aeiou";
 /**
  * Apply the shape rules to one candidate draft (PRD §04 h2.23).
  *
+ * Length bounds are class-conditional: path drafts (draft.path, 2026-10
+ * rule 4d) are 4–96; every other class keeps the global 2 floor with the
+ * whole 64 / sub-word 32 caps. All downstream rules (secret → entropy →
+ * unigramRun → consonantRun) apply to path drafts unchanged — secret
+ * scans draft.display (the ORIGINAL raw, edge symbols intact), entropy
+ * floors letter-bearing keys as usual.
+ *
  * Returns `{ ok: true }` with no `reason` on pass; on reject, exactly one
  * `GateRejectReason` per the precedence contract above. Read-only over the
  * draft — the gate never mutates its input.
  */
 export function passesShape(draft: CandidateDraft): GateResult {
   const key = draft.key;
-  const max = draft.isSubword ? MAX_SUBWORD_LENGTH : MAX_WHOLE_LENGTH;
-  if (key.length < MIN_LENGTH) return { ok: false, reason: "tooShort" };
+  // Class-conditional bounds (2026-10 rule 4d, spec/04 h2.25 rule 1):
+  // path drafts are 4–96 (wider literal-scan window; sub-4 fragments are
+  // noise); every other class keeps the global floor and its own cap.
+  // Path drafts are never sub-words (segmentation pins isSubword:false),
+  // so the branch order below has no precedence question.
+  const min = draft.path ? PATH_MIN_LENGTH : MIN_LENGTH;
+  const max = draft.path
+    ? PATH_MAX_LENGTH
+    : draft.isSubword
+      ? MAX_SUBWORD_LENGTH
+      : MAX_WHOLE_LENGTH;
+  if (key.length < min) return { ok: false, reason: "tooShort" };
   if (key.length > max) return { ok: false, reason: "tooLong" };
   // Secret check sits between length and entropy so the precedence
   // contract (length → secret → entropy → …) holds.

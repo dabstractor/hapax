@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Core admission & tokens (R1, R2)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Land the R_eff length-conditioned reject curve in src/core/score.ts (knob-scaled, guard riding R_eff, calibrate probe updated) and rule 4d path candidates across segment.ts/shapeGate.ts/store display flow. Both are pure core-layer changes with no new config surface.",
           "tasks": [
             {
@@ -79,7 +79,7 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Rule 4d slash-joined path candidates (R2; spec 04 rule 4d)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "First new token class since 4c: maximal literal-charset runs that are path-shaped (>=2 interior single '/' separators, or exactly 1 '/' plus a dotted component) become ONE opaque token with trimmed key / original-edge display. Includes the :line:col suffix trim, shape-gate path-class cap 4-96 (fixing the code-vs-spec scan-window drift 80 vs 96), store display-flow audit, bigram whole-token entry, and query-interaction verification.",
               "subtasks": [
                 {
@@ -102,7 +102,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "Shape-gate path-class cap 4-96 + secret/entropy application",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1"
@@ -118,7 +118,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S3",
                   "title": "Store display flow + key!=display audit + bigram whole-token entry",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S2"
@@ -136,7 +136,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S4",
                   "title": "Query-interaction + perf regression verification (paths under the CURRENT matcher)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S3"

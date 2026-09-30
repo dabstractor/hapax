@@ -75,6 +75,109 @@ describe("passesShape — length (PRD §04 h2.23 rule 1)", () => {
   });
 });
 
+describe("passesShape — path-class caps (2026-10 rule 4d, 4–96)", () => {
+  /** Path-class draft: key is the trimmed lowercase form, display the
+   *  ORIGINAL raw (leading '/', casing, etc. — what isSecretShaped must
+   *  see, per the S1 segmentation contract). */
+  const pathDraft = (key: string, display = key): CandidateDraft => ({
+    key,
+    display,
+    properName: false,
+    isSubword: false,
+    path: true,
+  });
+
+  // Boundary keys: the letter cycle keeps every OTHER rule silent so ONLY
+  // the length rule can fire. A 26-letter cycle has H ≈ 4.7 bits/char (≫
+  // 1.5), no unigram runs, and max consonant runs of 5 (< 6) at the
+  // junctions; a 2-letter alternation would die lowEntropy (H = 1.0)
+  // before the cap could matter. "src/" + 3 cycles + prefix = 96/97;
+  // all-lowercase keeps the base64url secret rule inert (needs uppercase
+  // AND ≥ 2 digits in a ≥ 16 run).
+  const key96 = "src/" + "abcdefghijklmnopqrstuvwxyz".repeat(3) + "abcdefghijklmn";
+  const key97 = "src/" + "abcdefghijklmnopqrstuvwxyz".repeat(3) + "abcdefghijklmno";
+
+  it("accepts an ordinary deep path (src/core/query.ts)", () => {
+    expect(passesShape(pathDraft("src/core/query.ts"))).toEqual({ ok: true });
+  });
+
+  it("accepts a trimmed absolute path (leading '/' stripped from the key)", () => {
+    expect(passesShape(pathDraft("/home/user/projects/hapax".slice(1)))).toEqual({
+      ok: true,
+    });
+  });
+
+  it("accepts a 96-char path key (class ceiling — beyond MAX_WHOLE_LENGTH 64)", () => {
+    expect(key96.length).toBe(96);
+    expect(passesShape(pathDraft(key96))).toEqual({ ok: true });
+  });
+
+  it("rejects a 97-char path key as tooLong", () => {
+    expect(key97.length).toBe(97);
+    expect(passesShape(pathDraft(key97))).toEqual({
+      ok: false,
+      reason: "tooLong",
+    });
+  });
+
+  it("rejects a 3-char path key as tooShort (floor 4, not the global 2)", () => {
+    // H("a/b") = log2(3) ≈ 1.585 would clear entropy — the floor is the
+    // ONLY reason this rejects.
+    expect(passesShape(pathDraft("a/b"))).toEqual({
+      ok: false,
+      reason: "tooShort",
+    });
+  });
+
+  it("accepts a 4-char path key at the floor boundary", () => {
+    expect(passesShape(pathDraft("a/b/c"))).toEqual({ ok: true });
+  });
+
+  it("base floor is unchanged: a 2-char non-path key dies lowEntropy, not tooShort", () => {
+    // H("ab") = 1.0 < 1.5 — entropy, not the global floor, rejects it.
+    expect(passesShape(draft("ab"))).toEqual({
+      ok: false,
+      reason: "lowEntropy",
+    });
+  });
+
+  it("rejects a path whose display is email-shaped ('@' + '.') as secret", () => {
+    // isSecretShaped sees the ORIGINAL raw display — '@' survives there
+    // even though the trimmed key is lowercase slash-form.
+    expect(
+      passesShape(pathDraft("example.com/a/b", "user@example.com/a/b")),
+    ).toEqual({ ok: false, reason: "secret" });
+  });
+
+  it("rejects a base64url-texture path segment as secret (conservative whole reject)", () => {
+    // Rule 5: a ≥ 16-char [A-Za-z0-9_-] run with ≥ 1 lowercase, ≥ 1
+    // uppercase, AND ≥ 2 digits — "aB12xY34zQ56wE78" is exactly 16. The
+    // whole candidate rejects (spec'd conservative behavior), key form
+    // lowercase as segmentation would emit it.
+    expect(
+      passesShape(pathDraft("src/ab12xy34zq56we78/b", "src/aB12xY34zQ56wE78/b")),
+    ).toEqual({ ok: false, reason: "secret" });
+  });
+
+  it("rejects a low-entropy letter-bearing path key as lowEntropy", () => {
+    // '/' is not [a-z], but the key contains letters — the entropy floor
+    // applies as-is (H("a/a/a/a") = 1.0 < 1.5). No path special-case.
+    expect(passesShape(pathDraft("a/a/a/a"))).toEqual({
+      ok: false,
+      reason: "lowEntropy",
+    });
+  });
+
+  it("length precedes secret: a 97-char key with a base64url-shaped display is tooLong", () => {
+    // The display carries a qualifying 16-char base64url run (would be
+    // 'secret' if reached) — the precedence contract (length → secret)
+    // pins tooLong.
+    expect(
+      passesShape(pathDraft(key97, "aB12xY34zQ56wE78/" + key97)),
+    ).toEqual({ ok: false, reason: "tooLong" });
+  });
+});
+
 describe("passesShape — low entropy (rule 3, over the lowercase key)", () => {
   it("rejects a single repeated char (H = 0)", () => {
     expect(passesShape(draft("aaaa"))).toEqual({
