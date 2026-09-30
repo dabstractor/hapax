@@ -148,7 +148,7 @@
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "BUG-002: tokenizer overlap — defer to the containing base token for trailing-'_' literals",
-              "status": "Ready",
+              "status": "Complete",
               "description": "segment.ts pass 4's literal loop only defers on exact equal spans; a base token that strictly CONTAINS the trimmed literal span (trailing-'_' trim, e.g. tokenize('FOO_1_') → overlapping ['FOO_1'[0,5), 'FOO_1_'[0,6)]) is emitted alongside the literal, producing duplicate menu candidates. Fix: containment defer (o.start <= start && end <= o.end) + spec/04 'Strictly additive' bullet extension.",
               "subtasks": [
                 {
@@ -170,7 +170,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "End-to-end no-duplicate assertion (ingest → store → rankMatches)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P1.M2.T1.S1"

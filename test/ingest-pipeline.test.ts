@@ -725,3 +725,33 @@ describe("parent-secret propagation to sub-words (BUG-003 residue, PRD h3.5)", (
     expect(stats.rejectedByGate.secret).toBe(0);
   });
 });
+
+describe("trailing-'_' literals store once — no duplicate candidates (BUG-002, PRD h3.1)", () => {
+  it("processText('rename FOO_1_ and USER_2_TOKEN_ constants') stores foo_1_/user_2_token_ and NOT the trimmed twins; rankMatches offers exactly one candidate per probe", async () => {
+    const h = makePipeline();
+    await h.pipeline.processText("rename FOO_1_ and USER_2_TOKEN_ constants", true);
+
+    // Store level: the whole identifier (with trailing '_') is the token;
+    // the trimmed literal fork must never become a candidate. (S1's fix —
+    // the containment defer in tokenize's literal pass, pinned at the
+    // segment level in test/segment.test.ts "trailing-'_' trim defers to
+    // the containing base token" — this is the ingest→store seam.)
+    expect(h.store.get("foo_1_")).toBeDefined();
+    expect(h.store.get("foo_1")).toBeUndefined();
+    expect(h.store.get("user_2_token_")).toBeDefined();
+    expect(h.store.get("user_2_token")).toBeUndefined();
+
+    // Menu level (the user-visible symptom): one completion target, not
+    // ['FOO_1','FOO_1_']. Pre-fix both keys stored → both offered (plural
+    // pruning covers only key+'s' pairs — query.ts:553-565 — never '_'),
+    // so ranking can never rescue this class; admission must never see
+    // both tokens (r2-tokenizer-overlap.md Claim 2 repro).
+    const fooMatches = rankMatches(h.store, "foo_");
+    expect(fooMatches.map((m) => m.key)).toEqual(["foo_1_"]);
+    expect(fooMatches[0]!.display).toBe("FOO_1_"); // single sighting → as-typed casing
+
+    const userMatches = rankMatches(h.store, "user_2");
+    expect(userMatches.map((m) => m.key)).toEqual(["user_2_token_"]);
+    expect(userMatches[0]!.display).toBe("USER_2_TOKEN_");
+  });
+});
