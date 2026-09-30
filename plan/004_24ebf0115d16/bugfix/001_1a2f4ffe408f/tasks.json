@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "Bugfix changeset 001 — restore M2 chaining on the widget path; fix tokenizer overlap, suppression leak, chunk shredding",
-      "status": "Ready",
+      "status": "Complete",
       "description": "Fix the four verified defects from the bug-hunt PRD: BUG-001 (Major) M2 chained completion structurally dead on the widget PRIMARY display path; BUG-002 tokenizer overlapping tokens for trailing-'_' technical literals (duplicate menu candidates); BUG-003 widget suppression keyed by numeric fragment start leaks across messages; BUG-004 64KB chunk-boundary token shredding. All claims were re-verified against the working tree by four parallel research agents with live reproduction; findings live in plan/004_24ebf0115d16/bugfix/001_1a2f4ffe408f/architecture/ (system_context.md + r1..r4). Every fix lands code + spec together per AGENTS.md. Baseline: npm run check clean, 1053 passed / 1 skipped.",
       "milestones": [
         {
@@ -141,7 +141,7 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Tokenizer overlap, suppression leak, chunk-boundary shredding (BUG-002/003/004) + changeset-level docs sync",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Three independent defect fixes (each landing code + its spec edit together), sequenced after P1.M1 where they share the visibility machine, plus the final Mode B documentation task that sweeps README/spec-text for the whole changeset.",
           "tasks": [
             {
@@ -254,7 +254,7 @@
               "type": "Task",
               "id": "P1.M2.T4",
               "title": "Sync changeset-level documentation",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Mode B catch-all: once the whole changeset is in place, sweep the cross-cutting docs — README.md's chained-completion feature blurb (currently fallback-path-only) and the PRD-flagged pure-text spec drift (spec/04's 9-char boundary example arithmetic; spec/09 vs spec/06 eviction wording). Runs last; depends on every implementing subtask.",
               "subtasks": [
                 {
@@ -288,7 +288,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T4.S2",
                   "title": "Spec-text drift corrections flagged by the PRD",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 0.5,
                   "dependencies": [
                     "P1.M1.T1.S1",

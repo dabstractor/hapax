@@ -83,8 +83,9 @@
 
 **store.test.ts**
 - Upsert merge semantics (count, ordinals, sticky flags, rankGroup min).
-- Eviction: insert 20,001 → exactly one eviction, lowest evictionScore;
-  userTyped survives.
+- Eviction: insert 20,001 → exactly one eviction pass (a full 256-victim
+  batch, per spec/06's batch-of-256 rule), dropping the lowest
+  evictionScore victims; userTyped survives.
 - Prefix index rebuild-after-dirty correctness.
 
 **dictionary.test.ts**

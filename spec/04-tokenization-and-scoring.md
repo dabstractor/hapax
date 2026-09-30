@@ -306,8 +306,9 @@ flips, nothing below 11 chars); **sqrt 8→20 adopted** (≈10.5k flips).
 
 Measured effect against the shipped artifact (sqrt 8→20): ≈10.5k
 corpus words flip vs the flat band — nothing below 9 chars changes; at
-9 chars admits q<82, 10 → q<110 (`government` yes; `everything`
-q=139 no), 11 → q<133 (`information`, `development`), 12 → q<152
+9 chars admits q≤82 (`R_eff(9)` ≈ 82.15, float compare — q=83 is the
+first reject), 10 → q<110 (`government` yes; `everything` q=139 no),
+11 → q<133 (`information`, `development`), 12 → q<152
 (`organization`, `relationship`), 14 → q<184 (`characteristics`,
 `infrastructure`, `responsibility`); admit-all from 20. The 2026-09
 audit's noise words all stay rejected (`provider` q=34 sits on the
