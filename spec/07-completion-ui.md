@@ -1,8 +1,109 @@
 # 07 — Completion UI
 
-## Provider integration
+## Display architecture (2026-10 owner rule: one-line widget, dual-path)
 
-Single registration in the `session_start` handler:
+hapax displays word suggestions on its own **one-line result widget** —
+not pi-tui's vertical SelectList (which renders one item per row, with
+an optional right-hand description column, and has no horizontal
+mode). Two paths, decided at session start:
+
+- **Primary (widget):** when an editor factory exists — some extension
+  installed an editor, so hapax's editor proxy (below) can compose
+  around it — hapax renders the widget and owns display and key
+  semantics entirely. No autocomplete provider is registered on this
+  path; stock path/slash/`@` completion is untouched by construction.
+- **Fallback (stock vertical menu):** pi exposes no stock editor to
+  extensions (`getEditorComponent()` is undefined until an extension
+  sets one). Where no factory exists the proxy cannot install and the
+  widget cannot run; there hapax registers the provider below and
+  displays through pi-tui's vertical menu (the pre-2026-10 behavior,
+  single-item forced return included). Both paths share the query
+  core (04), the startup gate, and the debounce/hysteresis timing.
+
+Considered and rejected (2026-10, recorded for history): a single
+synthesized menu item whose label is the joined line (zero pi-tui
+changes, but arrow selection of non-top words is lost) and waiting
+for an upstream pi-tui horizontal menu mode (no timeline; blocks the
+display change indefinitely). The owner chose arrow selection on an
+own-rendered line.
+
+### One-line widget (primary display)
+
+- One line directly below the input editor: items joined by `" | "`,
+  rank order left→right (04), never wraps. The right-hand column is
+  RETIRED: no `Session ×N` frequency, no `description` provenance (the
+  `chain` marker included). Frequency still ranks (04); it just isn't
+  displayed. A result item is the candidate display string, nothing
+  else.
+- Line cap = `maxSuggestions` AND terminal width: overflow drops the
+  lowest-ranked (rightmost) items first.
+- Zero candidates → the line never renders (invariant 3).
+- The highlight (theme accent) sits on the leftmost/top item by
+  default and resets to it on every result-set change.
+
+### Widget key handling (amends the never-hijack invariant; 2026-10)
+
+While the line is visible, the editor proxy consumes — before the
+inner editor sees them:
+
+- **All four arrows navigate.** ← and ↑ move the highlight left; →
+  and ↓ move it right. (Owner-accepted capture of the arrow cluster
+  while the line shows; boundary-Esc below is the escape hatch.)
+- **Boundary-Esc (owner refinement).** ↑ or ← while the highlight is
+  on the FIRST word acts as Escape: the line dismisses, the press is
+  consumed (it does NOT also move the caret), and control returns to
+  the user — pressing ← twice mid-word goes back one character
+  (first press dismisses, second moves the caret). → and ↓ at the
+  LAST word clamp (consumed, no movement): nothing needs editing to
+  the right of the cursor, so no dismissal is warranted there.
+- **Explicit dismissal (Escape, boundary-Esc) suppresses the line for
+  the REST OF THE WORD.** Re-open only at the next word start or
+  trigger char. A disqualification close (candidates hit zero) does
+  not suppress — the next qualifying keystroke reopens.
+- **Tab inserts the highlighted word** (leftmost if none
+  highlighted), synchronously against the live query — never gated by
+  the display debounce (invariant 2). Insertion replaces the live
+  fragment span (word regex or `#fragment`, below) with the
+  candidate's display casing: stock `applyCompletion` semantics,
+  reimplemented on the widget path because no provider item exists
+  there.
+- **Enter ALWAYS submits, never inserts** — the Enter-submits proxy
+  rule extends to the widget: Enter dismisses the line, then forwards
+  the keystroke so the inner editor submits.
+- **Everything else forwards verbatim.** Typing updates the query and
+  the line per the debounce/hysteresis rules; no text is ever altered
+  outside Tab-insertion.
+
+Invariant amendment (binding; SPEC.md): the never-hijack invariant's
+sanctioned captures are now Tab while a suggestion is selected, the
+Enter-submits proxy, and — while the result line is visible — the
+four arrows and Escape. Outside those windows, zero key handling.
+
+### Widget visibility state machine (auto-open, re-based)
+
+The widget path does not depend on pi-tui's request cadence (the
+one-request-per-word constraint was the vertical-menu world's).
+Visibility is driven by the editor proxy's input clock (already the
+hesitation gate's timing source) plus hapax's own context detection
+on each keystroke:
+
+1. Extract the live fragment per the regexes below (trigger char,
+   word fragment). Path/slash/`@` contexts: line hidden (stock
+   completion owns them).
+2. Fragment live + ≥ 1 candidate above the fuzzy threshold (04) →
+   line visible, subject to `menuDelayMs` (hesitation gate) and the
+   100 ms swap debounce — both carried over unchanged.
+3. Trailing space with no `@`/`/` in text-before-cursor → hidden
+   (close-on-space carried over as the widget's own state).
+4. Cursor move, Escape, boundary-Esc, disqualification → hidden
+   (flicker hysteresis carried over: narrowing must not
+   close-and-reopen).
+5. The startup restore gate (below) applies identically.
+
+## Provider integration (fallback path only)
+
+Single registration in the `session_start` handler — used ONLY when
+no editor factory exists (see Display architecture):
 
 ```ts
 ctx.ui.addAutocompleteProvider((current) => ({
@@ -26,14 +127,16 @@ insertion if validation proves a need. The one sanctioned exception to
 "never touch the editor" is the Enter-submits wrapper below.
 
 The wired stack (`src/pi/index.ts`) composes bottom-up: hapax core
-provider → startup gate → display layer (hesitation gate + 100 ms swap
-debounce) → registration. The editor proxy (below) wraps whichever
+query (04) → startup gate → display layer — the widget (primary:
+hesitation gate + 100 ms swap debounce + key handling) or provider
+registration (fallback). The editor proxy (below) wraps whichever
 factory the extension ecosystem installed and feeds the shared input
-clock.
+clock; the widget path depends on it.
 
-## Auto-open: how the menu ever appears
+## Auto-open (fallback path): how the menu ever appears
 
-pi-tui's editor only CALLS `getSuggestions` while the user types plain
+Fallback path only — the widget opens per its own visibility state
+machine (Display architecture above). pi-tui's editor only CALLS `getSuggestions` while the user types plain
 letters under narrow conditions: the typed char must be a registered
 trigger character, at a word start (line start or after space/tab) — the
 first letter of each word — and once a menu is open it re-requests on
@@ -52,6 +155,9 @@ every keystroke (self-updating). Consequences, all load-bearing:
   candidates → delegation → nothing renders, and pi-tui cancels.
 - hapax still delegates whenever no fragment matches, so stock contexts
   (slash, @, paths) are unaffected by the registered letters.
+- Path-class candidates (04, rule 4d, 2026-10) surface at a path's
+  FIRST segment (`sr` → `src/core/query.ts`); once a `/` precedes the
+  cursor, stock pi file completion owns the rest — unchanged.
 
 ## Trigger modes
 
@@ -60,8 +166,10 @@ Two lookup modes, both always active:
 1. **Trigger char** (default `#`): the regex `/(?:^|[ \t])#([^\s#]*)$/` on
    text-before-cursor. When matched, lookup starts from the **first** char
    after `#` (0-char minimum: `#` alone lists the top candidates in
-   content-derived order). On completion, `applyCompletion` replaces
-   `#fragment` with the word (trigger char is consumed).
+   frequency order — sessionCount desc, 04's zero-fragment rule). On
+   completion, `applyCompletion` (fallback) or the widget's Tab
+   insertion (primary) replaces `#fragment` with the word (trigger
+   char is consumed).
 2. **Word matching**: the regex `/[A-Za-z][A-Za-z0-9_-]*$/` on
    text-before-cursor (inner and trailing hyphens admitted — hyphenated
    compounds are single candidates per spec 04 rule 4b, so mid-compound
@@ -79,7 +187,9 @@ otherwise `return current.getSuggestions(...)` untouched (path/slash
 completion must keep working exactly as before, including inside quoted
 paths).
 
-Case-insensitive prefix match; insertion uses candidate display casing.
+Case-insensitive **anchored fuzzy** match (04 — first char exact,
+subsequence after, threshold-gated, tier-ranked); insertion uses
+candidate display casing.
 
 ## Debounce, flicker, and the Tab contract
 
@@ -89,6 +199,9 @@ Four interacting rules, implemented in the provider:
    keypress, when a live suggestion set exists (computed synchronously,
    whether or not the debounced popup has painted it), completes the
    **selected** item — or the **top** item if none is selected — immediately.
+   (Widget path: the proxy consumes Tab while the line is visible and
+   inserts the highlighted word — exactly this rule. Fallback path:
+   the forced single-item return below.)
    Tab must never open, toggle, summon, or expand the menu. Menu visibility
    is driven exclusively by typing: the menu opens automatically on the
    1st char of any word matching a candidate, on the 1st char after the
@@ -164,6 +277,11 @@ bound during that window only; the synchronous-query Tab contract
 
 ### Tab-open gesture: root cause (traced) and mitigation
 
+(FALLBACK PATH ONLY — on the widget path Tab is consumed by the editor
+proxy before this editor branch can run, and no provider answers word
+fragments, so no stock menu can open for them; the bug class is
+structurally absent there.)
+
 The "Tab opens the menu" gesture originates in **pi-tui's editor**
 (`components/editor.js`), not in hapax:
 
@@ -203,9 +321,12 @@ applies it in the same keypress. Rules:
 
 ### pi-tui contract dependencies (re-verify on upgrades)
 
-Four runtime contracts are leaned on (marked as PINs at their
-consumption sites in `src/pi/provider.ts`); none is enforced by types.
-On any pi-tui upgrade, re-verify each:
+Four runtime contracts are leaned on by the FALLBACK path (marked as
+PINs at their consumption sites in `src/pi/provider.ts`); none is
+enforced by types. The widget path leans instead on the editor-proxy
+composition rules (never mutate shared instances — the v1 crash
+lesson below) and its own render surface below the editor. On any
+pi-tui upgrade, re-verify each:
 
 - the single-item forced fast path (`force && explicitTab &&
   items.length === 1` applies the completion without opening a menu);
@@ -223,7 +344,8 @@ On any pi-tui upgrade, re-verify each:
   hapax's own menu and alters no text.
 - **Close-on-space (2026-09, "stuck file menu" fix):** a NON-forced
   query at a plain trailing space — no `@`, no `/` in the text before
-  the cursor — returns null (menu closes) instead of delegating. pi's
+  the cursor — returns null (menu closes) instead of delegating (widget
+path: the line hides at trailing space by its own state machine). pi's
   stock provider treats text-ending-in-space as the start of file
   completion (`extractPathPrefix` returns `""` → the whole cwd
   listing); in stock pi that is reachable only through deliberate
@@ -236,7 +358,10 @@ On any pi-tui upgrade, re-verify each:
   only: 1st-char word match, 1st char after the trigger char, or the
   zero-char chain offer. There is no manual open gesture; Tab completes,
   full stop.
-- Escape, arrows, backspace, space behave exactly as stock pi.
+- Fallback path: Escape, arrows, backspace, space behave exactly as
+  stock pi. Widget path: arrows and Escape are consumed while the
+  line is visible (boundary-Esc above); backspace and space behave as
+  stock.
 - Tab with no live suggestion set passes through as a literal Tab.
 - The user can type an entire session and never trigger a menu for common
    words: `the`, `context` are rank-rejected; conjugations of common words
@@ -306,9 +431,11 @@ armed(W):
     message after a single Tab (live-reproduced; fixed same day).
     Acceptance re-arms with a fresh grant: Tab→offer→Tab→offer flows
     exactly as before.
-  - typed chars filter the live successor list (prefix,
-    case-insensitive, as usual); threshold stays 0 for the duration of
-    the chain
+  - typed chars filter the live successor list with the same
+    anchored fuzzy matcher (04) as a membership gate; ranking within a
+    chain stays SUCCESSOR-COUNT-based (the successor index's counts,
+    not sessionCount — chains are bigram-driven by design); threshold
+    stays 0 for the duration of the chain
   - Tab during armed (selected item, or top if none selected, per rule 0)
     → insert it (ONE word), transition armed(next)
   - Any non-Tab key that disqualifies (space, escape, punctuation) → idle
@@ -318,18 +445,30 @@ armed(W):
 ```
 
 - Chaining arms only from our own candidates, never from path completion.
+- Chain offers render on the widget line (or fallback menu) like any
+  result set — with the description column retired there is no `chain`
+  marker; the offer is visually indistinguishable from a typed match.
 - The chain state resets on every `before_agent_start` (new user turn).
 - Trigger-char completions also arm the chain (they're whole-word
   insertions).
 
-## Menu item shape
+## Result item shape
 
-`AutocompleteItem`: `value` = the string to insert — **always exactly one
-word** (candidate display casing). Multi-word items are forbidden
-(invariant; see 06). `label` = same, `description` = optional short
-provenance (e.g. `session ×12` or `chain`) — keep minimal; do not clutter.
+A result item is **one word**: the candidate display casing. On the
+widget path an item carries NO metadata — no `Session ×N` frequency,
+no provenance (`chain`), no rank-group markers. The line is words,
+`" | "` separators, and one highlight, nothing else. (Frequency and
+provenance still drive ordering; they just aren't rendered.)
 
-Max 8 items per result set, ordered per 04 ranking (including 04's
-plural pruning: an exact key/key+`"s"` pair in the same result set
-yields only the singular). Every item is a single
-word, including during chains (06, 07).
+On the FALLBACK path, items are `AutocompleteItem`s: `value` = the
+string to insert — **always exactly one word** (candidate display
+casing); multi-word items are forbidden (invariant; see 06); `label` =
+same; `description` = optional short provenance (e.g. `session ×12`
+or `chain`) — keep minimal; do not clutter.
+
+Max `maxSuggestions` (default 8) items per result set, ordered per 04
+ranking (including 04's plural pruning: an exact key/key+`"s"` pair
+in the same result set yields only the singular). Every item is a
+single word, including during chains (06, 07); the widget line
+additionally truncates to terminal width, lowest-ranked dropped
+first.

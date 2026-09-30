@@ -17,13 +17,16 @@ matching word (or the 1st character after the trigger char, default `#`).
 - **Admission** — the decision that a segmented word is worth storing (global
   commonness + shape gates).
 - **Salience** — the dynamic per-session retention score (frequency,
-  recency, source, rarity). Drives store eviction, never menu order.
+  recency, source, rarity). Drives store eviction; its frequency
+  component (sessionCount) breaks ranking ties within match-strictness
+  tiers (04).
 - **Trigger char** — a configurable character (default `#`) that initiates
   lookup from the first character after it.
-- **Word matching** — prefix lookup from the first character of a word,
-  firing everywhere the user types. (The `threshold` config value, 1–3,
-  is retained for schema compatibility but inert in the live editor —
-  see 07.)
+- **Word matching** — anchored fuzzy lookup from the first character
+  of a word (first char exact, then a threshold-gated fuzzy
+  subsequence — 04), firing everywhere the user types. (The
+  `threshold` config value, 1–3, is retained for schema compatibility
+  but inert — see 07.)
 
 ## Goals (M1)
 
@@ -31,9 +34,11 @@ matching word (or the 1st character after the trigger char, default `#`).
 2. Admit them via a static common-words dictionary + shape gates.
 3. Order the menu content-derived (shortest match first, then
    lexicographic — stable and predictable); salience governs retention
-   and eviction only.
+   and eviction only. (Ordering superseded 2026-10 by M3 goal 9;
+   admission/eviction split unchanged.)
 4. Complete them through pi's built-in autocomplete menu with zero typing
-   interference.
+   interference. (Superseded as PRIMARY display 2026-10 by M3 goal 10;
+   retained as the fallback path.)
 5. Total memory < 6 MB steady state; query latency < 1 ms; ingest of a
    300k-token session < 100 ms in background.
 
@@ -43,6 +48,17 @@ matching word (or the 1st character after the trigger char, default `#`).
    only phrase behavior is successor chaining (goal 7).
 7. Chained completion: accepting a word arms its most-likely successor for
    zero-additional-typing Tab completion.
+
+## Goals (M3)
+
+8. Anchored-fuzzy matching after the first typed character,
+   threshold-gated (`fuzzThreshold`, 08) so a large store never floods
+   the results (04).
+9. Conversation-frequency tie-breaking within equal match-strictness
+   tiers — sessionCount descending inside a tier (04).
+10. One-line horizontal result display: words joined `" | "`, no
+    frequency column, hapax-rendered widget with arrow selection and
+    boundary-Esc (07); the vertical stock menu retained as fallback.
 
 ## Non-goals (explicit)
 
@@ -69,11 +85,19 @@ matching word (or the 1st character after the trigger char, default `#`).
 - **Tab may insert a top item the debounced popup hasn't painted yet.** The
   computation is deterministic and correct; treated as cosmetic. Revisit only
   if observed in practice (see 07, "Tab-before-paint").
+- **Arrow capture while the result line shows.** All four arrows are
+  captured whenever the line is visible — auto-open makes that most
+  mid-word keystrokes. Boundary-Esc (↑/← on the first word) dismisses
+  and returns the keys. Owner-accepted trade-off, 2026-10.
 
 ## UX principles
 
 - The user's typing experience is identical with or without the extension,
-  except that Tab occasionally does something useful.
-- The menu is a suggestion surface, never a modal, never a key consumer.
+  except that Tab occasionally does something useful and, while the
+  result line is visible, the arrow keys navigate it (boundary-Esc
+  returns control instantly; 07).
+- The result line is a suggestion surface, never a modal. While visible
+  it consumes the four arrows and Escape — boundary-Esc returns control
+  instantly (07); never any typing key.
 - Suggestions that would embarrass (secrets, garbage tokens) must never appear;
   the shape gate is load-bearing for the absent-from-dictionary class.

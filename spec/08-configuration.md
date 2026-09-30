@@ -23,14 +23,26 @@ defaults, continue running. Missing files are normal.
                               // matching is effectively 1 char (see 07).
                               // Kept for schema compatibility. 1 | 2 | 3.
   "maxSuggestions": 8,       // 1–20
-  "rejectCommonness": 12,    // 1–255: dictionary quantile at/above which
-                              // a word is rejected from the store (higher
-                              // = looser). Governs admission AND the
-                              // conjugation guard's stem comparison. Probe
-                              // any word first: node tools/calibrate-bands.mjs
-                              // <words...> prints q + verdict (lowercase and
+  "rejectCommonness": 12,    // 1–255: dictionary-attestation FLOOR of
+                              // the length-conditioned reject curve R_eff
+                              // (04): flat through 8 chars, sqrt ramp to
+                              // admit-all at 20 — higher = looser, the
+                              // whole curve scales from this floor.
+                              // Governs admission AND the conjugation
+                              // guard's stem comparisons (via R_eff).
+                              // Probe any word first: node
+                              // tools/calibrate-bands.mjs <words...>
+                              // prints q + verdict (lowercase and
                               // Capitalized). Default: the baked constant
                               // in src/core/score.ts.
+  "fuzzThreshold": 60,      // 0–100: minimum anchored-fuzzy match score
+                              // (04) for a candidate to enter a result set.
+                              // Higher = stricter; 100 = exact-prefix-only
+                              // mode. Default is the calibration starting
+                              // point (09 tuning protocol), imported from
+                              // the baked constant in the query module
+                              // automatically — same pattern as
+                              // rejectCommonness.
   "menuDelayMs": 0,          // 0–2000: hesitation gate for the menu's
                               // first appearance. DEFAULT 0 (OFF): the
                               // popping the gate was built to stop turned
@@ -52,19 +64,28 @@ defaults, continue running. Missing files are normal.
 Validation: clamp/repair invalid values to defaults (log when repaired).
 `triggerChar` must match `/^[^\w\s]$/` or be empty. `threshold` clamped to
 1–3. `maxSuggestions` clamped 1–20. `rejectCommonness` clamped 1–255.
-`menuDelayMs` clamped 0–2000.
+`fuzzThreshold` clamped 0–100. `menuDelayMs` clamped 0–2000.
 
 ## Not configurable (by settled decision)
 
-- Salience weights, the mid-frequency band (20), the proper-noun relief
-  ceiling (95), shape-gate secret rules, the conjugation-guard suffix
-  set, eviction cap, debounce intervals, popup timing. These are
+- Salience weights, the mid-frequency band (20; retired 2026-10 — both
+  conjugation-guard tiers ride the length-conditioned R_eff), the
+  proper-noun relief ceiling (12, retired-in-place), the
+  length-gradient curve shape (sqrt, 8-char floor hold, 20-char
+  admit-all — 2026-10), shape-gate secret rules, the conjugation-guard
+  suffix set, eviction cap, debounce intervals, popup timing, and the
+  fuzzy scorer's tier constants (04 — tier BOUNDARIES are semantics,
+  not tuning). These are
   internal tuning constants — the tuning protocol lives in 09, not in
-  user config. The reject band is the one deliberate exception
-  (`rejectCommonness`): dictionary attestation is near-disqualifying
-  evidence (2026-09 owner rule — "commit hashes and variable names, not
-  half of the english language"); the knob exists so the owner can
-  loosen or tighten against real sessions without a code edit. The
+  user config. The admission floor and the fuzzy admission threshold
+  are the TWO deliberate exceptions (`rejectCommonness`,
+  `fuzzThreshold`): dictionary attestation is near-disqualifying
+  evidence at short lengths (2026-09 owner rule — "commit hashes and
+  variable names, not half of the english language"; length-conditioned
+  2026-10 — see 04); the knob exists so the owner can loosen or tighten
+  against real sessions without a code edit (fuzz threshold,
+  2026-10: a large store with loose fuzzy settings bloats the
+  suggestions). The
   config default imports score.ts's baked REJECT_COMMON_THRESHOLD
   automatically — no separate default to keep in sync.
 

@@ -5,7 +5,10 @@ Two independent scores, deliberately conflated nowhere:
 - **Global commonness** — static, from the dictionary. Drives **admission**
   (plus the conjugation guard below).
 - **Session salience** — dynamic, from store stats. Drives **eviction**
-  (06); it never orders the menu.
+  (06). Its frequency component (`sessionCount`) now ALSO breaks ranking
+  ties within match-strictness tiers (2026-10 owner rule — see Query
+  matching / Query ranking below); the salience score itself still never
+  orders anything.
 
 ## Segmentation (`src/core/segment.ts`)
 
@@ -19,7 +22,8 @@ sweep of rules 4a–4c below):
 plus a second scan for hexish tokens:
 /(?=[0-9a-fA-F]*[A-Fa-f])(?:[0-9a-fA-F]{6,40})\b/g  → letter-containing hex
 plus the 4c literal scan (trim/composition rules below):
-/[A-Za-z0-9._@:+/~=-]{4,80}/g          → technical literals (digit-bearing)
+/[A-Za-z0-9._@:+/~=-]{4,96}/g          → technical literals (digit-bearing)
+                                       → and 4d path-shaped runs (see 4d)
 ```
 
 Rules:
@@ -37,8 +41,8 @@ Rules:
    NOTHING (not `bsidianMirror`). Never slice a non-ASCII letter out of a
    word and complete the ASCII remainder. CJK word segmentation remains a
    documented non-goal.
-4. **Punctuation/whitespace terminate tokens — EXCEPT the compound
-   joins of rules 4a/4b.** Apostrophes always split (`don't` →
+4. **Punctuation/whitespace terminate tokens — EXCEPT the symbol/hyphen
+   joins of rules 4a–4d.** Apostrophes always split (`don't` →
    `don`); commas, brackets, quotes, whitespace terminate.
    4a. **Dotted filename-shaped tokens stay whole (2026-09 rule).** A
        word run with one or more dotted alphanumeric parts whose FINAL
@@ -85,7 +89,9 @@ Rules:
          (`C++`, `and/or`, `e.g.`) do NOT qualify — that class stays
          with 4a/4b, where prose-shaped noise is already curated. The
          owner's phrase was "any two of numbers, symbols or letters";
-         digit-free joins are the deliberately dropped corner.
+         digit-free joins are the deliberately dropped corner
+         (digit-free SLASH-joined runs are owned by 4d's path
+         predicate).
        - **Single interior symbols, edges trimmed.** `..`, `//`, `::`
          reject (URLs die at `://` exactly as before); trailing
          sentence periods never glue (`fox.` stays `fox`); leading
@@ -109,6 +115,63 @@ Rules:
          decimal ≥ 16 reject) — `192.168.1.1:8080` and ISO
          timestamps pass (the ratio heuristic that killed them is
          retired, 2026-10).
+   4d. **Slash-joined paths stay whole (2026-10 owner rule; status:
+       adopted ahead of implementation — code lands with this spec).**
+       A maximal literal-charset run that is PATH-SHAPED is ONE token:
+       `src/core/query.ts`, `/home/user/projects/hapax`,
+       `docs/architecture.md`, `../tools/build.mjs`, `example.com/a/b`.
+       Paths from conversation — model-suggested, user-typed,
+       planned-but-not-yet-created — are retyping targets disk
+       completion cannot know. Predicate (after edge trimming):
+       **≥ 2 interior single `/` separators, OR exactly 1 interior `/`
+       plus a dotted component** (`docs/readme.md`). Digit-bearing runs
+       already qualify via 4c; a run qualifying both ways takes the
+       path class (the more specific one — downstream behavior is
+       identical, both are opaque whole tokens).
+       - **Edge trim vs display.** The KEY trims leading `/`, `~`,
+         `./`, `../` (and combinations) and a trailing `/` — matching
+         happens on the trimmed form, because the editor fragment
+         always starts at a letter. The DISPLAY preserves the original
+         edge symbols: `/home/...` inserts with its leading slash,
+         `../tools/build.mjs` with its `../`. Casing recency-merge is
+         unchanged.
+       - **Line/column suffix.** A trailing `:digits(:digits)?` is
+         trimmed when the remainder is path-shaped
+         (`src/foo.ts:42:13` → `src/foo.ts`) — the user retypes the
+         path, not the line numbers. Non-path colons keep their
+         meaning: `4:36` (time) and `localhost:8080` (host:port) are
+         untouched.
+       - **Guards.** Single interior symbols only (interior `..`
+         rejects the whole run — `a/../b` shreds; leading `../` is an
+         EDGE, trimmed); rule-3 Unicode-letter adjacency applies;
+         strictly additive against equal spans of other classes (in
+         practice paths cannot equal a base/hexish/compound span —
+         they contain `/`); post-trim key length 4–96 (the shape
+         gate's path-class cap; the literal scan window is sized to
+         96 for this rule); opaque to subword splitting, exactly
+         like 4c literals. Secret rules apply unchanged: a path
+         segment with base64url-secret texture rejects the whole
+         candidate (conservative), and `@`+`.` keeps URL userinfo
+         out. The entropy floor applies like any letter-bearing key
+         (real paths clear it comfortably; `a/a/a/a`-shaped noise
+         dies). Path tokens enter adjacency runs like any whole
+         token (the successor `edit → path` is legitimate).
+       - **Completion context (owner decision).** hapax's
+         stock-context gate delegates to pi's built-in file
+         completion whenever a `/` precedes the cursor — UNCHANGED.
+         Path candidates therefore surface at the path's FIRST
+         segment (`sr` → `src/core/query.ts`; Tab inserts the whole
+         path); mid-path typing belongs to stock pi (which completes
+         existing files from disk). Integration item 6
+         (path/slash/@ identical to stock) is unaffected.
+       - **Documented gaps (accepted):** a single-slash letter-only
+         path (`src/core`) is shape-identical to prose `and/or` and
+         does not qualify — it shreds to components (the common
+         `src/core/query.ts` form qualifies via its second slash,
+         `docs/readme.md` via slash+dot); trailing-slash directory
+         paths (`src/core/`) reduce to that same non-qualifying form;
+         interior `..` rejects; Windows backslash paths are not in
+         the charset (POSIX-shaped input assumed).
 
 ### camelCase / snake_case splitting
 
@@ -160,8 +223,8 @@ completion (`roun` → `Rounding` from `fixRoundingError`).
 
 Applied to **every** segmented candidate before dictionary lookup. Rejects:
 
-1. **Too short/long:** whole-token candidates must be 2–64 chars; sub-words
-   2–32. (Floor dropped 4 → 2, 2026: short dictionary-absent acronyms —
+1. **Too short/long:** whole-token candidates must be 2–64 chars
+   (path-class candidates 4–96, rule 4d); sub-words 2–32. (Floor dropped 4 → 2, 2026: short dictionary-absent acronyms —
    API, CLI — are hapax's core class; common short English is rejected
    downstream by the commonness band, not by length.)
 2. **Low entropy:** character-entropy < 1.5 bits/char, for LETTER-BEARING
@@ -201,32 +264,64 @@ absent from the table enters here or not at all.
 
 ## Admission decision (`src/core/score.ts`)
 
-Let `q = dictionary.lookup(lowercase)` (null when absent), and `R` be the
-reject band — **default 12** (2026-09 retighten; owner rule), 
-runtime-tunable via the `rejectCommonness` config (see 08). The design
-premise (2026-09): **dictionary attestation is near-disqualifying
-evidence.** hapax exists to complete identifiers, commit-hash-shaped
-tokens, and jargon — the dictionary-ABSENT class — not ordinary English.
+Let `q = dictionary.lookup(lowercase)` (null when absent) and `len` be
+the key length. The reject band is **length-conditioned (2026-10 owner
+rule, the long-word gradient; status: adopted ahead of implementation —
+code lands with this spec)**:
+
+    R_eff(len) = R                                len ≤ 8   (floor hold)
+    R_eff(len) = R + (255 − R)·√((len − 8)/12)    8 < len < 20
+    R_eff(len) = 255 (admit-all)                  len ≥ 20
+
+`R` is the floor — **default 12** (2026-09 retighten; owner rule),
+runtime-tunable via the `rejectCommonness` config (see 08; the knob
+moves the floor and the whole curve scales from it). The design premise
+(2026-09, refined 2026-10): **dictionary attestation is
+near-disqualifying evidence at short lengths** — hapax completes the
+dictionary-ABSENT class (identifiers, commit-hash-shaped tokens,
+jargon) — but commonness stops being evidence of noise as words
+lengthen: typing savings grow with length while noise mass collapses
+(of ~50k corpus words, ~13k currently-rejected live at 7–9 chars, ~2.8k
+at 11+, ~250 at 14+). The sqrt shape is steep where noise dies (9–12)
+and saturates where almost nothing remains to admit (16+). Curve chosen
+by owner measurement (2026-10): linear 6→20 was rejected (≈18.9k
+flips, re-admitting the audit's own `provider` class); floor-10
+variants were rejected as stricter than the owner's intent (~3.2k
+flips, nothing below 11 chars); **sqrt 8→20 adopted** (≈10.5k flips).
 
 | Condition | Result |
 |---|---|
-| `q !== null && q >= R` (12) | **Reject** — attested English (`the`, `context`, `code`, `provider`, `null`) |
-| `q !== null && q < R` (12) | **Admit, rank group 1** — the rarest English tail only (roughly the rarest ~10% of the corpus: `handoff`, `workspace`) |
+| `q !== null && q >= R_eff(len)` | **Reject** — attested English too common for its length (`the`, `context`, `provider`, `everything`) |
+| `q !== null && q < R_eff(len)` | **Admit, rank group 1** — attested, but worth completing at this length |
 | `q === null` (absent) | **Admit, rank group 0** — rare-by-default (post shape gate): THE value class |
 
-**Table group 2 is retired:** with `R = 12` nothing attests into the old
-`[20, 50)` mid band — that band was the live-audit noise leak (1,183
-everyday words: `provider`, `default`, `null`, `node`, `enable`, `spec`,
-`cache`, against 4,889 absent identifiers). The `RankGroup` type keeps
-group 2 for compatibility (subword clamp and salience still reference
-it); it is unreachable via the table and via relief.
+Measured effect against the shipped artifact (sqrt 8→20): ≈10.5k
+corpus words flip vs the flat band — nothing below 9 chars changes; at
+9 chars admits q<82, 10 → q<110 (`government` yes; `everything`
+q=139 no), 11 → q<133 (`information`, `development`), 12 → q<152
+(`organization`, `relationship`), 14 → q<184 (`characteristics`,
+`infrastructure`, `responsibility`); admit-all from 20. The 2026-09
+audit's noise words all stay rejected (`provider` q=34 sits on the
+8-char floor hold; `default` q=44, `enable` q=38, `cache` q=30,
+`node`/`spec`/`null` are all under their length's threshold).
+
+**Group placement is flat at 1 (2026-10 owner rule).** Every attested
+admission lands at rank group 1 regardless of q — long ramp-admitted
+words carry the +0.5 rarity bonus like the rarest tail ("weighted a
+little more heavily", owner), and the old `[20, 50)` group-2 band
+stays dead. That band was the 2026-09 live-audit noise leak (1,183
+everyday words: `provider`, `default`, `null`, `node`, `enable`,
+`spec`, `cache`, against 4,889 absent identifiers); the ramp does not
+revive it. The `RankGroup` type keeps group 2 for compatibility (the
+subword clamp can still produce it); it is unreachable via the table
+and via relief.
 
 The bands are baked constants calibrated against the shipped artifact
 with `tools/calibrate-bands.mjs`, which doubles as a word probe:
 `node tools/calibrate-bands.mjs lists deleted` prints a word's `q` and
 its verdict (lowercase and capitalized). Calibration history: 220
 (BUG-001, mathematically unreachable) → 100 → 50 (Issue-1) → **12
-(final)**.
+(final)** → length-conditioned sqrt 8→20 (2026-10 gradient).
 
 **Proper-noun relief — RETIRED-IN-PLACE.** The relief mechanism (a
 capitalized whole token whose table result is reject admits at group 2)
@@ -236,7 +331,9 @@ Renewable Energy Laboratory" (q 57–94) could chain; a live audit showed
 it admitting ~483 capitalized common words (`echo`, `windows`,
 `failed`, `file`). The owner retired it ("not half of the english
 language"); restoring named-entity completion is a user-allowlist design
-question (config layer), not a band change.
+question (config layer), not a band change. The 2026-10 ramp changes
+nothing here: the ceiling sits at the floor R, below every R_eff —
+relief stays dead.
 
 **Conjugation guard.** An inflection whose STEM is a common word rejects
 too, whatever its own `q`. The dictionary ranks inflections separately
@@ -244,15 +341,20 @@ too, whatever its own `q`. The dictionary ranks inflections separately
 would admit as "rarest"), which leaked everyday verbs, adverbs, and
 plurals into the menu. Stems are one-level strips of `-s -es -ed -d
 -ing -ly`, with e-restoration (`typing`→`type`, `caching`→`cache`) and
-doubled-consonant undo (`stopped`→`stop`). Two tiers:
+doubled-consonant undo (`stopped`→`stop`). Two tiers, both comparing
+the stem against the SAME length-conditioned threshold of the word
+being admitted — `R_eff(len(word))` (2026-10):
 
-- stem `q >= R` (12) → reject (any `q` of the word itself);
-- word absent AND stem `q >= 20` (MID) → reject (absent inflections of
-  attested stems: `uploads` → `upload` q=38).
+- stem `q >= R_eff(len)` → reject (any `q` of the word itself);
+- word absent AND stem `q >= R_eff(len)` → reject (absent inflections
+  of attested stems: `uploads` → `upload` q=38 ≥ R_eff(7) = 12).
 
-With R=12 the second tier is largely subsumed by the first (any stem
-q ≥ 12 already rejects); it stays for words whose stem sits in
-[12, 20). Capitalized (properName) candidates skip the guard — casing
+The fixed mid-band stem threshold (20, MID) is retired (2026-10) —
+both tiers ride R_eff; it survives only as a compatibility constant.
+At ramp lengths the guard loosens with the table: `configurations`
+(15c, stem `configuration` q=26 < R_eff(15) ≈ 198) admits; a 9-char
+absent inflection of a mid-common stem admits at group 0 — an accepted
+consequence of the owner-chosen curve. Capitalized (properName) candidates skip the guard — casing
 evidence outranks morphology (a relief-restoring change would need this
 intact). Known leak (accepted): an inflection whose stem is ALSO
 dictionary-absent admits as group 0 — no tier can fire (`parse` and
@@ -285,20 +387,88 @@ salience(c) =
 - Weights are baked constants. **Not configurable.** Tuning happens in the
   codebase via 09's protocol, not at user runtime.
 
-## Query ranking (final menu order)
+## Query matching (anchored fuzzy; 2026-10 owner rule)
 
-Menu order is **content-derived and stable** — deliberately independent of
-salience and of everything that changes during a session:
+The plain prefix match is RETIRED. The typed fragment `f` (from word
+matching or after the trigger char, 07) matches candidate key `c` (both
+lowercase) iff:
 
-1. Shorter candidate key first.
-2. Ties → lexicographic (byte order on the lowercase key).
+1. **First-character anchor:** `f[0] === c[0]` — the first typed
+   character must equal the candidate's FIRST character
+   (case-insensitive). A fragment that does not start with the
+   candidate's first character never matches (`esk` never matches
+   `zendesk`; mid-identifier entry stays available through sub-word
+   candidates — segmentation above).
+2. **Anchored subsequence:** `f[1..]` appears in `c[1..]` in order
+   (subsequence, greedy leftmost matching).
+
+The anchor is load-bearing for performance: only the store's
+first-char bucket is fuzzy-scanned per query (06), so the < 1 ms
+keystroke budget (02/09) survives the fuzzy scan.
+
+**Strictness tiers** (order-determining — see Query ranking):
+
+- **Tier 3 — exact prefix:** `c` starts with the whole fragment (the
+  retired behavior; always the strictest).
+- **Tier 2 — contiguous tail:** `f[1..]` occurs contiguously somewhere
+  in `c[1..]` (`zsk` → `zendesk`; `zlock` → `z_lwlock`).
+- **Tier 1 — scattered:** anchored-subsequence only, with gaps
+  (`hrp` → `handleResponseProxy`).
+
+**Admission score (threshold-gated; NOT order-determining).** Every
+match gets an integer score 0–100:
+
+```
+tier 3: 100
+tier 2: 85 − 40 · (charsSkippedBeforeRun / len(c))   → ~45–85
+tier 1: 50 − 5 · gapRuns − min(gapChars, 15)          → ≤ 50
+```
+
+Candidates scoring below `fuzzThreshold` (config, 08; default 60,
+higher = stricter; 100 degenerates to exact-prefix-only mode) are
+discarded BEFORE ranking — they render nothing even though they
+technically match. Owner rationale (2026-10): a ~20k-entry store with
+loose fuzzy settings floods the results; only fairly strict matches
+belong. At the default this admits every exact prefix and strong
+contiguous tails (`zsk`→`zendesk` ≈ 62, `hr`→`handleResponse` ≈ 69)
+and gates out most scattered matches. The formula constants are
+calibration starting points (09 tuning protocol), not gospel; the tier
+BOUNDARIES (what is a prefix / contiguous tail / scattered match) are
+semantics, never tunable.
+
+## Query ranking (final result order)
+
+**2026-10 owner rule — frequency tie-breaking (settled).** Order is:
+
+1. **Strictness tier descending** (3 exact prefix > 2 contiguous tail
+   > 1 scattered). A 1-occurrence exact-prefix word outranks a
+   40-occurrence scattered match — strictness always wins first.
+2. **Within a tier: `sessionCount` descending** — conversation
+   frequency breaks ties among equally strict matches (the owner's
+   rule: higher occurrence counts make a word rank higher than
+   another word matching the query exactly).
+3. Ties → shorter candidate key first.
+4. Ties → lexicographic (byte order on the lowercase key).
+
+**Zero-fragment listing** (`#` alone — no fragment, no tiers):
+sessionCount descending, then rules 3–4.
+
+**Retired (same rule):** the pure content-derived order ("shortest
+first, then byte-lex; never salience"). Its 2026-09 rationale was
+cross-session muscle-memory stability. Superseding rationale (owner,
+2026-10): among equally strict matches the more conversation-relevant
+word (higher session count) belongs leftmost; the accepted cost is
+that same-tier neighbors may swap as counts change during a session.
+Residual stability: tiers and rules 3–4 are content-derived, and two
+candidates only reorder relative to each other when one's
+sessionCount strictly passes the other's.
 
 **Plural pruning (2026-09 owner rule):** when a result set contains
 both a key and that key + `"s"` (exact single-`s` pair: `plugin` /
 `plugins`), the plural is dropped — the pair is redundant menu noise
 and the singular is the completion target. Guards: the pair must be
 in the SAME result set (a plural whose singular is absent — filtered
-by the limit, not a prefix match, or evicted — stays); `ss`-final
+by the limit, not a match, or evicted — stays); `ss`-final
 keys never prune (`glass`/`glas`); `es`/`ies` plurals are different
 keys entirely (`class`/`classes` is out of scope); filename-shaped
 keys are untouched (`agents` vs `agents.md` is not a pair). Pruning
@@ -308,18 +478,22 @@ rule only (the conjugation guard in admission handles common stems;
 this covers dictionary-absent jargon pairs that both stored
 legitimately).
 
-Rationale: a menu whose order depends on recency or frequency reshuffles
-between keystrokes and between sessions, defeating the muscle memory
-completion exists to build. The same fragment must always yield the same
-list (editor/shell convention). Salience decides membership — admission
-and eviction — never menu position.
+Rationale for the retired order (kept for history): a menu whose order
+depends on recency or frequency reshuffles between keystrokes and
+between sessions, defeating the muscle memory completion exists to
+build. The 2026-10 owner decision accepts same-tier churn as the price
+of conversation-relevant ordering; salience still decides MEMBERSHIP —
+admission and eviction — and the full salience score never orders
+anything (only its raw `sessionCount` component does, within tiers).
 
-Return top **8** items (menu height; `maxSuggestions` config, 1–20). Under
-the trigger char, same rules.
+Return top **8** items (`maxSuggestions` config, 1–20; the widget
+line's item cap and the fallback menu's height — 07). Under the
+trigger char, same rules.
 
 ## Case handling
 
-- Matching is **case-insensitive**: typed `nrel` matches `NREL`.
+- Matching is **case-insensitive** throughout — anchor, tiers, and score
+  all computed on lowercase keys: typed `nrel` matches `NREL`.
 - Insertion uses the candidate's display casing (`NREL`).
 - The store keys on lowercase; one candidate per lowercase key (casing
   variants merge, display casing = most recent).

@@ -48,14 +48,19 @@ hapax/
 │   │   ├── shapeGate.ts      # shape/entropy/secret rejection
 │   │   ├── score.ts          # admission decision + salience formula
 │   │   ├── store.ts          # candidate store, eviction, (M2: successor index)
-│   │   ├── query.ts          # prefix search + ranking (pure store queries)
+│   │   ├── query.ts          # anchored fuzzy match, tier + frequency
+│   │   │                     #   ranking (pure store queries)
 │   │   └── types.ts          # shared core types
 │   └── pi/                   # pi extension adapter
 │       ├── index.ts          # extension factory, event wiring
 │       ├── ingest.ts         # message_end handling, debounce, chunking,
 │       │                     #   session-history restore replay
-│       ├── provider.ts       # autocomplete provider (trigger regexes,
-│       │                     #   debounce, hysteresis, chaining M2)
+│       ├── provider.ts       # autocomplete provider — FALLBACK display
+│       │                     #   path (trigger regexes, debounce,
+│       │                     #   hysteresis, chaining M2)
+│       ├── widget.ts         # one-line result widget — PRIMARY display
+│       │                     #   path: rendering, key handling,
+│       │                     #   visibility state machine (M3, 07)
 │       └── config.ts         # config load/merge with defaults
 └── test/
     ├── segment.test.ts
@@ -64,7 +69,8 @@ hapax/
     ├── store.test.ts
     ├── dictionary.test.ts
     ├── query.test.ts
-    └── provider.test.ts       # pi-adapter tests (mock ctx.ui)
+    ├── provider.test.ts       # fallback-path provider tests (mock ctx.ui)
+    └── widget.test.ts         # one-line widget tests (M3: keys, visibility)
 ```
 
 `package.json` (pi auto-discovers `.pi/extensions/*/index.ts` or
@@ -99,17 +105,20 @@ build script uses only node stdlib). Do not add dependencies.
 1. Provider's `getSuggestions` receives editor lines + cursor.
 2. Extract the current word fragment before the cursor (or trigger-char run).
 3. If a word fragment is live (1 char; see 07) or the trigger char is
-   active: prefix search the store, sort content-derived (04), return
-   top 8 items.
-4. This must complete in < 1 ms. No allocation-heavy work; the store's prefix
-   index is maintained at ingest time.
+   active: anchored-fuzzy search the store (first-char bucket, 04),
+   sort tier → sessionCount → length → lex (04), return top 8 items.
+4. This must complete in < 1 ms. No allocation-heavy work; the store's
+   prefix index is maintained at ingest time — the fuzzy anchor (first
+   char exact) keeps it the scan entry point.
 
-### Popup path (display only)
+### Display path (widget primary; menu fallback)
 
-- The provider returns items synchronously; pi renders the menu. The 100 ms
-  display debounce and flicker hysteresis are implemented inside the provider
-  (see 07). Tab completion reads the synchronous result directly and is never
-  gated by the debounce.
+- Primary: the one-line widget renders the result set synchronously;
+  the 100 ms display debounce, flicker hysteresis, and the visibility
+  state machine live in the widget layer (07). Fallback: the provider
+  returns items and pi renders the vertical menu. Tab completion reads
+  the synchronous result directly on either path and is never gated by
+  the debounce.
 
 ## Extension lifecycle wiring
 
@@ -138,7 +147,7 @@ the entire obligation this note creates.
 
 | Operation | Budget |
 |---|---|
-| Single keystroke query (prefix + sort + top 8) | < 1 ms |
+| Single keystroke query (anchored fuzzy + tier/count sort + top 8) | < 1 ms |
 | Dictionary load (parse packed file) | < 50 ms cold, < 5 ms warm |
 | Ingest of one message (typical 1–10 KB) | < 5 ms |
 | Full 300k-token session restore | < 100 ms total, chunked |

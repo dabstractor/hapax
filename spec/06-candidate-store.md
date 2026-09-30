@@ -27,7 +27,10 @@ Backing structures:
   next query merges the ≤-batch tail — no single query ever pays a whole-index
   re-sort, so a cold first query after a 20k restore stays inside the 1 ms
   budget, and insert stays ~O(1) with binary-search per keystroke). Query =
-  binary search for prefix range + gather + salience sort of the range + top 8.
+  binary search for the first-char range (the anchored fuzzy match's
+  first-character requirement, 04, keeps the prefix index the scan
+  entry point) + fuzzy tier/score over the range + rank (tier →
+  sessionCount → length → lex, 04) + top 8.
 
 No persistence. Store is created at `session_start`, dropped at
 `session_shutdown`.

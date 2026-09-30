@@ -1,0 +1,90 @@
+h1.0 hapax — Context-Driven Autocomplete Extension
+ h2.0 Purpose
+ h2.1 Spec maintenance policy (binding)
+ h2.2 Design invariants (non-negotiable)
+ h2.3 Document index
+h1.1 01 — Goals and Scope
+ h2.4 Problem
+ h2.5 Core definitions
+ h2.6 Goals (M1)
+ h2.7 Goals (M2)
+ h2.8 Goals (M3)
+ h2.9 Non-goals (explicit)
+ h2.10 Known limitations (accepted)
+ h2.11 UX principles
+h1.2 02 — Architecture
+ h2.12 Components
+ h2.13 Module layout
+ h2.14 Data flow
+  h3.0 Ingest path (background, never on keystroke path)
+  h3.1 Query path (synchronous, every keystroke)
+  h3.2 Display path (widget primary; menu fallback)
+ h2.15 Extension lifecycle wiring
+ h2.16 Portability note (future iteration, out of M1/M2 scope)
+ h2.17 Performance budgets (hard requirements)
+h1.3 03 — Dictionary Format and Build
+ h2.18 Purpose
+ h2.19 Packed binary format (dict/common-en.bin)
+ h2.20 Hash and probing
+ h2.21 Loader contract (src/core/dictionary.ts)
+ h2.22 Build pipeline (tools/build-dict.mjs)
+ h2.23 Versioning contract
+h1.4 04 — Tokenization and Scoring
+ h2.24 Segmentation (src/core/segment.ts)
+  h3.3 What counts as a word
+  h3.4 camelCase / snake_case splitting
+  h3.5 Normalization
+ h2.25 Shape gate (src/core/shapeGate.ts)
+ h2.26 Admission decision (src/core/score.ts)
+ h2.27 Salience formula (eviction)
+ h2.28 Query matching (anchored fuzzy; 2026-10 owner rule)
+ h2.29 Query ranking (final result order)
+ h2.30 Case handling
+h1.5 05 — Ingestion Pipeline
+ h2.31 Event contract
+ h2.32 Debounce and scheduling (src/pi/ingest.ts)
+ h2.33 Chunked processing
+ h2.34 Session restore (rebuild)
+ h2.35 Compaction
+ h2.36 Eviction interplay
+ h2.37 What ingestion must NOT do
+h1.6 06 — Candidate Store
+ h2.38 M1: word candidates
+ h2.39 Upsert semantics
+ h2.40 Eviction
+ h2.41 M2: successor index (chained completion)
+  h3.6 Bigram capture (raw-text adjacency, strictly)
+  h3.7 Successor index (for chained completion)
+h1.7 07 — Completion UI
+ h2.42 Display architecture (2026-10 owner rule: one-line widget, dual-path)
+  h3.8 One-line widget (primary display)
+  h3.9 Widget key handling (amends the never-hijack invariant; 2026-10)
+  h3.10 Widget visibility state machine (auto-open, re-based)
+ h2.43 Provider integration (fallback path only)
+ h2.44 Auto-open (fallback path): how the menu ever appears
+ h2.45 Trigger modes
+ h2.46 Debounce, flicker, and the Tab contract
+  h3.11 Startup restore gate
+  h3.12 Tab-open gesture: root cause (traced) and mitigation
+  h3.13 pi-tui contract dependencies (re-verify on upgrades)
+ h2.47 Never-hijack rules (acceptance-critical)
+ h2.48 Enter always submits (editor proxy)
+ h2.49 M2: chained completion
+ h2.50 Result item shape
+h1.8 08 — Configuration
+ h2.51 Config surface (deliberately tiny)
+ h2.52 Schema
+ h2.53 Not configurable (by settled decision)
+ h2.54 Debug command (/acwords, registered when debug: true)
+h1.9 09 — Testing and Acceptance
+ h2.55 Unit tests (per module)
+ h2.56 Integration acceptance (manual or scripted via pi)
+ h2.57 Live verification technique (binding)
+ h2.58 Performance gates (CI-scriptable micro-benchmarks)
+ h2.59 Tuning protocol
+ h2.60 Definition of done — M1
+ h2.61 Definition of done — M2
+ h2.62 Decision log (all settled)
+ h2.63 Implementation milestones
+---
+code:15 para:108 list:63 table:5

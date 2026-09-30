@@ -35,8 +35,11 @@ behavior. Nothing else — JSDoc, README, plan artifacts — overrides it.
 ## Design invariants (non-negotiable)
 
 1. **Never hijack typing.** No key is ever captured, consumed, or altered except
-   Tab while a suggestion is selected. The user's typing experience is unchanged;
-   the menu is strictly take-it-or-leave.
+   Tab while a suggestion is selected — plus, on the one-line widget display
+   (M3), the four arrow keys and Escape while the result line is visible; ↑/←
+   on the first word act as Escape (boundary-Esc), dismissing the line and
+   returning every key to the user. The user's typing experience is
+   otherwise unchanged; the result line is strictly take-it-or-leave.
 2. **Tab is never delayed by UI — and Tab only ever completes.** The top
    suggestion is computed synchronously on every keystroke; the popup may be
    debounced, but a single Tab keypress always resolves the current top or
@@ -67,10 +70,14 @@ behavior. Nothing else — JSDoc, README, plan artifacts — overrides it.
 |---|---|
 | Rarity source | Known-common-words frequency table (presence = commonness evidence; absence = rare-by-default, shape-gated) |
 | Dictionary size | Top ~60–80k English frequent words, 8-bit quantized frequency, ~1–2 MB packed binary |
-| Scoring | Global commonness (static: admission bands + conjugation guard). Menu order is content-derived — shortest match first, then lexicographic — independent of salience. Session salience (dynamic) drives store eviction only. Admission reject band runtime-tunable via `rejectCommonness`; remaining constants baked |
+| Scoring | Global commonness (static: admission bands + conjugation guard). Result order (2026-10): match-strictness tier desc → sessionCount desc within tier → shorter key → lex; the pure content-derived order is RETIRED (stability now holds only among equal counts within tiers). Session salience (dynamic) drives store eviction only. Admission reject band is length-conditioned (2026-10): flat floor through 8 chars, sqrt ramp to admit-all at 20; runtime-tunable floor via `rejectCommonness`; remaining constants baked |
+| Matching | Anchored fuzzy after the first character (2026-10): the fragment's first char must equal the candidate's first char; the rest is a subsequence. Three strictness tiers (exact prefix > contiguous tail > scattered); admission gated by `fuzzThreshold` (0–100, higher = stricter; 100 = prefix-only). The store's first-char index remains the scan entry, preserving the < 1 ms budget |
+| Display | One-line widget (2026-10): hapax renders its own single-line result set below the input — words joined `" | "`, no `Session ×N` column, no descriptions, width-truncated lowest-ranked-first, zero candidates never render. All four arrows navigate while visible; ↑/← on the first word = Esc (dismiss + suppress until next word start); →/↓ clamp at the last word; Tab inserts the highlighted word; Enter always submits. The vertical stock menu is retained as the FALLBACK where no editor factory exists (dual-path; rejected alternatives: a synthesized single item — loses arrow selection — and upstream horizontal-menu support — no timeline) |
+| Long-word admission (2026-10) | R_eff length gradient (04): floor R=12 holds through 8 chars, sqrt ramp to admit-all at 20; every attested admission lands at group 1 (+0.5 rarity bonus); conjugation-guard stems ride R_eff; mid band (20) retired. Chosen by owner measurement: linear 6→20 (~18.9k flips, re-admits the audit's `provider`) rejected; floor-10 (~3.2k) stricter than owner intent; sqrt 8→20 (~10.5k) adopted |
+| File-path candidates (2026-10, rule 4d) | Slash-joined path runs are whole tokens (≥2 interior slashes, or 1 slash + dotted component); key trims leading `/`/`~`/`./`/`../`, display preserves them (absolute paths insert with the slash); key cap 96; `:line:col` suffix trimmed; single-slash letter-only paths (`src/core` ≡ `and/or`) a documented gap; mid-path typing still delegates to stock pi file completion |
 | Ingestion | `message_end` events only; roles `user` + `assistant`; assistant text blocks only (no thinking blocks); code blocks inside assistant output included; toolResult excluded entirely |
 | Store lifecycle | Per-session, in-memory, survives compaction, no persistence. Rebuild on resume from history (~30–50 ms background for 200k tokens) |
-| Trigger | Configurable trigger char (default `#`, 1st-char lookup); word matching effectively at 1 char in the live editor (pi-tui requests only at word starts; the `threshold` config value is retained but inert — see 07) |
+| Trigger | Configurable trigger char (default `#`, 1st-char lookup); word matching effectively at 1 char (widget path: the line opens at word start by its own state machine; fallback path: pi-tui requests only at word starts) — the `threshold` config value is retained but inert (see 07) |
 | Popup | First appearance immediate by default; OPTIONAL hesitation gate (`menuDelayMs`, default 0 — 150/300 calibration attempts failed against real rhythm); subsequent set changes display-debounced ~100 ms; synchronous search every keystroke; hysteresis against flicker |
 | Phrases & chaining | v2 (M2): one word per completion, ALWAYS. There are no multi-word menu items. "Phrase support" = successor index + chained Tab completion: after a word is accepted, its most-likely successor is the top result with zero additional typed chars. Bigrams form only between raw-text-adjacent admitted words (nothing but whitespace between, same line); any other intervening character or word breaks the window |
 | Language | English table v1; CJK runs skipped (known limitation); per-language tables possible later via format versioning |
@@ -85,3 +92,5 @@ behavior. Nothing else — JSDoc, README, plan artifacts — overrides it.
 - **M2 (v2):** bigram successor index + chained Tab completion — one word per
   Tab, zero typed chars to see the next word. No phrase menu items, no
   multi-word insertion, ever. Specced in 06/07; implemented after M1 acceptance.
+- **M3 (v3):** anchored-fuzzy matching, frequency tie-break ranking, and the
+  one-line widget display with arrow selection + boundary-Esc (07).
