@@ -166,7 +166,7 @@
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Anchored-fuzzy matcher, admission score, fuzzThreshold surface",
-              "status": "Planned",
+              "status": "Ready",
               "description": "The matcher core: anchor + subsequence + tier classification + score arithmetic + threshold discard, plus the fuzzThreshold config knob following the rejectCommonness baking pattern.",
               "subtasks": [
                 {
@@ -190,7 +190,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "Admission score arithmetic + below-threshold discard before ranking",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1"
@@ -207,7 +207,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S3",
                   "title": "fuzzThreshold config surface (0-100 clamped, baked default auto-import)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S2"
@@ -234,7 +234,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "4-key comparator + RankedMatch.sessionCount + zero-fragment + plural-prune position",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S2",

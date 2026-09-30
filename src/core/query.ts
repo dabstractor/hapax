@@ -60,11 +60,38 @@ import type { RankedMatch } from "./types.js";
  *  not config (§08): named constant, no magic 8 inline. */
 export const DEFAULT_LIMIT = 8;
 
+/** Admission-score calibration starting points (PRD §04 h2.28, §09 tuning
+ *  protocol). Tunable constants; the tier BOUNDARIES (prefix / contiguous
+ *  tail / scattered) are semantics, never tunable. Consumed by
+ *  matchFragment's score arithmetic (single-sourced — no inline literals)
+ *  and by the threshold tests. */
+export const TIER3_SCORE = 100 as const;
+export const TIER2_BASE_SCORE = 85 as const;
+export const TIER2_SKIP_FACTOR = 40 as const;
+export const TIER1_BASE_SCORE = 50 as const;
+export const TIER1_GAPRUN_PENALTY = 5 as const;
+export const TIER1_GAPCHAR_CAP = 15 as const;
+
+/** Default fuzzThreshold (PRD §08 h2.52): minimum admission score for a
+ *  candidate to enter a result set. 60 admits all exact prefixes (100)
+ *  and strong contiguous tails, gates out ALL scattered matches (tier-1
+ *  max = TIER1_BASE_SCORE = 50). Higher = stricter; 100 =
+ *  exact-prefix-only; 0 = admit all. config.ts auto-imports this as the
+ *  schema default (the rejectCommonness pattern, P1.M2.T1.S3). */
+export const DEFAULT_FUZZ_THRESHOLD = 60 as const;
+
 /** Options for rankMatches. Everything is optional; {} means defaults. */
 export interface RankOptions {
   /** Max results; default 8 (DEFAULT_LIMIT — maxSuggestions / menu
    *  height, PRD §04). limit ≤ 0 → [] (defensive against caller bugs). */
   limit?: number;
+  /** Minimum admission score (0–100) for a candidate to enter the
+   *  result set (PRD §04 h2.28: below-threshold matches are discarded
+   *  BEFORE ranking — they never render). Absent =
+   *  DEFAULT_FUZZ_THRESHOLD (60). 0 admits every match; 100 =
+ *  exact-prefix-only. Not clamped here — the config layer
+   *  (P1.M2.T1.S3) owns validation; this seam trusts its caller. */
+  fuzzThreshold?: number;
 }
 
 /** Fuzzy match result (PRD §04 h2.28): `tier` is the strictness class
@@ -86,8 +113,10 @@ const clampScore = (n: number): number => (n < 0 ? 0 : n > 100 ? 100 : n);
 /**
  * Anchored-fuzzy match of one fragment against one candidate key
  * (PRD §04 h2.28, 2026-10 owner rule — this RETIRES plain prefix as the
- * only match mode; wiring into rankMatches is P1.M2.T2.S2, so the
- * function is exported-but-unconsumed until then).
+ * only match mode). Consumed by rankMatches' admission gate since
+ * P1.M2.T1.S2: a candidate whose score is below the active fuzzThreshold
+ * is discarded inside rankMatches' candidate loop, before ranking. The
+ * scan itself is generalized to the first-char bucket by P1.M2.T2.S2.
  *
  * Rules:
  *  - ANCHOR: the fragment's first char must equal the candidate's first
@@ -114,9 +143,13 @@ const clampScore = (n: number): number => (n < 0 ? 0 : n > 100 ? 100 : n);
  * ONLY the gap stretches BETWEEN consecutive matched tail chars — the
  * stretch between the anchor and the FIRST tail char is not a gap (the
  * anchor is not gapped). The constants are calibration starting points
- * (§09 tuning protocol); the tier BOUNDARIES are semantics, never
- * tunable. Score is admission-only: ≥ fuzzThreshold keeps a candidate
- * in the result set, and the value never influences order.
+ * (§09 tuning protocol) and are exported from this module (TIER3_SCORE /
+ * TIER2_BASE_SCORE / TIER2_SKIP_FACTOR / TIER1_BASE_SCORE /
+ * TIER1_GAPRUN_PENALTY / TIER1_GAPCHAR_CAP) — the arithmetic consumes
+ * them, never inline literals; the tier BOUNDARIES are semantics, never
+ * tunable. Score is admission-only: score ≥ the active fuzzThreshold
+ * keeps a candidate in the result set (rankMatches discards on strict
+ * score < threshold), and the value never influences order.
  *
  * '/' and '.' are ordinary characters on both sides — rule-4d path keys
  * ('src/core/query.ts') flow through the same first-char scan; 'sr'
@@ -142,7 +175,8 @@ export function matchFragment(f: string, c: string): MatchResult | null {
   const cl = c.toLowerCase();
   if (fl.length === 0 || fl.length > cl.length) return null;
   if (fl[0] !== cl[0]) return null; // ANCHOR (§04 h2.28 rule 1)
-  if (fl.length === 1 || cl.startsWith(fl)) return { tier: 3, score: 100 };
+  if (fl.length === 1 || cl.startsWith(fl))
+    return { tier: 3, score: TIER3_SCORE };
 
   const tail = fl.slice(1);
 
@@ -154,7 +188,9 @@ export function matchFragment(f: string, c: string): MatchResult | null {
     const skipped = runStart - 1; // c[0] is consumed by the anchor
     return {
       tier: 2,
-      score: clampScore(Math.round(85 - (40 * skipped) / cl.length)),
+      score: clampScore(
+        Math.round(TIER2_BASE_SCORE - (TIER2_SKIP_FACTOR * skipped) / cl.length),
+      ),
     };
   }
 
@@ -187,7 +223,13 @@ export function matchFragment(f: string, c: string): MatchResult | null {
   }
   return {
     tier: 1,
-    score: clampScore(Math.round(50 - 5 * gapRuns - Math.min(gapChars, 15))),
+    score: clampScore(
+      Math.round(
+        TIER1_BASE_SCORE -
+          TIER1_GAPRUN_PENALTY * gapRuns -
+          Math.min(gapChars, TIER1_GAPCHAR_CAP),
+      ),
+    ),
   };
 }
 
@@ -210,6 +252,18 @@ export function compareRankedMatches(a: RankedMatch, b: RankedMatch): number {
  * i.e. one whitespace-free token; rule 4d path displays qualify —
  * edges differ from the key, whitespace never appears).
  *
+ * ADMISSION GATE (PRD §04 h2.28, P1.M2.T1.S2): with a non-empty
+ * fragment, every candidate must survive matchFragment at
+ * opts.fuzzThreshold (absent = DEFAULT_FUZZ_THRESHOLD) BEFORE entering
+ * `matches` — below-threshold matches are discarded inside the
+ * candidate loop, never ranked, never rendered. Zero-fragment ("",
+ * the `#`-alone listing) bypasses the gate entirely: no anchor → no
+ * tiers → every candidate flows to the ranking path. Under today's
+ * prefix-scan (prefixRange(fragment)) every scanned key is an exact
+ * prefix — tier 3, score TIER3_SCORE — so the gate only bites for
+ * thresholds > 100; it becomes load-bearing for tiers 2/1 when
+ * P1.M2.T2.S2 generalizes the scan to the first-char bucket.
+ *
  * Accepts any prefix casing — it is lowercased BEFORE prefixRange, since
  * prefixRange deliberately throws RangeError on non-lowercase input
  * (caller-bug guard in store.ts). Returns at most `opts.limit` (default
@@ -220,7 +274,7 @@ export function compareRankedMatches(a: RankedMatch, b: RankedMatch): number {
  *
  * @param store the session candidate store (accepted, never constructed)
  * @param prefix the user's fragment so far, any casing
- * @param opts `{ limit }` only (default 8)
+ * @param opts `{ limit, fuzzThreshold }` (defaults: 8, DEFAULT_FUZZ_THRESHOLD)
  * @returns the ranked top-N; [] when nothing matches (provider delegates)
  */
 export function rankMatches(
@@ -237,8 +291,19 @@ export function rankMatches(
   const [start, end] = store.prefixRange(lower);
   const keys = store.sortedKeysSnapshot().slice(start, end);
   const ordinal = store.currentOrdinal();
+  const threshold = opts.fuzzThreshold ?? DEFAULT_FUZZ_THRESHOLD;
   const matches: RankedMatch[] = [];
   for (const k of keys) {
+    // §04 h2.28 admission gate (P1.M2.T1.S2): discard below-threshold
+    // matches BEFORE ranking — inside the loop, before the push, so they
+    // never enter `matches` and never render. Zero-fragment skips the
+    // gate (matchFragment("") is null by contract; gating on it would
+    // empty the '#'-alone listing). The comparison is STRICT: a score
+    // exactly at the threshold survives.
+    if (lower !== "") {
+      const m = matchFragment(lower, k);
+      if (m === null || m.score < threshold) continue;
+    }
     const c = store.get(k); // undefined if evicted since the rebuild — skip
     if (!c) continue;
     matches.push({

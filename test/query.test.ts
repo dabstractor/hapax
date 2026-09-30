@@ -23,7 +23,11 @@
  * pure-function only — no store. Expected scores are computed by the
  * §04 formulas with hand-traced gapRuns/gapChars; where the PRD prose's
  * ≈-approximations disagree with its own formulas, the FORMULA wins
- * (noted inline at the drifted cases).
+ * (noted inline at the drifted cases). The admission-threshold describe
+ * (plan 003 P1.M2.T1.S2) pins the fuzzThreshold gate: constants
+ * single-sourced, strict score < threshold discard inside rankMatches'
+ * candidate loop, default-60-kills-tier-1, and the zero-fragment bypass
+ * (scan-sequencing note in that describe).
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -35,9 +39,16 @@ import { loadDictionary } from "../src/core/dictionary.js";
 import { compareCandidates, salience } from "../src/core/score.js";
 import {
   compareRankedMatches,
+  DEFAULT_FUZZ_THRESHOLD,
   DEFAULT_LIMIT,
   matchFragment,
   rankMatches,
+  TIER1_BASE_SCORE,
+  TIER1_GAPCHAR_CAP,
+  TIER1_GAPRUN_PENALTY,
+  TIER2_BASE_SCORE,
+  TIER2_SKIP_FACTOR,
+  TIER3_SCORE,
 } from "../src/core/query.js";
 import { IngestPipeline } from "../src/pi/ingest.js";
 import type { Sighting } from "../src/core/types.js";
@@ -610,5 +621,175 @@ describe("matchFragment — anchored fuzzy (PRD §04 h2.28, plan 003)", () => {
       expect(r.score).toBeLessThanOrEqual(50);
       expect(r.score).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+// ── Admission threshold — fuzzThreshold gating (PRD §04 h2.28, plan 003 S2) ──
+//
+// SCAN-SEQUENCING NOTE: today's rankMatches scans the store with
+// prefixRange(fragment) — every scanned key is therefore an exact prefix
+// (tier 3, score 100), and the §04 h2.28 gate can only bite for
+// thresholds > 100 (exercised below to pin the comparison direction and
+// the absent = DEFAULT_FUZZ_THRESHOLD semantics through the public seam).
+// Tiers 2/1 become reachable through rankMatches when P1.M2.T2.S2
+// generalizes the scan to the first-char bucket (r3 doc §8); the gate
+// itself — its placement inside the candidate loop (BEFORE the push, so
+// discarded candidates are never ranked), its strict score < threshold
+// comparison, and its default — are landed HERE and pinned at the
+// matcher/constants level, so T2.S2's activation is a one-line scan
+// change with its evidence already in place.
+
+describe("admission threshold — fuzzThreshold gating (PRD §04 h2.28, plan 003 S2)", () => {
+  /** Keys with known matcher traces: zendesk (tier-2 probe 'zsk' → 62),
+   *  z_lwlock (tier-2 'zlock' → 70 exactly), handleresponseproxy
+   *  (tier-1 'hrp' → 43). */
+  const seed = (): CandidateStore => {
+    const s = new CandidateStore();
+    put(s, "zendesk", 2);
+    put(s, "z_lwlock", 1);
+    put(s, "handleresponseproxy", 1);
+    return s;
+  };
+
+  it("score arithmetic flows from the exported constants (single-sourced)", () => {
+    // Tier 3 is the constant itself — no arithmetic.
+    expect(matchFragment("roun", "rounding")).toEqual({ tier: 3, score: TIER3_SCORE });
+    expect(TIER3_SCORE).toBe(100);
+
+    // Tier 2: score = round(BASE − SKIP_FACTOR · skipped / len(c)).
+    // 'zsk'→'zendesk': 'sk' first occurs at index 5 → skipped = 4 (the
+    // anchor consumes c[0]): round(85 − 40·4/7) = 62.
+    expect(matchFragment("zsk", "zendesk")).toEqual({
+      tier: 2,
+      score: Math.round(TIER2_BASE_SCORE - (TIER2_SKIP_FACTOR * 4) / "zendesk".length),
+    });
+    // 'zlock'→'z_lwlock': 'lock' first at index 4 → skipped 3 → exact 70.
+    expect(matchFragment("zlock", "z_lwlock")).toEqual({
+      tier: 2,
+      score: Math.round(TIER2_BASE_SCORE - (TIER2_SKIP_FACTOR * 3) / "z_lwlock".length),
+    });
+    expect(
+      Math.round(TIER2_BASE_SCORE - (TIER2_SKIP_FACTOR * 3) / "z_lwlock".length),
+    ).toBe(70);
+
+    // Tier 1: score = BASE − GAPRUN_PENALTY·gapRuns − min(gapChars, CAP).
+    // 'hrp'→'handleResponseProxy': greedy trace gives gapRuns=1,
+    // gapChars=2 → 50 − 5 − 2 = 43.
+    expect(matchFragment("hrp", "handleResponseProxy")).toEqual({
+      tier: 1,
+      score:
+        TIER1_BASE_SCORE -
+        TIER1_GAPRUN_PENALTY * 1 -
+        Math.min(2, TIER1_GAPCHAR_CAP),
+    });
+  });
+
+  it("below-threshold matches never render: score < threshold discards BEFORE ranking", () => {
+    const s = seed();
+    // A threshold above TIER3_SCORE (100) discards even exact prefixes —
+    // the one tier reachable under today's prefix scan — proving the
+    // gate compares the match score inside the loop and drops the
+    // candidate before it can be ranked or rendered.
+    expect(rankMatches(s, "zen", { fuzzThreshold: 150 })).toEqual([]);
+    // And the discard is not a post-ranking filter artifact: with the
+    // gate inactive (threshold ≤ 100) the same query renders.
+    expect(rankMatches(s, "zen", { fuzzThreshold: 100 }).map((m) => m.key)).toEqual([
+      "zendesk",
+    ]);
+  });
+
+  it("strict-< boundary: a score exactly AT the threshold survives", () => {
+    const s = seed();
+    // 100 vs threshold 100 → survives (this is what makes 100 the
+    // exact-prefix-only mode rather than an empty menu).
+    expect(rankMatches(s, "zen", { fuzzThreshold: 100 }).map((m) => m.key)).toEqual([
+      "zendesk",
+    ]);
+    // Tier-2 boundary pinned at the matcher level (reaches the gate the
+    // moment T2.S2's scan surfaces non-prefix candidates): 'zlock' →
+    // 'z_lwlock' scores exactly 70 — admits at threshold 70 (70 < 70 is
+    // false), discards at 71.
+    const zlockScore = matchFragment("zlock", "z_lwlock")!.score;
+    expect(zlockScore).toBe(70);
+    expect(zlockScore < 70).toBe(false); // exactly-at survives…
+    expect(zlockScore < 71).toBe(true); // …one above discards
+  });
+
+  it("fuzzThreshold: 0 admits everything that matches", () => {
+    const s = seed();
+    expect(rankMatches(s, "zen", { fuzzThreshold: 0 }).map((m) => m.key)).toEqual([
+      "zendesk",
+    ]);
+    // 1-char fragment → every anchored candidate is tier 3 → all render.
+    expect(rankMatches(s, "z", { fuzzThreshold: 0 }).map((m) => m.key)).toEqual([
+      "zendesk",
+      "z_lwlock",
+    ]);
+  });
+
+  it("absent fuzzThreshold ≡ DEFAULT_FUZZ_THRESHOLD (not 0) — and default 60 kills ALL tier-1 (spec-quoted)", () => {
+    const s = seed();
+    // SPEC (§04 h2.28): "At the default this admits every exact prefix
+    // and strong contiguous tails … and gates out most scattered
+    // matches." The arithmetic that makes the last clause true: tier-1's
+    // MAXIMUM score is TIER1_BASE_SCORE (50 — every gap subtracts more),
+    // strictly below the default 60, so NO scattered match can ever
+    // survive the default gate. Do NOT "fix" this — it is the intended
+    // calibration (r3 doc §7 feasibility).
+    expect(DEFAULT_FUZZ_THRESHOLD).toBe(60); // the §08 h2.52 schema default; a §09 retune updates this pin deliberately
+    expect(TIER1_BASE_SCORE).toBeLessThan(DEFAULT_FUZZ_THRESHOLD);
+    // Empirically, every tier-1 trace in the matcher suite gates out:
+    for (const [f, c] of [
+      ["hrp", "handleResponseProxy"],
+      ["zds", "zendesk"],
+      ["sr/co", "src/core/query.ts"],
+      ["hay", "ha" + "x".repeat(16) + "y"],
+    ] as const) {
+      expect(matchFragment(f, c)!.score, `${f} vs ${c}`).toBeLessThan(
+        DEFAULT_FUZZ_THRESHOLD,
+      );
+    }
+    // Absent option ≡ explicit default — distinguishable from absent = 0
+    // because a threshold ABOVE 100 discards even tier-3 prefixes under
+    // the default reading (and only under it):
+    expect(rankMatches(s, "zen")).toEqual(
+      rankMatches(s, "zen", { fuzzThreshold: DEFAULT_FUZZ_THRESHOLD }),
+    );
+    expect(rankMatches(s, "zen").map((m) => m.key)).toEqual(["zendesk"]);
+  });
+
+  it("fuzzThreshold: 100 = exact-prefix-only (tiers 2/1 max 85 < 100)", () => {
+    // Band property: tier-2's maximum is TIER2_BASE_SCORE (skipped 0) and
+    // tier-1's is TIER1_BASE_SCORE — both strictly below 100, so
+    // threshold 100 admits ONLY tier-3 exact prefixes.
+    expect(TIER2_BASE_SCORE).toBeLessThan(100);
+    expect(TIER1_BASE_SCORE).toBeLessThan(100);
+    const s = seed();
+    // Under today's prefix scan every scanned candidate IS an exact
+    // prefix, so the prefix probe renders at 100 —
+    expect(rankMatches(s, "zen", { fuzzThreshold: 100 }).map((m) => m.key)).toEqual([
+      "zendesk",
+    ]);
+    // — and the matcher-level contract shows why nothing fuzzy survives
+    // once T2.S2's scan makes tiers 2/1 reachable:
+    expect(matchFragment("zsk", "zendesk")!.score).toBeLessThan(100);
+    expect(matchFragment("hrp", "handleResponseProxy")!.score).toBeLessThan(100);
+  });
+
+  it("zero-fragment listing bypasses the gate entirely (full listing, unchanged)", () => {
+    const s = seed();
+    // '#' alone: no anchor → no tiers → NO gate. Even extreme thresholds
+    // list every candidate in the (unchanged, content-derived) order.
+    const all = rankMatches(s, "", { fuzzThreshold: 100 });
+    expect(all.map((m) => m.key)).toEqual([
+      "zendesk",
+      "z_lwlock",
+      "handleresponseproxy",
+    ]);
+    expect(rankMatches(s, "", { fuzzThreshold: 1000 }).map((m) => m.key)).toEqual([
+      "zendesk",
+      "z_lwlock",
+      "handleresponseproxy",
+    ]);
   });
 });
