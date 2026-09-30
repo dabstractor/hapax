@@ -10,13 +10,18 @@
  *    pins over the composed proxy editor (patterns from
  *    test/editor-enter.test.ts).
  *
- * 2. Key handling (spec §07 h3.9, plan 003 P1.M3.T3.S1): while the
- *    line is visible the composed handleInput consumes ←/→/↑/↓
+ * 2. Key handling (spec §07 h3.9, plan 003 P1.M3.T3.S1 + S2): while
+ *    the line is visible the composed handleInput consumes ←/→/↑/↓
  *    (navigate; up≡left, down≡right), ↑/← on the FIRST word
  *    (boundary-Esc: consumed + hidden + suppressed), →/↓ on the LAST
  *    word (clamp: consumed, no movement) and Escape (dismiss +
- *    suppress); every other key — Tab/Enter included until S2 — and
- *    EVERY key while hidden forwards verbatim, exactly once. The pure
+ *    suppress). S2 (P1.M3.T3.S2) adds the completion keys: Tab
+ *    SYNCHRONOUSLY inserts the highlighted candidate's display string
+ *    over the word/#fragment span (consumed — never delegated, never
+ *    debounce-gated, never menu-opening) and Enter dismisses the line
+ *    then forwards so the inner editor still submits. Every other key
+ *    — and EVERY key while hidden or empty — forwards verbatim,
+ *    exactly once. The pure
  *    decision table (decideWidgetKey) is tested directly; consumption,
  *    clock-tick and suppression semantics through the composed editor
  *    with a recording inner stub and a never-mutate pin (v1 crash
@@ -637,6 +642,317 @@ describe("widget key handling — input clock (exactly one tick per keypress)", 
   });
 });
 
+// ── T3/S2: Tab insert + Enter dismiss-then-forward (spec §07 h2.46 rule 0 / h3.9) ──
+
+/** S2 fixture: a recording inner editor with a LIVE buffer — getLines/
+ *  getCursor read a mutable {lines,line,col} box, setText applies
+ *  (mimicking the real editor: lines replaced, caret parked at buffer
+ *  END) and records, setCursorCol records + applies. Every inner
+ *  interaction lands in one ordered `calls` log so assertions pin the
+ *  exact sequence; handleInput data is mirrored in `innerCalls`.
+ *  Wrapped in the never-mutate pin (any property WRITE through the pin
+ *  throws AND counts — v1 crash regression). Composed with a tui stub
+ *  (requestRender spy) and a keybindings stub (\r = submit) so the
+ *  decision layer runs exactly as in production. */
+/** Minimal WORKING empty store for the visibility machine's query
+ *  seam: rankMatches(store, …) must not throw — the machine's async
+ *  wake (restoreReady settle, ≤500 ms gate) queries AFTER the
+ *  synchronous test body, and a throwing query there would surface as
+ *  an unhandled rejection. prefixRange → [0,0] ⇒ empty result ⇒ clean
+ *  close, same as a real store with no candidates. */
+const emptyStore = {
+  prefixRange: (): [number, number] => [0, 0],
+  sortedKeysSnapshot: (): string[] => [],
+  currentOrdinal: (): number => 0,
+  get: (): undefined => undefined,
+} as unknown as CandidateStore;
+
+const makeInsertHarness = (
+  seed: { lines: string[]; line: number; col: number; noCaret?: boolean } = {
+    lines: ["ze"],
+    line: 0,
+    col: 2,
+  },
+  over: Partial<WidgetLayerOptions> = {},
+) => {
+  const innerCalls: string[] = [];
+  const calls: string[] = [];
+  let setTrapHits = 0;
+  const buf = { lines: [...seed.lines], line: seed.line, col: seed.col };
+  const raw: Record<string, unknown> = {
+    handleInput: (data: string): string => {
+      innerCalls.push(data);
+      calls.push(`inner:${JSON.stringify(data)}`);
+      return `inner:${data}`;
+    },
+    getLines: (): string[] => buf.lines,
+    getCursor: (): { line: number; col: number } => ({ line: buf.line, col: buf.col }),
+    setText: (t: string): void => {
+      calls.push(`setText:${JSON.stringify(t)}`);
+      buf.lines = t.split("\n");
+      buf.line = buf.lines.length - 1;
+      // The real setText parks the caret at buffer END (setTextInternal
+      // "end") — mimic that so caret-fix assertions are realistic.
+      buf.col = (buf.lines[buf.lines.length - 1] ?? "").length;
+    },
+    getText: (): string => buf.lines.join("\n"),
+    render: (): string[] => [buf.lines[buf.lines.length - 1] ?? ""],
+  };
+  if (!seed.noCaret) {
+    raw.setCursorCol = (c: number): void => {
+      calls.push(`caret:${c}`);
+      buf.col = c;
+    };
+  }
+  const pinned = new Proxy(raw, {
+    get(target, prop) {
+      return target[prop as string];
+    },
+    set(_target, _prop, _value) {
+      setTrapHits += 1;
+      throw new Error("NEVER mutate the inner editor instance (v1 crash lesson)");
+    },
+  });
+  const onKeystroke = vi.fn();
+  const requestRender = vi.fn();
+  const opts: WidgetLayerOptions = {
+    inner: () => pinned,
+    store: emptyStore,
+    config: cfg(),
+    chain: {} as unknown as ChainMachine,
+    restoreReady: Promise.resolve(),
+    onKeystroke,
+    ...over,
+  };
+  const editor = createWidgetEditorFactory(opts)({ requestRender }, {}, {
+    matches: (data: string, action: string) =>
+      action === "tui.input.submit" && data === "\r",
+  });
+  const state = widgetStateOf(editor)! as WidgetState & {
+    readonly hidden: boolean;
+  };
+  const machine = widgetMachineOf(editor)!;
+  const press = (data: string): unknown =>
+    (editor.handleInput as (d: string) => unknown)(data);
+  const show = (displays: string[]): void =>
+    state.set(displays.map((display) => ({ display })));
+  return {
+    editor,
+    state,
+    machine,
+    buf,
+    innerCalls,
+    calls,
+    press,
+    show,
+    onKeystroke,
+    requestRender,
+    setHits: () => setTrapHits,
+  };
+};
+
+describe("widget key handling — Tab inserts the highlighted word (spec §07 h2.46 rule 0, S2)", () => {
+  it("Tab inserts items[highlightIndex].display over the word span; consumed end-to-end: no inner keypress, line dismissed + suppressed, repaint requested", () => {
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
+    h.show(["Zendesk", "zephyr"]); // highlightIndex 0 → Zendesk
+
+    const out = h.press("\t");
+
+    expect(out).toBeUndefined(); // consumed — nothing delegated
+    expect(h.calls).toEqual([`setText:${JSON.stringify("Zendesk")}`, "caret:7"]); // span "ze" (0..2) → Zendesk; caret = 0 + 7
+    expect(h.innerCalls).toEqual([]); // the inner editor NEVER sees the Tab
+    expect(h.buf.lines).toEqual(["Zendesk"]); // the edit landed in the buffer
+    expect(h.state.hidden).toBe(true); // dismissed…
+    expect(h.machine.getState().suppressUntilWordStart).toBe(true); // …explicitly (suppress until next word)
+    expect(h.requestRender).toHaveBeenCalledTimes(1); // consumed key → defensive repaint
+    expect(h.onKeystroke).toHaveBeenCalledTimes(1); // the S1 clock tick, once
+  });
+
+  it("highlightIndex selects the item (index 1 → zephyr) and DISPLAY casing is inserted, not the typed casing", () => {
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
+    h.show(["Zendesk", "zephyr"]);
+    h.state.highlightIndex = 1; // plain mutation — the T3 highlight field
+
+    h.press("\t");
+
+    expect(h.calls).toEqual([`setText:${JSON.stringify("zephyr")}`, "caret:6"]);
+    // Typed fragment was lowercase "ze"; the insert is the display string.
+    expect(h.buf.lines).toEqual(["zephyr"]);
+  });
+
+  it("trigger span: 'foo #ze' → 'foo Zendesk' — the trigger char is consumed together with the fragment", () => {
+    const h = makeInsertHarness({ lines: ["foo #ze"], line: 0, col: 7 });
+    h.show(["Zendesk"]);
+
+    h.press("\t");
+
+    expect(h.calls).toEqual([
+      `setText:${JSON.stringify("foo Zendesk")}`,
+      "caret:11", // spanStart 4 + display 7
+    ]);
+    expect(h.buf.lines).toEqual(["foo Zendesk"]);
+    expect(h.innerCalls).toEqual([]);
+  });
+
+  it("hyphenated word span: 'load-b' is replaced WHOLESALE with 'load-balancer' (no restart at the hyphen)", () => {
+    const h = makeInsertHarness({ lines: ["load-b"], line: 0, col: 6 });
+    h.show(["load-balancer"]);
+
+    h.press("\t");
+
+    expect(h.calls).toEqual([
+      `setText:${JSON.stringify("load-balancer")}`,
+      "caret:13",
+    ]);
+    expect(h.buf.lines).toEqual(["load-balancer"]);
+  });
+
+  it("bare '#' (zero-length trigger fragment) inserts the top candidate, replacing just the trigger char", () => {
+    const h = makeInsertHarness({ lines: ["#"], line: 0, col: 1 });
+    h.show(["Zendesk", "zephyr"]);
+
+    h.press("\t");
+
+    expect(h.calls).toEqual([`setText:${JSON.stringify("Zendesk")}`, "caret:7"]);
+    expect(h.buf.lines).toEqual(["Zendesk"]);
+  });
+
+  it("synchronous: the insert lands with ZERO timer advancement — never debounce-gated (fake timers)", () => {
+    vi.useFakeTimers();
+    try {
+      const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
+      h.show(["Zendesk"]);
+
+      h.press("\t"); // asserted BEFORE any timer advancement
+
+      expect(h.buf.lines).toEqual(["Zendesk"]);
+      expect(h.calls).toEqual([`setText:${JSON.stringify("Zendesk")}`, "caret:7"]);
+      vi.advanceTimersByTime(5000); // no delayed work can add a second insert
+      expect(h.calls).toEqual([`setText:${JSON.stringify("Zendesk")}`, "caret:7"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Tab NEVER opens or toggles anything: the only inner interactions are setText + caret (no delegation, no autocomplete surface — structurally absent on this path)", () => {
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
+    h.show(["Zendesk"]);
+
+    h.press("\t");
+
+    // No `inner:` entry at all — the key never reached the inner editor,
+    // and the widget layer holds no provider/menu seam to summon (h2.42:
+    // no autocomplete provider is registered on the widget path).
+    expect(h.calls.every((c) => c.startsWith("setText:") || c.startsWith("caret:"))).toBe(
+      true,
+    );
+    expect(h.innerCalls).toEqual([]);
+  });
+
+  it("setCursorCol absent on the inner → insert still succeeds, caret degrades to buffer end, no throw", () => {
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2, noCaret: true });
+    h.show(["Zendesk"]);
+
+    expect(() => h.press("\t")).not.toThrow();
+
+    expect(h.calls).toEqual([`setText:${JSON.stringify("Zendesk")}`]); // no caret entry
+    expect(h.buf.lines).toEqual(["Zendesk"]);
+    expect(h.state.hidden).toBe(true); // still a full acceptance
+    expect(h.machine.getState().suppressUntilWordStart).toBe(true);
+    expect(h.innerCalls).toEqual([]);
+  });
+
+  it("no span under the cursor (trailing space) → Tab forwards verbatim, exactly once (never-hijack fallback)", () => {
+    const h = makeInsertHarness({ lines: ["foo "], line: 0, col: 4 });
+    h.show(["Zendesk"]); // visible + non-empty, but nothing to replace
+
+    const out = h.press("\t");
+
+    expect(out).toBe("inner:\t"); // literal Tab passed through
+    expect(h.innerCalls).toEqual(["\t"]);
+    expect(h.calls).toEqual(["inner:\"\\t\""]); // no setText/caret attempted
+    // The forward ticks the machine, whose gate-held close HIDES the
+    // line — but that is a disqualification-style close, never an
+    // acceptance: no suppression.
+    expect(h.state.hidden).toBe(true);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+  });
+
+  it("Tab with an EMPTY list forwards verbatim exactly once; Tab while HIDDEN forwards verbatim exactly once", () => {
+    const empty = makeInsertHarness();
+    empty.show([]); // visible flag, zero candidates — nothing is captured
+    expect(empty.press("\t")).toBe("inner:\t");
+    expect(empty.innerCalls).toEqual(["\t"]);
+
+    const hidden = makeInsertHarness(); // fresh editors start hidden
+    expect(hidden.press("\t")).toBe("inner:\t");
+    expect(hidden.innerCalls).toEqual(["\t"]);
+    expect(hidden.state.hidden).toBe(true); // hiding state untouched
+  });
+
+  it("never-mutate: zero set-trap hits across a full Tab-insert + Enter scenario (v1 crash regression)", () => {
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
+    h.show(["Zendesk", "zephyr"]);
+    h.press(RIGHT); // navigate (consumed)
+    h.press("\t"); // insert (consumed, accepted)
+    h.show(["alpha", "beta"]); // re-show via the seam
+    h.press("\r"); // Enter dismiss-then-forward
+    h.press("x"); // forwarded text (the machine closes the line)
+    (h.editor.render as (w: number) => string[])(40);
+    expect(h.setHits()).toBe(0); // the inner instance was NEVER written to
+    expect(h.innerCalls).toEqual(["\r", "x"]); // only the forwarded keys
+  });
+});
+
+describe("widget key handling — Enter dismiss-then-forward (spec §07 h2.48, S2)", () => {
+  it("Enter while visible: dismiss + suppress recorded FIRST, then forwarded EXACTLY once so the inner editor submits", () => {
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
+    h.show(["Zendesk", "zephyr"]);
+    // Ordering proof: the machine's dismissal seam and the inner's
+    // handleInput both log into h.calls — dismissal must come first.
+    const realDismissed = h.machine.onDismissed.bind(h.machine);
+    h.machine.onDismissed = (explicit: boolean): void => {
+      h.calls.push(`dismissed:${explicit}`);
+      realDismissed(explicit);
+    };
+
+    const out = h.press("\r");
+
+    expect(out).toBe("inner:\r"); // the submit flow's return value passes through
+    expect(h.calls[0]).toBe("dismissed:true"); // dismissal PRECEDES the inner call
+    expect(h.calls[1]).toBe("inner:\"\\r\"");
+    expect(h.calls).toHaveLength(2); // exactly one delegation, nothing else
+    expect(h.innerCalls).toEqual(["\r"]); // the inner editor submits, once
+    expect(h.state.hidden).toBe(true); // the line is gone…
+    expect(h.machine.getState().suppressUntilWordStart).toBe(true); // …until the next word start
+  });
+
+  it("Enter while hidden forwards verbatim with NO dismissal and NO suppression (S1 regression)", () => {
+    const h = makeInsertHarness(); // starts hidden
+    h.press("\r");
+    expect(h.innerCalls).toEqual(["\r"]);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+    expect(h.state.hidden).toBe(true);
+  });
+
+  it("Enter with an EMPTY list is plain forward (zero candidates never capture)", () => {
+    const h = makeInsertHarness();
+    h.show([]);
+    h.press("\r");
+    expect(h.innerCalls).toEqual(["\r"]);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+  });
+
+  it("consumed-and-forwarded keys each tick the shared clock exactly once (Tab insert = widget layer, Enter = guard seam)", () => {
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
+    h.show(["Zendesk", "zephyr"]);
+    h.press("\t"); // consumed insert → the widget layer's single tick
+    expect(h.onKeystroke).toHaveBeenCalledTimes(1);
+    h.press("\r"); // forwarded → the guard's clock seam, once
+    expect(h.onKeystroke).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("widget key handling — never-mutate pin (v1 recursion-crash regression)", () => {
   it("zero set-trap hits across a full scenario: navigate, clamp, forward, re-show, Esc, boundary-Esc, render", () => {
     const h = makeKeyHarness();
@@ -656,8 +972,8 @@ describe("widget key handling — never-mutate pin (v1 recursion-crash regressio
 });
 
 describe("decideWidgetKey — pure decision table (no editor access)", () => {
-  it("hidden → forward; visible-but-empty → forward (arrows and Escape included)", () => {
-    for (const key of [UP, DOWN, LEFT, RIGHT, ESC, "a"]) {
+  it("hidden → forward; visible-but-empty → forward (arrows, Escape, Tab, Enter included)", () => {
+    for (const key of [UP, DOWN, LEFT, RIGHT, ESC, "a", "\t", "\r"]) {
       expect(decideWidgetKey(key, false, 3, 0), `hidden ${JSON.stringify(key)}`).toEqual({
         action: "forward",
       });
@@ -685,8 +1001,29 @@ describe("decideWidgetKey — pure decision table (no editor access)", () => {
     }
   });
 
-  it("everything else forwards — Tab, Enter, text, space, backspace, Ctrl-chars, other ANSI sequences", () => {
-    for (const key of ["\t", "\r", "a", " ", "\x7f", "\x03", "\x1b[H", "\x1b[5~"]) {
+  it("Tab → tab-insert and Enter → enter-submit while visible+non-empty (S2)", () => {
+    expect(decideWidgetKey("\t", true, 3, 1)).toEqual({ action: "tab-insert" });
+    // No keybindings → isSubmitKey's raw "\r" fallback decides.
+    expect(decideWidgetKey("\r", true, 3, 1)).toEqual({ action: "enter-submit" });
+    // With a keybindings stub: same decision via the shared submit test.
+    expect(
+      decideWidgetKey("\r", true, 3, 1, {
+        matches: (data, action) => action === "tui.input.submit" && data === "\r",
+      }),
+    ).toEqual({ action: "enter-submit" });
+  });
+
+  it("custom submit bindings route through isSubmitKey — rebound submit decides enter-submit, plain Enter does not", () => {
+    const ctrlJ = {
+      matches: (data: string, action: string) =>
+        action === "tui.input.submit" && data === "\x0a",
+    };
+    expect(decideWidgetKey("\x0a", true, 3, 1, ctrlJ)).toEqual({ action: "enter-submit" });
+    expect(decideWidgetKey("\r", true, 3, 1, ctrlJ)).toEqual({ action: "forward" });
+  });
+
+  it("everything else forwards — text, space, backspace, Ctrl-chars, other ANSI sequences", () => {
+    for (const key of ["a", " ", "\x7f", "\x03", "\x1b[H", "\x1b[5~"]) {
       expect(decideWidgetKey(key, true, 3, 1), `key ${JSON.stringify(key)}`).toEqual({
         action: "forward",
       });

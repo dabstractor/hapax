@@ -58,8 +58,11 @@ const WRAPPED = Symbol("hapax.enterSubmitWrapped");
 
 /** Is `data` the configured submit key? Uses the injected keybinding
  *  manager when available; raw "\r" (pi's default) otherwise. Never
- *  throws. */
-const isSubmitKey = (data: string, keybindings?: KeybindingsLike): boolean => {
+ *  throws. EXPORTED for the widget key layer (P1.M3.T3.S2): its
+ *  dismiss-then-forward Enter branch reuses the exact same submit test
+ *  so custom keybindings work identically on both layers — the guard
+ *  is never re-implemented, only composed with. */
+export const isSubmitKey = (data: string, keybindings?: KeybindingsLike): boolean => {
   try {
     if (typeof keybindings?.matches === "function") {
       return keybindings.matches(data, "tui.input.submit");

@@ -37,9 +37,13 @@
  * .length).
  *
  * Repaint strategy: natural per-keystroke render only — pi-tui renders
- * on every input event. `tui` is NOT captured and requestRender() is
- * NOT called here (recorded decision, r4 §6 + work item); if T2's
- * visibility machine needs forced repaints, that is its call.
+ * on every input event. `tui` is NOT captured for the render path and
+ * requestRender() is NOT called there (recorded decision, r4 §6 + work
+ * item); if T2's visibility machine needs forced repaints, that is its
+ * call. AMENDED in T3/S2: the CONSUMED Tab (insertHighlighted) never
+ * delegates, so the key layer captures `tui` and asks for a repaint
+ * defensively — best-effort, try/catch'd, and the ONLY requestRender
+ * on this path.
  *
  * Forward-task map:
  *   - P1.M3.T1.S2  (this task) render override + state holder. The
@@ -60,9 +64,10 @@
  *     to the enter-submit proxy; while hidden or empty NOTHING is
  *     captured (invariant 1 amendment). Suppression is ONLY ever set
  *     through the machine's onDismissed seam — never directly.
- *   - P1.M3.T3.S2  replaces the forward branches for Tab (insert the
- *     highlighted word — needs the rendered list via widgetStateOf) and
- *     Enter (dismiss-then-forward so it still submits).
+ *   - P1.M3.T3.S2  LANDED: replaces the Tab/Enter forward branches —
+ *     Tab (visible, non-empty) synchronously inserts the highlighted
+ *     word (insertHighlighted); Enter dismisses the line then forwards
+ *     so the inner editor still submits (the guard stays in the chain).
  *
  * Repaint note (T2): the visibility machine does NOT request forced
  * repaints — decisions land at the next natural per-keystroke render;
@@ -83,7 +88,12 @@ import { rankMatches } from "../core/query.js";
 import type { CandidateStore } from "../core/store.js";
 import type { RankedMatch } from "../core/types.js";
 import type { HapaxConfig } from "./config.js";
-import { createEnterSubmitEditor } from "./editor.js";
+import {
+  createEnterSubmitEditor,
+  isSubmitKey,
+  type EditorLike,
+  type KeybindingsLike,
+} from "./editor.js";
 import {
   classifyStockContext,
   extractMatchState,
@@ -703,12 +713,17 @@ export function createVisibilityMachine(
 
 /** Decision of the widget key layer for one input event. Consumed
  *  decisions never reach the enter-submit guard; "forward" delegates
- *  verbatim. (Tab/Enter forward until S2 wires insert/dismiss.) */
+ *  verbatim. S2 (P1.M3.T3.S2) adds the two while-visible completion
+ *  keys: "tab-insert" (synchronously insert the highlighted word) and
+ *  "enter-submit" (dismiss the line, THEN forward so the inner editor
+ *  still submits — the guard itself stays in the chain). */
 export type WidgetKeyDecision =
   | { action: "navigate"; delta: -1 | 1 } // move the highlight
   | { action: "boundary-esc" } // first word + ←/↑: dismiss+consume+suppress
   | { action: "clamp" } // last word + →/↓: consume, no movement
   | { action: "escape" } // plain Escape: dismiss+consume+suppress
+  | { action: "tab-insert" } // Tab: insert highlighted word, consume
+  | { action: "enter-submit" } // Enter: dismiss, then forward (still submits)
   | { action: "forward" }; // everything else — never captured
 
 /**
@@ -730,6 +745,7 @@ export function decideWidgetKey(
   visible: boolean,
   count: number,
   highlightIndex: number,
+  keybindings?: KeybindingsLike,
 ): WidgetKeyDecision {
   if (!visible || count <= 0) return { action: "forward" };
   const i = Math.min(Math.max(highlightIndex, 0), count - 1);
@@ -740,7 +756,147 @@ export function decideWidgetKey(
   if (matchesKey(data, "down") || matchesKey(data, "right")) {
     return i === count - 1 ? { action: "clamp" } : { action: "navigate", delta: 1 };
   }
+  // S2 — the completion keys, only while a non-empty line is visible
+  // (hidden/empty falls through to forward: literal Tab, plain Enter).
+  if (matchesKey(data, "tab")) return { action: "tab-insert" };
+  // The guard's OWN submit test (exported from editor.ts) — never a raw
+  // "\r" re-derivation here, so custom keybindings stay consistent.
+  if (isSubmitKey(data, keybindings)) return { action: "enter-submit" };
   return { action: "forward" };
+}
+
+/**
+ * Tab acceptance (spec §07 h2.46 rule 0 / h3.9, P1.M3.T3.S2): insert the
+ * highlighted candidate's DISPLAY string by REIMPLEMENTING stock
+ * applyCompletion semantics against the live query — no provider item
+ * exists on the widget path, so pi-tui never performs this edit. The
+ * live state is read SYNCHRONOUSLY through the inner's public methods
+ * (getLines/getCursor) — never a debounce/painted copy, zero awaits,
+ * zero timers (the widget path does not depend on pi-tui's request
+ * cadence, r4 §2/§5).
+ *
+ * The replaced span mirrors what the user actually typed, longest-
+ * context first:
+ *   1. extractMatchState's prefix (trigger mode: triggerChar +
+ *      fragment — the trigger char is consumed; threshold mode: the
+ *      hyphen-admitting fragment, provider.ts contract),
+ *   2. else the raw trigger regex (a widget opened by an armed chain
+ *      can sit on a below-threshold or zero-length trigger fragment),
+ *   3. else the hyphen-admitting word regex — the same pattern
+ *      provider.ts threshold mode matches with,
+ *   4. else nothing that looks like a fragment → NOT consumed; the
+ *      caller forwards the Tab verbatim (never-hijack rule: Tab with
+ *      no live span passes through as a literal Tab).
+ *
+ * The edit goes through the inner's OWN public API: setText (public,
+ * undoable — it pushes its own undo snapshot; another one must NOT be
+ * added) — then a defensive setCursorCol caret fix, because setText
+ * parks the caret at buffer END (setTextInternal "end") and mid-line
+ * insertions would otherwise jump the caret. CALLING methods — even
+ * the private-MARKED setCursorCol, present at runtime — is not
+ * instance mutation; the v1 ban is on own-property WRITES.
+ *
+ * Stock parity: pi-tui's applyCompletion also fires onChange(getText())
+ * after the edit (editor.js ~l.1906-1912) and setText does NOT — fire
+ * it defensively when present so app-side draft bindings see the
+ * programmatic insert exactly as they would a typed one (flagged
+ * live-verify item for P1.M3.T4.S1).
+ *
+ * Dismissal: this is an EXPLICIT acceptance — hide() for the immediate
+ * visual, then machine.onDismissed(true) (the ONLY suppression seam;
+ * never onDismissed(false) from the key layer). The consumed key never
+ * delegates, so requestRender is asked for defensively — best-effort.
+ *
+ * Failure model (editor.ts's): fully defensive, worst case inert — ANY
+ * missing member, out-of-range cursor, or throw returns false and the
+ * caller forwards the Tab verbatim. Input is never broken.
+ *
+ * @returns true = consumed (caller must NOT delegate); false = forward.
+ */
+function insertHighlighted(
+  inner: EditorLike,
+  state: WidgetStateInternal,
+  visibility: VisibilityMachine,
+  config: HapaxConfig,
+  requestRender?: () => void,
+): boolean {
+  try {
+    if (state.hidden) return false;
+    const items = state.items;
+    if (items.length === 0) return false;
+    // Clamp BEFORE the read — the list can shrink between paints (width
+    // truncation, set changes); same rule as the highlight decisions.
+    const idx = Math.min(Math.max(state.highlightIndex, 0), items.length - 1);
+    const display = items[idx]?.display;
+    if (typeof display !== "string" || display === "") return false;
+
+    const lines = (inner.getLines as (() => string[] | undefined) | undefined)?.();
+    const cur = (
+      inner.getCursor as
+        | (() => { line: number; col: number } | undefined)
+        | undefined
+    )?.();
+    if (!lines || !cur) return false;
+    const { line, col } = cur;
+    if (line < 0 || line >= lines.length) return false;
+    const row = lines[line] ?? "";
+    if (col < 0 || col > row.length) return false;
+    const before = row.slice(0, col);
+
+    // Span to replace (see doc comment for the priority order).
+    let spanLen = 0;
+    const st = extractMatchState(lines, line, col, config);
+    if (st) {
+      spanLen = st.prefix.length; // trigger mode: includes the trigger char
+    } else if (config.triggerChar !== "") {
+      const esc = config.triggerChar.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      spanLen =
+        before.match(new RegExp(`(?:^|[ \\t])${esc}([^\\s${esc}]*)$`))?.[0].length ?? 0;
+    }
+    if (spanLen <= 0) {
+      const word = before.match(/[A-Za-z][A-Za-z0-9_-]*$/);
+      if (!word) return false; // no fragment span → forward the literal Tab
+      spanLen = word[0].length;
+    }
+
+    const start = col - spanLen;
+    const newLine = before.slice(0, start) + display + row.slice(col);
+    const newLines = lines.slice();
+    newLines[line] = newLine;
+    (inner.setText as ((t: string) => void) | undefined)?.(newLines.join("\n"));
+    // Caret fix — setText parks the cursor at buffer END; move it after
+    // the insertion. Defensive optional call in its own guard: a missing
+    // or throwing setCursorCol degrades to end-of-buffer (correct when
+    // typing at the end — the common case), never to a crash.
+    try {
+      (inner.setCursorCol as ((c: number) => void) | undefined)?.(
+        start + display.length,
+      );
+    } catch {
+      /* degrade: caret stays at end */
+    }
+    // Stock parity (see doc comment): applyCompletion notifies onChange;
+    // setText does not. Best-effort, never load-bearing for input flow.
+    try {
+      const text = (inner.getText as (() => string | undefined) | undefined)?.();
+      if (typeof text === "string") {
+        (inner.onChange as ((t: string) => void) | undefined)?.(text);
+      }
+    } catch {
+      /* an app-side onChange hiccup must never break the keypress */
+    }
+
+    state.hide(); // immediate visual dismissal…
+    visibility.onDismissed(true); // …+ suppression until the next word start
+    try {
+      requestRender?.(); // consumed key — no delegation, so ask for a repaint
+    } catch {
+      /* repaint failures never break input */
+    }
+    return true; // consumed
+  } catch {
+    return false; // ANY failure → the caller forwards the Tab verbatim
+  }
 }
 
 /** Accent fallback for tests/environments without a pi EditorTheme
@@ -872,6 +1028,13 @@ export function createWidgetEditorFactory(
     const forwardInput = (data: string): unknown =>
       (innerRecord.handleInput as ((d: string) => unknown) | undefined)?.(data);
 
+    // S2 — the consumed Tab never delegates, so nothing downstream
+    // repaints for it; ask the TUI defensively (the factory closure
+    // holds tui). insertHighlighted try/catches this — best-effort only.
+    const requestRender = (): void => {
+      (tui as { requestRender?: () => void } | undefined)?.requestRender?.();
+    };
+
     // T3/S1 — the widget key handler (spec §07 h3.9): decides BEFORE
     // the enter-submit guard. Consumed = RETURN WITHOUT delegating (the
     // caret must not move on boundary-Esc/clamp); forwarded keys reach
@@ -884,11 +1047,29 @@ export function createWidgetEditorFactory(
           !state.hidden,
           renderedCount(),
           state.highlightIndex,
+          keybindings,
         );
       } catch {
         return forwardInput(data); // decision hiccup → degrade to forward
       }
       if (decision.action === "forward") return forwardInput(data);
+      if (decision.action === "enter-submit") {
+        // S2 — dismiss-then-forward (spec §07 h2.48: Enter ALWAYS
+        // submits). The explicit dismissal (suppress until the next
+        // word start) lands FIRST, then the key is forwarded: the
+        // enter-submit guard stays in the chain (it may still cancel a
+        // stock slash/path menu) and the inner editor's own submit
+        // branch handles the same keystroke. The guard's clock seam
+        // ticks on this delegation — exactly one tick, like every
+        // forwarded key.
+        try {
+          state.hide();
+          machine.onDismissed(true);
+        } catch {
+          /* dismissal hiccups never break the submit */
+        }
+        return forwardInput(data);
+      }
       // Consumed keys never reach the guard, whose clock seam fires
       // only on delegation — tick the shared clock HERE so arrows/Esc
       // count as input activity (hesitation timing). The visibility
@@ -918,6 +1099,19 @@ export function createWidgetEditorFactory(
           state.hide(); // immediate visual dismissal…
           machine.onDismissed(true); // …+ suppression until the next word
           // start — set ONLY via the machine's seam (it owns the flag).
+        } else if (decision.action === "tab-insert") {
+          // S2 — synchronous insert of the highlighted word (spec rule
+          // 0: Tab only ever completes — it never opens anything). A
+          // false return (no live span, missing member, any throw)
+          // degrades to forwarding the literal Tab — never-hijack.
+          const consumed = insertHighlighted(
+            innerRecord as unknown as EditorLike,
+            state,
+            machine,
+            opts.config,
+            requestRender,
+          );
+          if (!consumed) return forwardInput(data);
         }
         // clamp: consumed, no movement, no dismissal.
       } catch {

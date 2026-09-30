@@ -5,6 +5,14 @@
  * combination is pure pass-through; the inner instance is NEVER
  * mutated (the v1 recursion crash); proxy forwarding (get/set/has,
  * thenable guard) is pinned.
+ *
+ * Widget-layer doubles (plan 003 P1.M3.T3.S2): the SAME guard semantics
+ * are re-pinned UNDER the widget composition (createWidgetEditorFactory
+ * around createEnterSubmitEditor) — the widget adds its dismiss-then-
+ * forward Enter step, it never replaces the guard; the thenable guard
+ * holds on both proxy layers; the input clock fires for EVERY event
+ * (consumed keys included); a throwing clock never breaks input; and
+ * the never-mutate pin stays at zero hits through the whole stack.
  */
 import { describe, expect, it, vi } from "vitest";
 
@@ -15,6 +23,15 @@ import {
   type EditorLike,
   type KeybindingsLike,
 } from "../src/pi/editor.js";
+import { DEFAULT_CONFIG } from "../src/pi/config.js";
+import type { CandidateStore } from "../src/core/store.js";
+import type { ChainMachine } from "../src/pi/provider.js";
+import {
+  createWidgetEditorFactory,
+  widgetMachineOf,
+  widgetStateOf,
+  type WidgetState,
+} from "../src/pi/widget.js";
 
 /** Keybindings stub: Enter (\r) is the only submit key. */
 const kb: KeybindingsLike = {
@@ -268,5 +285,251 @@ describe("wrapEditorFactory / isEnterSubmitWrapper", () => {
     expect(isEnterSubmitWrapper(null)).toBe(false);
     expect(isEnterSubmitWrapper(() => null)).toBe(false); // unmarked function
     expect(isEnterSubmitWrapper({})).toBe(false);
+  });
+});
+
+// ── Widget-layer doubles (P1.M3.T3.S2): the guard UNDER the widget composition ──
+
+/** Inner editor for the widget doubles: guard state (menu) AND a live
+ *  buffer for Tab inserts, ALL state in closures (never `this` — the
+ *  guard binds methods to the pin, and a `this`-write would trip the
+ *  never-mutate set trap). `order` records dismiss/cancel/submit
+ *  events across BOTH layers for exact ordering assertions. */
+const makeWidgetInner = () => {
+  const calls: string[] = []; // inner-method interactions
+  const order: string[] = []; // cross-layer event ordering
+  let setTrapHits = 0;
+  let menuOpen = false;
+  let prefix = "";
+  const buf = { lines: ["ze"], line: 0, col: 2 };
+  const inner = {
+    calls,
+    isShowingAutocomplete: (): boolean => menuOpen,
+    cancelAutocomplete: (): void => {
+      menuOpen = false;
+      calls.push("cancel");
+      order.push("cancel");
+    },
+    get autocompletePrefix(): string {
+      return prefix;
+    },
+    handleInput: (data: string): string => {
+      calls.push(`inner:${data}`);
+      order.push(`inner:${data}`);
+      return "inner-return";
+    },
+    getLines: (): string[] => buf.lines,
+    getCursor: (): { line: number; col: number } => ({ line: buf.line, col: buf.col }),
+    setText: (t: string): void => {
+      calls.push(`setText:${t}`);
+    },
+    setCursorCol: (c: number): void => {
+      calls.push(`caret:${c}`);
+    },
+    getText: (): string => buf.lines.join("\n"),
+    render: (): string[] => ["ze"],
+  };
+  const pinned = new Proxy(inner as unknown as Record<PropertyKey, unknown>, {
+    get(target, prop) {
+      return target[prop];
+    },
+    set(_target, _prop, _value) {
+      setTrapHits += 1;
+      throw new Error("NEVER mutate the inner editor instance (v1 crash lesson)");
+    },
+  });
+  return {
+    pinned,
+    calls,
+    order,
+    open: (): void => {
+      menuOpen = true;
+    },
+    isShowingAutocomplete: (): boolean => menuOpen,
+    setPrefix: (p: string): void => {
+      prefix = p;
+    },
+    setHits: (): number => setTrapHits,
+  };
+};
+
+/** Minimal WORKING empty store — see the note in widget.test.ts: the
+ *  machine's async wake (restoreReady settle / gate bound) queries
+ *  after the synchronous test body; a throwing query would surface as
+ *  an unhandled rejection. Empty range ⇒ clean close. */
+const emptyStore = {
+  prefixRange: (): [number, number] => [0, 0],
+  sortedKeysSnapshot: (): string[] => [],
+  currentOrdinal: (): number => 0,
+  get: (): undefined => undefined,
+} as unknown as CandidateStore;
+
+/** The full stack: inner (pinned) → enter-submit guard → widget layer.
+ *  The widget wiring builds its OWN guard around opts.inner (editor.ts
+ *  reuse, never re-implemented) — so opts.inner gets the RAW pinned
+ *  inner; pre-building a guard here would double-wrap (double clock
+ *  ticks on forwarded keys). The wiring-built guard is reachable for
+ *  assertions via the composed editor's own `then` forwarding. */
+const buildWidgetDouble = (onKeystroke: () => void = () => {}) => {
+  const inner = makeWidgetInner();
+  const factory = createWidgetEditorFactory({
+    inner: () => inner.pinned,
+    store: emptyStore,
+    config: { ...DEFAULT_CONFIG },
+    chain: {} as unknown as ChainMachine,
+    restoreReady: Promise.resolve(),
+    onKeystroke,
+  });
+  const editor = factory(undefined, {}, kb);
+  // Widen with the runtime `hidden` flag (the public WidgetState just
+  // doesn't advertise it — same structural widening as widget.test.ts).
+  const state = widgetStateOf(editor)! as WidgetState & {
+    readonly hidden: boolean;
+  };
+  const machine = widgetMachineOf(editor)!;
+  const press = (data: string): unknown =>
+    (editor.handleInput as (d: string) => unknown)(data);
+  const show = (displays: string[]): void =>
+    state.set(displays.map((display) => ({ display })));
+  return { inner, editor, state, machine, press, show, onKeystroke };
+};
+
+describe("the enter-submit guard UNDER the widget layer (P1.M3.T3.S2)", () => {
+  it("Enter + open WORD menu + widget visible → widget dismisses FIRST, guard cancels, inner submits — exactly once, in that order", () => {
+    const h = buildWidgetDouble();
+    h.show(["Zendesk", "zephyr"]);
+    h.inner.open();
+    h.inner.setPrefix("zep");
+    const realDismissed = h.machine.onDismissed.bind(h.machine);
+    h.machine.onDismissed = (explicit: boolean): void => {
+      h.inner.order.push("dismissed");
+      realDismissed(explicit);
+    };
+
+    const out = h.press("\r");
+
+    expect(out).toBe("inner-return"); // delegation return passes through both layers
+    expect(h.inner.order).toEqual(["dismissed", "cancel", "inner:\r"]);
+    expect(h.inner.calls).toEqual(["cancel", "inner:\r"]); // guard: cancel-then-delegate, once
+    expect(h.state.hidden).toBe(true); // widget dismissal happened…
+    expect(h.machine.getState().suppressUntilWordStart).toBe(true); // …explicitly
+    expect(h.inner.setHits()).toBe(0); // and nothing wrote to the inner
+  });
+
+  it("Enter while HIDDEN + open word menu → stock guard untouched (cancel then submit), no widget dismissal", () => {
+    const h = buildWidgetDouble();
+    h.inner.open();
+    h.inner.setPrefix("zep");
+
+    h.press("\r");
+
+    expect(h.inner.calls).toEqual(["cancel", "inner:\r"]);
+    expect(h.inner.order).toEqual(["cancel", "inner:\r"]); // no "dismissed"
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+    expect(h.state.hidden).toBe(true); // never showed
+  });
+
+  it("SLASH menu stays stock under the widget layer: widget dismisses, guard does NOT cancel (accept-and-submit)", () => {
+    const h = buildWidgetDouble();
+    h.show(["Zendesk"]);
+    h.inner.open();
+    h.inner.setPrefix("/mod");
+    const realDismissed = h.machine.onDismissed.bind(h.machine);
+    h.machine.onDismissed = (explicit: boolean): void => {
+      h.inner.order.push("dismissed");
+      realDismissed(explicit);
+    };
+
+    h.press("\r");
+
+    expect(h.inner.order).toEqual(["dismissed", "inner:\r"]); // no "cancel"
+    expect(h.inner.calls).toEqual(["inner:\r"]);
+    expect(h.state.hidden).toBe(true);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(true);
+  });
+
+  it("CLOSED menu under the widget layer: dismiss then submit, guard inert", () => {
+    const h = buildWidgetDouble();
+    h.show(["Zendesk"]);
+    const realDismissed = h.machine.onDismissed.bind(h.machine);
+    h.machine.onDismissed = (explicit: boolean): void => {
+      h.inner.order.push("dismissed");
+      realDismissed(explicit);
+    };
+
+    h.press("\r");
+
+    expect(h.inner.order).toEqual(["dismissed", "inner:\r"]);
+    expect(h.inner.calls).toEqual(["inner:\r"]);
+  });
+
+  it("non-submit keys pass through untouched: forwarded, menu kept open, no dismissal, no suppression", () => {
+    const h = buildWidgetDouble();
+    h.show(["Zendesk"]);
+    h.inner.open();
+    h.inner.setPrefix("zep");
+
+    h.press("z");
+
+    expect(h.inner.calls).toEqual(["inner:z"]);
+    // The forward ticks the machine (gate-held in unit tests) which may
+    // close the LINE — but never as an explicit dismissal.
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+    expect(h.inner.isShowingAutocomplete()).toBe(true);
+  });
+
+  it("thenable guard holds on BOTH proxy layers (widget get forwards to the guard's pinned `then`)", () => {
+    const h = buildWidgetDouble();
+    // The composed editor's `then` reads forward through the widget
+    // proxy → the wiring-built guard proxy → the pinned `undefined`.
+    expect((h.editor as unknown as { then?: unknown }).then).toBeUndefined();
+    // The guard layer's own pin, asserted directly on a fresh instance
+    // of the exact member the wiring composes with.
+    expect(
+      (createEnterSubmitEditor(h.inner.pinned, kb) as unknown as { then?: unknown }).then,
+    ).toBeUndefined();
+  });
+
+  it("onKeystroke fires for EVERY input event — consumed keys included (arrows, Tab insert)", () => {
+    const ticks = vi.fn();
+    const h = buildWidgetDouble(ticks);
+    h.show(["Zendesk", "zephyr"]);
+    h.press("\x1b[C"); // RIGHT — consumed navigation
+    h.press("\t"); // consumed Tab insert (buffer "ze" @ col 2 → span)
+    h.press("x"); // forwarded text
+    h.press("\r"); // forwarded submit (line hidden after the insert)
+    expect(ticks).toHaveBeenCalledTimes(4); // one tick per event, consumed or not
+    // RIGHT moved the highlight to index 1, so the Tab inserted zephyr;
+    // only the two forwarded keys reached the inner editor.
+    expect(h.inner.calls).toEqual([
+      "setText:zephyr",
+      "caret:6",
+      "inner:x",
+      "inner:\r",
+    ]);
+  });
+
+  it("a throwing onKeystroke never breaks input — forwarded keys still delegate, consumed inserts still land", () => {
+    const h = buildWidgetDouble(() => {
+      throw new Error("clock boom");
+    });
+    h.show(["Zendesk"]);
+
+    expect(() => h.press("z")).not.toThrow();
+    expect(() => h.press("\t")).not.toThrow();
+
+    expect(h.inner.calls).toEqual(["inner:z", "setText:Zendesk", "caret:7"]); // forwarded key arrived; insert landed anyway
+    expect(h.state.hidden).toBe(true); // acceptance completed
+  });
+
+  it("never-mutate: zero set-trap hits across the whole double stack", () => {
+    const h = buildWidgetDouble();
+    h.show(["Zendesk", "zephyr"]);
+    h.press("\x1b[C");
+    h.press("\t");
+    h.press("\r");
+    h.press("x");
+    (h.editor.render as (w: number) => string[])(40);
+    expect(h.inner.setHits()).toBe(0);
   });
 });
