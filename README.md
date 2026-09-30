@@ -444,7 +444,7 @@ silently (forward compatibility):
 
 | Field            | Type    | Default | Valid                                                   | Meaning                                        |
 | ---------------- | ------- | ------- | ------------------------------------------------------- | ---------------------------------------------- |
-| `triggerChar`    | string  | `"#"`   | one non-word, non-space character (`/^[^\w\s]$/`), or `""` to disable trigger mode entirely | prefix that opens the completion popup |
+| `triggerChar`    | string  | `"#"`   | one non-word, non-space character (`/^[^\w\s]$/`), or `""` to disable trigger mode entirely; `@`, `/` and `"` are reserved (pi's stock contexts own them — the trigger could never fire, so load emits one warning) | prefix that opens the completion popup |
 | `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | retained but inert — matching is effectively 1 char (see spec 07) |
 | `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once (the widget line cap AND terminal-width truncation) |
 | `rejectCommonness` | number | `12`  | `1`–`255` (clamped)                                      | dictionary-attestation FLOOR of the length-conditioned reject curve R_eff (flat through 8 chars, sqrt ramp, admit-all at 20) — higher = looser; the whole curve scales from this floor. Also governs the conjugation guard's stem comparisons (via R_eff). Probe any word first: `node tools/calibrate-bands.mjs <words...>` prints q + verdict (lowercase and Capitalized). Default is the baked constant in `src/core/score.ts` |

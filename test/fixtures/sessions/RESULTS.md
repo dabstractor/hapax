@@ -118,27 +118,33 @@ gated by `enableChaining` (PRD §08 h2.46). This section now records the
 CURRENT machinery; the stale text was evidence-grade misleading (2026-09
 validation Issue 3).
 
-Fixture `test/fixtures/sessions/zephyr-chain.jsonl` (10 messages; renamed
-from `nrel.jsonl` and rethemed in the same pass): the adjacency run
-"Acme Zephyr Noria Inverter" verbatim ×4 (chain bigrams `acme→zephyr`,
-`zephyr→noria`, `noria→inverter` each count 4 — deterministic top-1), plus
-"Acme turbine" ×1 (secondary successor) and standalone `AZNI` occurrences
-(acronym stored as a rare word, display `AZNI`). The walk words are
-dictionary-absent (`acme`, `noria`, `inverter`) or q ≤ 26 (`zephyr`,
-`turbine`) so the journey is IMMUNE to admission-band retunes — the former
-National/renewable/energy/laboratory walk words all moved into the reject
-band (q ≥ 50) with the 2026-09 Issue-1 recalibration, since on this
-dialogue-register corpus any band rejecting `context` (q=51) necessarily
-rejects `national` (q=90) too.
+Fixture `test/fixtures/sessions/zephyr-chain.jsonl` (10 messages).
+CORRECTED 2026-09-30 (validation Issue 1): the section below originally
+documented the first re-theme's `Acme Zephyr Noria Inverter` walk and
+claimed `acme` dictionary-absent — wrong, `acme` is attested (q=17,
+`zephyr` q=22) and both reject at the floor length, so that walk was
+as unexecutable as the original National walk. The fixture was
+rethemed to `Zorp Zephra Noria Inverter`: the adjacency run verbatim
+×4 (chain bigrams `zorp→zephra`, `zephra→noria`, `noria→inverter` each
+count 4 — deterministic top-1), plus "Zorp turbine" ×1 (`turbine` q=26
+rejects at admission, so the secondary offer slot is gone — the 2026-09
+offer `[Zephyr, turbine]` is now `[Zephra]` alone) and standalone
+`AZNI` occurrences (acronym stored as a rare word, display `AZNI`).
+All four walk words are dictionary-absent (`zorp`, `zephra`, `noria`,
+`inverter`) so the journey is IMMUNE to admission-band retunes — the
+former National/renewable/energy/laboratory walk words all moved into
+the reject band (q ≥ 50) with the 2026-09 Issue-1 recalibration, since
+on this dialogue-register corpus any band rejecting `context` (q=51)
+necessarily rejects `national` (q=90) too.
 
-Chain items insert the successor's CANDIDATE DISPLAY CASING ("Zephyr", not
-"zephyr") per PRD §07/§04 — the 2026-09 Issue-2 fix; arming itself stays
+Chain items insert the successor's CANDIDATE DISPLAY CASING ("Zephra", not
+"zephra") per PRD §07/§04 — the 2026-09 Issue-2 fix; arming itself stays
 lowercase (the successor index is lowercase-keyed).
 
 | check | status | evidence |
 | --- | --- | --- |
-| Fixture sanity: real ingest builds the strictly top-ranked successor chain (`zephyr ×4` / `noria ×4` / `inverter ×4` under `acme`/`zephyr`/`noria`, plus `turbine ×1`); walk vocabulary admitted | PASS [scripted] | `acceptance item 7 — chained completion, zero typed characters (zephyr-chain.jsonl) › fixture sanity — real ingest builds…` |
-| Zero-typing chain: `"acme"` menu → Tab `Acme` → immediate offer `[Zephyr, turbine]` at prefix `""` (display-cased, zero typed characters) → Tab → `Noria` → Tab → `Inverter`; buffer reads `Acme Zephyr Noria Inverter`; hapax answers every query (no delegation) | PASS [scripted] | `…zero-typing chain — Acme → space → top successor → Tab → Noria → Tab → Inverter…` |
+| Fixture sanity: real ingest builds the strictly top-ranked successor chain (`zephra ×4` / `noria ×4` / `inverter ×4` under `zorp`/`zephra`/`noria`; `turbine` ×1 rejects at admission, so no bigram forms); walk vocabulary admitted | PASS [scripted] | `acceptance item 7 — chained completion, zero typed characters (zephyr-chain.jsonl) › fixture sanity — real ingest builds…` |
+| Zero-typing chain: `"zorp"` menu → Tab `Zorp` → immediate offer `[Zephra]` at prefix `""` (display-cased, zero typed characters) → Tab → `Noria` → Tab → `Inverter`; buffer reads `Zorp Zephra Noria Inverter`; hapax answers every query (no delegation) | PASS [scripted] | `…zero-typing chain — Zorp → space → top successor → Tab → Noria → Tab → Inverter…` |
 | Word start after an arm offers the chain; word-less non-start (punctuation) still disarms + delegates on the same keystroke | PASS [scripted] | `…word start after an arm offers the chain…` |
 | Typed fragments after an arm live-filter through the armed branch at chain threshold 0 (never config.threshold) | PASS [scripted] | `…typed fragments after an arm still filter through the armed branch…` |
 | Reset (new user turn, `before_agent_start`) clears the arm | PASS [scripted] | `…reset (new user turn) clears the arm` |
@@ -147,7 +153,7 @@ lowercase (the successor index is lowercase-keyed).
 | Replay/resume route: full-fixture restore then the same arm → walk (the PRD §09 item-7 route, h2.54); hop-by-hop assertions each name the broken link | PASS [scripted] | `test/chain.test.ts › replayed-store arming end-to-end…` (2/2) and `test/adversarial-typing.test.ts › adversarial Probe C` (chain post-restore) |
 | One-word invariant on every offer (no multi-word item is ever published) | PASS [scripted] | `expectSingleWordItems` on every chain offer in the suites above |
 | M1 regression: items 1–6, never-hijack a–g, perf gates — all green | PASS [scripted] | `npm test` (see Reproduction) |
-| Live: discuss the Acme Zephyr Noria Inverter stack a few turns, then `acme` → accept `Acme` → observe the chained menu with zero typing | PENDING [manual] | procedure below (item 7 live) |
+| Live: discuss the Zorp Zephra Noria Inverter stack a few turns, then `zorp` → accept `Zorp` → observe the chained menu with zero typing | PENDING [manual] | procedure below (item 7 live) |
 
 ## Manual verification procedures (pending live `pi -e` run)
 
@@ -182,13 +188,13 @@ verbatim; each item lists its pass criteria.
   a session started WITHOUT `-e`. PASS = behavior identical with and without
   the extension (byte-identical delegation is the scripted guarantee; this
   checks the live parity).
-- **Item 7 live** (M2): in a fresh session discuss the "Acme Zephyr Noria
+- **Item 7 live** (M2): in a fresh session discuss the "Zorp Zephra Noria
   Inverter" stack for a few turns (paste sentences from
-  `zephyr-chain.jsonl`), then type `acme` → Tab the `Acme` menu item →
-  press Space and look: the menu should offer `Zephyr` (then `turbine`) in
-  display casing with NO fragment typed; Tab through `Zephyr` → `Noria` →
+  `zephyr-chain.jsonl`), then type `zorp` → Tab the `Zorp` menu item →
+  press Space and look: the menu should offer `Zephra` in
+  display casing with NO fragment typed; Tab through `Zephra` → `Noria` →
   `Inverter`. PASS = each accept is followed by a successor menu with zero
-  additional word characters typed, ending in `Acme Zephyr Noria Inverter`.
+  additional word characters typed, ending in `Zorp Zephra Noria Inverter`.
   (The armed branch answers at every word start for the whole chain
   duration; a new user turn or disqualifying input resets it.)
 

@@ -9,7 +9,9 @@ config file itself. Load order (later wins):
 2. `~/.pi/agent/hapax.json` (user-global).
 3. `.pi/hapax.json` (project-local, if the project is trusted).
 
-Malformed file → warn once via `ctx.ui.notify(..., "warn")`, fall back to
+Malformed file → warn once via `ctx.ui.notify(..., "warning")` (pi's
+notify levels are `"info" | "warning" | "error"` — there is no
+`"warn"`), fall back to
 defaults, continue running. Missing files are normal.
 
 ## Schema
@@ -17,7 +19,12 @@ defaults, continue running. Missing files are normal.
 ```jsonc
 {
   "triggerChar": "#",        // single non-alphanumeric char; "" disables
-                              // trigger mode entirely
+                              // trigger mode entirely. "@", "/" and '"'
+                              // are RESERVED: pi's stock @-mention,
+                              // path/slash and quoted-path contexts own
+                              // them, so the trigger could never fire —
+                              // load emits one warning (below); word
+                              // matching is unaffected.
   "threshold": 2,            // RETAINED BUT INERT in the live editor:
                               // pi-tui only requests at word starts, so
                               // matching is effectively 1 char (see 07).
@@ -69,6 +76,21 @@ Validation: clamp/repair invalid values to defaults (log when repaired).
 `triggerChar` must match `/^[^\w\s]$/` or be empty. `threshold` clamped to
 1–3. `maxSuggestions` clamped 1–20. `rejectCommonness` clamped 1–255.
 `fuzzThreshold` clamped 0–100. `menuDelayMs` clamped 0–2000.
+
+Reserved triggerChar (2026-09-30, validation Issue 2): `@`, `/` and `"`
+pass the schema but are structurally dead — `classifyStockContext`
+(provider.ts) unconditionally routes `@frag` to the stock mention
+context, `/`-bearing text to path (and a line-leading `/` to the
+slash-command context), and text under an unclosed `"` to quoted-path
+BEFORE the trigger branch is consulted, and that stock delegation is
+deliberately config-independent (BUG-001). A user who sets one of these
+gets a silently non-functional trigger (word matching still works, so
+the failure is invisible). `loadConfig` therefore checks the EFFECTIVE
+value once, after all layers merge, and emits one `"warning"` notify
+naming the colliding char and the stock context that owns it; a later
+layer overriding the collision away silences it. The value still applies
+(trigger mode is merely dead, never half-dead); the warning is advisory,
+not a rejection.
 
 ## Not configurable (by settled decision)
 

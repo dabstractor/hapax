@@ -1,0 +1,5 @@
+{
+  "hasIssues": true,
+  "issueCount": 4,
+  "summary": "PASS with 4 minor issues: all tests, perf gates, 55/55 E2E journeys, real-host load, and live-TTY verification pass; findings are spec-text drift (M2 journey words unadmittable, notify level 'warn' vs 'warning'), dead-on-arrival triggerChar values ('@','/','\"'), and spec-09 ingest budget (60ms) exceeded by measured ~97-187ms actuals."
+}

@@ -311,6 +311,62 @@ describe("triggerChar validation and repair", () => {
   });
 });
 
+describe("triggerChar reserved-char advisory (2026-09-30 validation Issue 2)", () => {
+  // '@'/'/'/'"' are schema-valid (validateTriggerChar unchanged) but
+  // structurally dead: classifyStockContext delegates them to pi's stock
+  // mention/path/quoted-path contexts BEFORE the trigger branch (BUG-001,
+  // config-independent by design). loadConfig warns once on the effective
+  // value so the silent failure is visible.
+  it.each([
+    ["@", "@-mention"],
+    ["/", "path/slash-command"],
+    ['"', "quoted-path"],
+  ])(
+    "triggerChar %p applies unchanged but warns once naming the stock context",
+    (ch, ctxName) => {
+      writeUserConfig({ triggerChar: ch });
+      const cfg = loadConfig(loadOpts());
+      expect(cfg.triggerChar).toBe(ch);
+      expect(h.warnings).toHaveLength(1);
+      expect(h.warnings[0]!.level).toBe("warning");
+      expect(h.warnings[0]!.msg).toContain("triggerChar");
+      expect(h.warnings[0]!.msg).toContain(ctxName);
+      expect(h.warnings[0]!.msg).toContain("reserved");
+    },
+  );
+
+  it("overlapping colliding layers still warn exactly once (effective value checked after merge)", () => {
+    writeUserConfig({ triggerChar: "@" });
+    writeProjectConfig({ triggerChar: "@" });
+    expect(loadConfig(loadOpts()).triggerChar).toBe("@");
+    expect(h.warnings).toHaveLength(1);
+  });
+
+  it("a later layer overriding the collision away silences the warning", () => {
+    writeUserConfig({ triggerChar: "/" });
+    writeProjectConfig({ triggerChar: "%" });
+    expect(loadConfig(loadOpts()).triggerChar).toBe("%");
+    expect(h.warnings).toEqual([]);
+  });
+
+  it("empty string and the default # never warn", () => {
+    writeUserConfig({ triggerChar: "" });
+    writeProjectConfig({ triggerChar: "#" });
+    expect(loadConfig(loadOpts()).triggerChar).toBe("#");
+    expect(h.warnings).toEqual([]);
+  });
+
+  it("a repair back ONTO a colliding value still warns (final value governs)", () => {
+    writeUserConfig({ triggerChar: "@" });
+    writeProjectConfig({ triggerChar: "##" }); // invalid → repairs to user's "@"
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.triggerChar).toBe("@");
+    // one repair warning + one reserved advisory
+    expect(h.warnings).toHaveLength(2);
+    expect(h.warnings.some((w) => w.msg.includes("reserved"))).toBe(true);
+  });
+});
+
 describe("threshold / maxSuggestions — clamp in range, repair on type", () => {
   it("threshold 0 → 1 and 5 → 3, silently", () => {
     writeUserConfig({ threshold: 0 });

@@ -44,7 +44,7 @@ own-rendered line.
 
 - One line directly below the input editor: items joined by `" | "`,
   rank order left→right (04), never wraps. The right-hand column is
-  RETIRED: no `Session ×N` frequency, no `description` provenance (the
+  RETIRED: no `Session xN` frequency, no `description` provenance (the
   `chain` marker included). Frequency still ranks (04); it just isn't
   displayed. A result item is the candidate display string, nothing
   else.
@@ -479,7 +479,7 @@ armed(W):
 ## Result item shape
 
 A result item is **one word**: the candidate display casing. On the
-widget path an item carries NO metadata — no `Session ×N` frequency,
+widget path an item carries NO metadata — no `Session xN` frequency,
 no provenance (`chain`), no rank-group markers. The line is words,
 `" | "` separators, and one highlight, nothing else. (Frequency and
 provenance still drive ordering; they just aren't rendered.)
@@ -487,7 +487,8 @@ provenance still drive ordering; they just aren't rendered.)
 On the FALLBACK path, items are `AutocompleteItem`s: `value` = the
 string to insert — **always exactly one word** (candidate display
 casing); multi-word items are forbidden (invariant; see 06); `label` =
-same; `description` = optional short provenance (e.g. `session ×12`
+same; `description` = optional short provenance (e.g. `session x12`
+— ASCII `x` by item contract, never U+00D7 `×`)
 or `chain`) — keep minimal; do not clutter.
 
 Max `maxSuggestions` (default 8) items per result set, ordered per 04

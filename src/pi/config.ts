@@ -24,6 +24,15 @@
  * transitional mirror field was removed by P1.M3.T1.S2, which re-pointed
  * the last gate reads).
  *
+ * Reserved triggerChar advisory (2026-09-30 validation Issue 2): a
+ * schema-valid triggerChar of '@', '/', or '"' is structurally dead —
+ * classifyStockContext (provider.ts) routes such text to pi's stock
+ * mention/path/quoted-path delegation BEFORE the trigger branch, and that
+ * delegation is deliberately config-independent (BUG-001) — so loadConfig
+ * warns once when the EFFECTIVE value collides (the failure would
+ * otherwise be silent: word matching keeps working, only trigger mode
+ * never fires).
+ *
  * This module imports only node builtins plus pure constants
  * (REJECT_COMMON_THRESHOLD from ../core/score.js and
  * DEFAULT_FUZZ_THRESHOLD from ../core/query.js — each config default and
@@ -137,6 +146,42 @@ type Notify = LoadConfigOptions["notify"];
  */
 export function validateTriggerChar(value: unknown): value is string {
   return typeof value === "string" && (value === "" || /^[^\w\s]$/.test(value));
+}
+
+/**
+ * triggerChar values that are structurally dead (§08): pi's stock
+ * completion owns these characters — classifyStockContext (provider.ts)
+ * unconditionally routes '@frag' to the mention context, '/'-bearing text
+ * to the path context (and a line-leading '/' to the slash-command
+ * context), and text under an unclosed '"' to the quoted-path context
+ * BEFORE the trigger branch is ever consulted — and that delegation is
+ * deliberately config-independent (BUG-001). A trigger char from this
+ * set can never fire; word matching keeps working, so the failure would
+ * be silent. loadConfig therefore warns once when the effective value
+ * collides. The schema still accepts them (validateTriggerChar is
+ * unchanged — reserved ≠ invalid); the warning is advisory.
+ */
+const STOCK_CONTEXT_TRIGGER_CHARS: ReadonlySet<string> = new Set([
+  "@", // @-mention
+  "/", // slash command / path
+  '"', // quoted-path
+]);
+
+/** True iff ch is a triggerChar that pi's stock contexts own (§08). */
+export function collidesWithStockContext(ch: string): boolean {
+  return STOCK_CONTEXT_TRIGGER_CHARS.has(ch);
+}
+
+/** Human-readable stock-context name for a colliding triggerChar. */
+function stockContextName(ch: string): string {
+  switch (ch) {
+    case "@":
+      return "@-mention";
+    case "/":
+      return "path/slash-command";
+    default:
+      return "quoted-path";
+  }
 }
 
 /**
@@ -400,6 +445,19 @@ export function loadConfig(opts: LoadConfigOptions): HapaxConfig {
     if (project !== undefined) {
       config = applyLayer(config, project, projectPath, notify);
     }
+  }
+
+  // Reserved triggerChar advisory (§08): checked once against the
+  // EFFECTIVE value, after all layers merge — a later layer overriding a
+  // colliding char away silences the warning, and overlapping colliding
+  // layers still warn exactly once (matching the module's one-warning
+  // economy). Empty string disables trigger mode and never collides; the
+  // '#' default never collides.
+  if (collidesWithStockContext(config.triggerChar)) {
+    notify(
+      `hapax: triggerChar \`${config.triggerChar}\` is reserved by pi's stock ${stockContextName(config.triggerChar)} completion and can never fire — trigger mode is OFF; word matching still works`,
+      "warning",
+    );
   }
 
   return config;
