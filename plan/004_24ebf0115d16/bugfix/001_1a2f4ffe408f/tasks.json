@@ -18,7 +18,7 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Arm the Tab-chain machine on widget Tab acceptance",
-              "status": "Researching",
+              "status": "Ready",
               "description": "insertHighlighted (src/pi/widget.ts) currently never arms the chain ('CHAIN ARMS: NEVER (plan 004)', widget.ts:834-840). Mirror provider.ts applyCompletion's arming classification on the widget Tab-insert path: whole-word and trigger-span accepts arm chain.arm(lowercaseStoreKey) under config.enableChaining; tier-0 accepts and span-miss forwards never arm.",
               "subtasks": [
                 {
@@ -40,7 +40,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "Call chain.arm from insertHighlighted on whole-word accepts",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -57,7 +57,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S3",
                   "title": "Invert the plan-004 no-arm pin; pin the new arming contract",
-                  "status": "Researching",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S2"

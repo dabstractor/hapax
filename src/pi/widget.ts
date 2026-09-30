@@ -68,6 +68,13 @@
  *     Tab (visible, non-empty) synchronously inserts the highlighted
  *     word (insertHighlighted); Enter dismisses the line then forwards
  *     so the inner editor still submits (the guard stays in the chain).
+ *   - P1.M1.T1.S2  LANDED (BUG-001, plan 004 bugfix): the tab-insert
+ *     branch arms opts.chain at the accepted record's store key —
+ *     painted() captured pre-insert (hide() clears it), strict tier-0
+ *     skip, enableChaining gate, never on span-miss forwards. Still
+ *     forward: the successor-offer consult branch (P1.M1.T2.S1), the
+ *     shared grant tracker (P1.M1.T2.S2), the formal arming pin suite
+ *     (P1.M1.T1.S3).
  *
  * Repaint note (T2): the visibility machine does NOT request forced
  * repaints — decisions land at the next natural per-keystroke render;
@@ -120,7 +127,12 @@ export interface WidgetLayerOptions {
    *  modes… — consumed by S2 (render) / T2 (visibility) / T3 (keys). */
   config: HapaxConfig;
   /** Tab-chain machine — the same instance index.ts resets on
-   *  before_agent_start (createChainMachine). */
+   *  before_agent_start (createChainMachine). READ by the tab-insert
+   *  branch (BUG-001 fix, 2026-10): a consumed whole-word / trigger-span
+   *  / chain-successor accept arms it at the accepted record's store key
+   *  (enableChaining-gated, tier-0 skipped, never on span-miss
+   *  forwards). The successor-offer consult branch is P1.M1.T2.S1; the
+   *  shared one-shot grant tracker is P1.M1.T2.S2. */
   chain: ChainMachine;
   /** startup restore gate signal — shared with the fallback path's
    *  createStartupGate (resolves when history replay settles). */
@@ -851,12 +863,14 @@ export function decideWidgetKey(
  * never onDismissed(false) from the key layer). The consumed key never
  * delegates, so requestRender is asked for defensively — best-effort.
  *
- * CHAIN ARMS: NEVER (plan 004). The widget path does not arm the
- * Tab-chain machine — chain.arm exists ONLY in the provider's
- * applyCompletion (provider.ts). WidgetLayerOptions.chain is held for
- * index.ts's reset wiring and is read by NO widget code; this insertion
- * site deliberately does not consult it (pinned by test/widget.test.ts's
- * no-arm case). Do not wire arming here.
+ * Chain arming (BUG-001 fix, 2026-10): lives at the CALL SITE (the
+ * tab-insert branch in the key handler), NOT here — the accepted record
+ * must be captured from machine.painted() BEFORE this function runs,
+ * because the success path below hides the line and hide() clears
+ * painted(). Classification mirrors the fallback provider's
+ * applyCompletion: arm the STORE KEY (never a lowercased display),
+ * strict tier-0 skip, enableChaining-gated, never on the !consumed
+ * forward path.
  *
  * Failure model (editor.ts's): fully defensive, worst case inert — ANY
  * missing member, out-of-range cursor, or throw returns false and the
@@ -1176,6 +1190,20 @@ export function createWidgetEditorFactory(
           // 0: Tab only ever completes — it never opens anything). A
           // false return (no live span, missing member, any throw)
           // degrades to forwarding the literal Tab — never-hijack.
+          // Capture the accepted record BEFORE the insert:
+          // insertHighlighted's success path hides the line, and hide()
+          // clears painted() (the machine's lifetime contract) — a
+          // post-call read would see [] and never arm.
+          const paintedNow = machine.painted();
+          const rec =
+            paintedNow.length > 0
+              ? paintedNow[
+                  Math.min(
+                    Math.max(state.highlightIndex, 0),
+                    paintedNow.length - 1,
+                  )
+                ]
+              : undefined;
           const consumed = insertHighlighted(
             innerRecord as unknown as EditorLike,
             state,
@@ -1183,7 +1211,26 @@ export function createWidgetEditorFactory(
             opts.config,
             requestRender,
           );
-          if (!consumed) return forwardInput(data);
+          if (!consumed) return forwardInput(data); // span-miss forward: NEVER arms
+          // Chain arming (BUG-001 fix, 2026-10 — mirrors provider.ts's
+          // applyCompletion classification): whole-word, trigger-span,
+          // and chain-successor accepts all arm at the accepted record's
+          // STORE KEY (rec.key verbatim — never a lowercased display:
+          // rule-4d path keys are trimmed-lowercase while displays keep
+          // edge slashes, so a display-lowercase misses the successor
+          // index). Strict `tier !== 0`: tier-0 anchorless matches never
+          // arm or extend a chain (spec §04); records that OMIT tier
+          // (chain shims, '#' listings) keep arming. enableChaining gate:
+          // the flag false → M1 word-only behavior, byte-identical.
+          // Arm-only — the one-shot grant tracker is P1.M1.T2.S2's; the
+          // successor-offer consult branch is P1.M1.T2.S1's. opts.chain
+          // is the SAME instance index.ts resets on before_agent_start,
+          // so reset semantics compose unchanged. An arm() throw lands
+          // in this branch's catch — worst case inert, input never
+          // breaks (the file's failure model).
+          if (opts.config.enableChaining && rec && rec.tier !== 0 && rec.key) {
+            opts.chain.arm(rec.key);
+          }
         }
         // clamp: consumed, no movement, no dismissal.
       } catch {

@@ -39,9 +39,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 
+import { CandidateStore } from "../src/core/store.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
-import type { CandidateStore } from "../src/core/store.js";
 import type { ChainMachine } from "../src/pi/provider.js";
 import type { WidgetState } from "../src/pi/widget.js";
 import {
@@ -1050,28 +1050,212 @@ describe("decideWidgetKey — pure decision table (no editor access)", () => {
   });
 });
 
-describe("widget Tab acceptance NEVER arms a chain (plan 004 pin)", () => {
-  // The widget path is arm-free BY DESIGN: chain.arm exists only in the
-  // provider's applyCompletion (src/pi/provider.ts). WidgetLayerOptions.chain
-  // is held for index.ts's reset wiring and is NEVER read by widget code —
-  // this pin proves the non-wiring through a real Tab acceptance with a
-  // spied machine in place.
-  it("a consumed Tab acceptance with WidgetLayerOptions.chain present never calls chain.arm", () => {
-    const chain: ChainMachine = {
-      state: vi.fn(() => null),
-      arm: vi.fn(),
-      reset: vi.fn(),
-    };
-    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 }, { chain });
-    h.show(["Zendesk"]); // highlightIndex 0
+// ── chain arming on consumed Tab accepts (BUG-001 fix, 2026-10) ─────────────
 
-    h.press("\t"); // consumed Tab acceptance
+// The plan-004 "CHAIN ARMS: NEVER" posture is INVERTED for the PRIMARY
+// widget path (BUG-001: the fallback provider's applyCompletion is the only
+// arming site and is never registered when an editor factory exists). A
+// consumed Tab accept of a whole-word / trigger-span / chain-successor
+// candidate now arms opts.chain at the accepted record's STORE KEY —
+// mirroring the provider's classification: enableChaining-gated, strict
+// tier-0 (anchorless) skip, span-miss forwards never arm. The accepted
+// record is captured from machine.painted() BEFORE the insert (the
+// insert's hide() clears painted()). INTERIM pin block — P1.M1.T1.S3
+// formalizes the full suite; P1.M1.T2.S1 consults what arming arms.
 
-    // The acceptance LANDED (the edit is real) — and the machine was never
-    // touched:
-    expect(h.buf.lines).toEqual(["Zendesk"]);
+/** Recording ChainMachine double — arm calls are the assertion surface. */
+const chainDouble = (): ChainMachine & { arm: Mock } => ({
+  state: vi.fn(() => null),
+  arm: vi.fn(),
+  reset: vi.fn(),
+}) as ChainMachine & { arm: Mock };
+
+/** The bug report's repro store: ZorpWibble ingested (user-typed), plus
+ *  the zorpwibble→quuxblat bigram run (successor OFFERS are T2.S1's — the
+ *  bigram rides along per the repro recipe; arming ignores it). */
+const armStore = (display = "ZorpWibble"): CandidateStore => {
+  const s = new CandidateStore();
+  s.upsert({
+    key: "zorpwibble",
+    display,
+    ordinal: 1,
+    fromUser: true,
+    properName: false,
+    rankGroup: 0,
+    isSubword: false,
+  });
+  s.recordBigramRuns([["zorpwibble", "quuxblat"]]);
+  return s;
+};
+
+/** A typing-capable variant of makeInsertHarness: the inner stub APPLIES
+ *  printable characters at the caret (a real editor does), so the
+ *  visibility machine's tick → microtask → onInput() evaluation reads the
+ *  post-keystroke buffer and paints — populating machine.painted(), the
+ *  arming seam, which state.set() alone never touches. `press` flushes
+ *  the paint microtask before returning. */
+const makeArmHarness = (
+  over: Partial<WidgetLayerOptions> = {},
+  seed: { lines: string[]; col: number } = { lines: ["zor"], col: 3 },
+) => {
+  const buf = { lines: [...seed.lines], line: 0, col: seed.col };
+  const innerTyped: string[] = [];
+  const raw: Record<string, unknown> = {
+    handleInput: (data: string): string => {
+      innerTyped.push(data);
+      if (data.length === 1 && data >= " " && data <= "~") {
+        const row = buf.lines[buf.line] ?? "";
+        buf.lines[buf.line] = row.slice(0, buf.col) + data + row.slice(buf.col);
+        buf.col += 1;
+      }
+      return `inner:${data}`;
+    },
+    getLines: (): string[] => buf.lines,
+    getCursor: (): { line: number; col: number } => ({ line: buf.line, col: buf.col }),
+    setText: (t: string): void => {
+      buf.lines = t.split("\n");
+      buf.line = buf.lines.length - 1;
+      buf.col = (buf.lines[buf.lines.length - 1] ?? "").length;
+    },
+    getText: (): string => buf.lines.join("\n"),
+    render: (): string[] => [buf.lines[buf.line] ?? ""],
+    setCursorCol: (c: number): void => {
+      buf.col = c;
+    },
+  };
+  const pinned = new Proxy(raw, {
+    get(target, prop) {
+      return target[prop as string];
+    },
+    set() {
+      throw new Error("NEVER mutate the inner editor instance (v1 crash lesson)");
+    },
+  });
+  const requestRender = vi.fn();
+  const opts: WidgetLayerOptions = {
+    inner: () => pinned,
+    store: armStore(),
+    config: cfg(),
+    chain: chainDouble(),
+    restoreReady: Promise.resolve(),
+    onKeystroke: vi.fn(),
+    ...over,
+  };
+  const editor = createWidgetEditorFactory(opts)({ requestRender }, {}, {
+    matches: (data: string, action: string) =>
+      action === "tui.input.submit" && data === "\r",
+  });
+  // The runtime state carries `hidden` (createWidgetState) — the public
+  // WidgetState interface just doesn't advertise it; widen structurally
+  // for assertions (same widening as the harnesses above).
+  const state = widgetStateOf(editor)! as WidgetState & { hidden: boolean };
+  const machine = widgetMachineOf(editor)!;
+  const chain = opts.chain as ChainMachine & { arm: Mock };
+  const press = async (data: string): Promise<unknown> => {
+    const out = (editor.handleInput as (d: string) => unknown)(data);
+    // Flush the enter-submit guard's tick microtask (applyVisibility +
+    // machine.onInput) so a forwarded character's paint has landed.
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    return out;
+  };
+  return { editor, state, machine, chain, buf, innerTyped, press, requestRender, opts };
+};
+
+describe("widget chain arming on consumed Tab accepts (BUG-001 fix; S3 formalizes)", () => {
+  it("Tab-accept of a whole-word candidate arms the chain at its STORE key, exactly once", async () => {
+    const h = makeArmHarness();
+
+    await h.press("p"); // 'zor' → 'zorp': the machine paints (first paint, immediate)
+    expect(h.machine.painted().map((m) => m.key)).toEqual(["zorpwibble"]); // probe honesty
+    expect(h.state.hidden).toBe(false); // the line is live
+
+    await h.press("\t"); // consumed Tab acceptance
+
+    // The accept landed (display inserted over the 'zorp' span) and the
+    // chain armed EXACTLY ONCE at the store key:
+    expect(h.buf.lines).toEqual(["ZorpWibble"]);
     expect(h.state.hidden).toBe(true);
-    expect(chain.arm).not.toHaveBeenCalled();
-    expect(chain.state()).toBeNull();
+    expect(h.chain.arm).toHaveBeenCalledTimes(1);
+    expect(h.chain.arm).toHaveBeenCalledWith("zorpwibble");
+  });
+
+  it("trigger-span accepts arm too (whole-word insertion, spec/07:476)", async () => {
+    const h = makeArmHarness({}, { lines: ["foo #z"], col: 6 });
+
+    await h.press("o"); // 'foo #zo' — trigger mode paints immediately
+    expect(h.machine.painted().map((m) => m.key)).toEqual(["zorpwibble"]);
+
+    await h.press("\t"); // consumed: span '#zo' → 'ZorpWibble'
+
+    expect(h.buf.lines).toEqual(["foo ZorpWibble"]); // trigger char consumed
+    expect(h.chain.arm).toHaveBeenCalledTimes(1);
+    expect(h.chain.arm).toHaveBeenCalledWith("zorpwibble");
+  });
+
+  it("Tab with the line hidden never arms (forwarded verbatim)", async () => {
+    const h = makeArmHarness();
+
+    await h.press("\t"); // nothing painted → hidden → forward
+
+    expect(h.innerTyped).toContain("\t"); // the Tab reached the inner editor
+    expect(h.chain.arm).not.toHaveBeenCalled();
+  });
+
+  it("span-miss with a visible line forwards and never arms", async () => {
+    const h = makeArmHarness();
+
+    await h.press("p"); // paint 'zorp'
+    expect(h.state.hidden).toBe(false);
+    h.buf.col = 99; // caret past end-of-line → the span computation misses
+
+    await h.press("\t"); // insertHighlighted → false → forwarded
+
+    expect(h.innerTyped).toContain("\t"); // forwarded, not consumed
+    expect(h.buf.lines).toEqual(["zorp"]); // no insertion happened
+    expect(h.chain.arm).not.toHaveBeenCalled();
+  });
+
+  it("tier-0 (anchorless) accepted record never arms — strict === 0", async () => {
+    const h = makeArmHarness({}, { lines: ["rp"], col: 2 });
+
+    await h.press("w"); // 'rpw' — inside 'zorpwibble', prefix of nothing → tier-0 rescue
+    const painted = h.machine.painted();
+    expect(painted.length).toBeGreaterThan(0); // the fallback rescued
+    expect(painted.every((m) => m.tier === 0)).toBe(true); // anchorless records
+
+    await h.press("\t"); // consumed accept of a tier-0 record
+
+    expect(h.buf.lines).toEqual(["ZorpWibble"]); // the accept LANDED …
+    expect(h.state.hidden).toBe(true);
+    expect(h.chain.arm).not.toHaveBeenCalled(); // … but tier-0 never arms (spec §04)
+  });
+
+  it("enableChaining:false never arms; word completion unchanged", async () => {
+    const h = makeArmHarness({ config: cfg({ enableChaining: false }) });
+
+    await h.press("p"); // paint as usual
+    expect(h.state.hidden).toBe(false);
+
+    await h.press("\t"); // consumed accept — M1 word-only behavior
+
+    expect(h.buf.lines).toEqual(["ZorpWibble"]); // completion byte-identical
+    expect(h.state.hidden).toBe(true);
+    expect(h.chain.arm).not.toHaveBeenCalled(); // inert flag → never arms
+  });
+
+  it("arms the store key VERBATIM even when the display carries path edges", async () => {
+    // rule-4d trap (provider.ts's documented one): the store key is the
+    // trimmed-lowercase form while the display keeps its edges — arming a
+    // lowercased DISPLAY would miss the successor index.
+    const h = makeArmHarness({ store: armStore("/ZorpWibble/") });
+
+    await h.press("p"); // 'zorp' → display '/ZorpWibble/'
+    expect(h.machine.painted()[0]!.key).toBe("zorpwibble");
+
+    await h.press("\t");
+
+    expect(h.buf.lines).toEqual(["/ZorpWibble/"]); // display inserted verbatim
+    expect(h.chain.arm).toHaveBeenCalledTimes(1);
+    expect(h.chain.arm).toHaveBeenCalledWith("zorpwibble"); // the KEY, not '/zorpwibble/'
   });
 });
