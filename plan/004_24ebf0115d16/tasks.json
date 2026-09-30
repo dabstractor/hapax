@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "Tier-0 anchorless fallback + `#` loose mode",
-      "status": "Ready",
+      "status": "Complete",
       "description": "Land the code for the one staged-spec feature delta: (1) tier-0 anchorless contiguous-run fallback in rankMatches (ambient mode: fires only when the threshold-gated anchored scan returns zero; fragment floor 3; score 85 − 40·runStart/len(c); sorts below tier 1, order 3>2>1>0; own perf budget < 3 ms p99 with CI gate at 3×), and (2) `#` trigger-char loose mode (tier-0 always consulted, no zero-result precondition; scattered tier-1 visible at mode default threshold 45 vs ambient 60; explicitly set fuzzThreshold overrides BOTH mode defaults; successor chaining stays anchored — tier-0 matches never arm or extend a chain). Spec/*.md are already at the PRD text (adopted ahead of implementation) and are READ-ONLY this run. Out of scope: widget rebind (shipped b26a917), rule-4d trailing trims (shipped 27c61c2), M1/M2/M3 behavior, spec edits, tier-boundary retuning. Research findings: plan/004_24ebf0115d16/architecture/ (system_context.md, tier0_design.md, external_deps.md).",
       "milestones": [
         {
@@ -118,14 +118,14 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Changeset coherence",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Mode B changeset-level documentation: sweep README.md's stale rows against the landed delta, run the full gauntlet (check/test/bench), append the DoD evidence section to docs/M1-DoD.md (the only DoD doc — follow its own gauntlet-item PASS pattern), execute the light live smoke per the spec §09 technique, and record any spec drift in the run report (spec/*.md read-only this run).",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Sync changeset-level documentation (README sweep + DoD record + live smoke)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Final changeset-level docs task (Mode B). README.md is stale against the tier-0/loose-mode delta; docs/M1-DoD.md needs the appended evidence record (suite counts, gate numbers, date, live-smoke captures); any spec-vs-repo mismatch goes in the drift report. Depends on EVERY implementing subtask of P1.M1 — runs last.",
               "subtasks": [
                 {
@@ -159,7 +159,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "Full gauntlet + docs/M1-DoD.md append + live smoke + drift report",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",

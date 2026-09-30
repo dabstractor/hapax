@@ -973,3 +973,256 @@ npx vitest --run test/perf-gates.test.ts --disable-console-intercept   # [gate �
 npm run bench                                     # reporting numbers
 cat plan/003_bbac3b15e8d0/P1M3T4S1/verification-record.md       # cited live record (W1–W12)
 ```
+
+---
+
+# Tier-0 anchorless fallback + `#` loose mode — changeset DoD (2026-09-30)
+
+Closes the plan-004 changeset "tier-0 anchorless fallback matcher + per-mode
+fuzzThreshold + `#` loose-mode wiring" (P1.M1.T1.S2 matcher, perf gate;
+P1.M2.T1.S1 thresholds + provider/widget wiring + README sync). This section
+is the changeset's closing evidence record (Mode B): the full gauntlet, the
+BINDING live smoke (spec/09 h2.57 technique), and the drift report. The
+2026-09-07 M1 record and all sections above it are untouched (append-only).
+
+- **Sweep date:** 2026-09-30 · **Head commit:** `f2a219d`
+  (full: `f2a219d36e5cad0166b19583d8e0f2df1fab2d5c` — "feat(pi): wire '#'
+  loose mode through both paths", the changeset's last code commit)
+- **Environment:** Linux x64 · Node v26.10.0 · vitest 4.1.11
+- **Working-tree note:** `README.md` was dirty at sweep time — it is
+  P1.M2.T1.S1's own docs deliverable running in parallel (README sweep),
+  not an instrumentation remnant. No other file outside `docs/` was touched
+  by this task.
+- **Verdict: changeset DONE.** Gauntlet items 1–3 PASS, live smoke items
+  1–3 PASS (capture-pane evidence below), drift report: NONE FOUND (one
+  smoke-procedure note recorded; no spec mismatch).
+
+## Gauntlet item 1 — type check clean: PASS
+
+```
+$ npm run check        # tsc --noEmit, strict
+```
+- 2026-09-30 @ `f2a219d`: exit 0, zero errors.
+
+## Gauntlet item 2 — all tests green: PASS
+
+```
+$ npm test             # vitest --run, whole suite
+```
+- 2026-09-30 @ `f2a219d`: exit 0 — **37 test files, 1046 passed / 1
+  skipped** (the one skip is the pre-existing gc-dependent
+  `dictionary.test.ts` case, same as every prior record; no new skips).
+- Includes the changeset's own suites: the tier-0 matcher + per-mode
+  threshold cases in `test/query.test.ts`, the tier-0 perf budget in
+  `test/perf-gates.test.ts` (item 3), and the `#` loose-mode path pins in
+  the provider/widget suites.
+
+## Gauntlet item 3 — performance gates (incl. the new tier-0 row): PASS
+
+```
+$ npx vitest --run test/perf-gates.test.ts --disable-console-intercept
+$ npm run bench
+```
+Hard CI gate — exit 0, **9/9 PASS** (2026-09-30 @ `f2a219d`). Measured
+actuals vs budgets (spec/09 h2.58 table incl. the new tier-0 row):
+
+| Gate | Budget | Measured | vs budget | CI bound (3×) | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| a. 20k-candidate anchored-fuzzy query (first-char bucket + tiers + frequency sort + top 8) | < 1 ms p99 | **p99 0.378 ms** (median 0.228, max 0.527; hot bucket 913) | 0.38× | < 3 ms | PASS |
+| **Tier-0 anchorless fallback full-store pass (new, P1.M1.T1.S2; also `#` loose-mode scans)** | < 3 ms p99 | **p99 0.792 ms** (median 0.376, max 0.977; `rescued=8`) | 0.26× | < 9 ms | PASS |
+| a2. cold first query over 120 fresh 20k stores | < 1 ms p99 | **p99 1.759 ms** (median 1.045) | 1.76× | < 3 ms | PASS (watch — above 1×, inside bound; inherited) |
+| a3. zero-fragment full-store `#` listing (tripwire, sanity only) | < 25 ms | **p99 8.313 ms** (floor 5.8–7.2 ms p99) | 0.33× | sanity only | PASS |
+| b. dict load + full 20k-word lookup sweep | < 60 ms | **4.6 ms** (0 null hits, 0 phantom hits) | 0.08× | < 180 ms | PASS |
+| c. ingest 800 KB synthetic session text (+ yield ≤ 64 KB) | < 60 ms | **112.0 ms** (best of 3), yields 39 (min 13) | 1.87× | < 180 ms | PASS (watch — inherited calibration, inside bound) |
+| d. steady-state heap delta (dict + store) | < 6 MB | **7.37 MB** (settled low-water; no `--expose-gc`, churn-sampled) | 1.23× | < 18 MB | PASS (watch — inherited, inside bound) |
+| e. large-100k bigrams-ON restore | < 600 ms | **175.7 ms** (words 641, bigrams 10 000 = cap) | 0.29× | < 600 ms | PASS |
+| f. 25k-distinct-word flood | < 100 ms (§05 hard) | **145.3 ms** (final size 19 840) | 1.45× | < 300 ms | PASS (watch — inherited, eviction passes dominate) |
+
+Reporting bench (`npm run bench`, exit 0, same fixtures, tinybench):
+gate a mean 0.2214 ms / p99 0.4068 ms (4 152 samples) · **gate t0 mean
+0.3536 ms / p99 0.8007 ms (2 524 samples)** · b mean 1.62 ms · c mean
+91.80 ms · d mean 37.07 ms/cycle — consistent with the hard-gate actuals.
+
+Honesty notes: gates a2, c, d, f sit above the 1× ideal budget but inside
+their CI bounds — the same inherited watch flags the M3 record carries; no
+budget was loosened and no gate is a hard regression. The new tier-0 gate
+runs at **0.26× its own (looser) budget** — the full-store pass is cheap
+enough that the gate's `rescued=8` probe stays honest (a rescued-set of 0
+would mean the probe fragment stopped matching; the logged line is checked,
+never silently accepted).
+
+## Gauntlet item 4 — live smoke (spec/09 h2.57, BINDING): PASS
+
+Technique per spec/09 h2.57: ephemeral `pi --no-session` in a tmux pane
+(200×50), store seeded by submitting one short user message containing the
+smoke vocabulary (`unsaidlock noted beside src/core/query.ts and
+src/core/query.ts twice`) and interrupting the turn; probes typed ONE
+CHARACTER AT A TIME (`tmux send-keys`, 0.12 s apart — burst cancels
+in-flight autocomplete queries, the documented false-conclusion source);
+visible state via `tmux capture-pane`. Zero instrumentation was needed —
+no `appendFileSync` probe was ever added, and `git status` is clean of
+instrumentation (see item 5). All captures quoted verbatim below
+(input line, separator, mode tag, and the widget line directly under the
+input).
+
+**Scenario 1 — tier-0 one-shot cousin menu, then it narrows away: PASS**
+
+Fragment `sai` typed char-by-char (s → a → i; the anchored scan for `sai`
+is EMPTY — no stored key starts `sai` — so the tier-0 fallback fires and
+rescues the contiguous-run cousin `unsaidlock`, score 85 − 40·2/10 = 72 ≥ 60):
+
+```
+sai                                          ← input line
+────────────────────────────────────────────
+INSERT
+unsaidlock                                   ← the widget line: tier-0 one-shot cousin menu
+```
+
+Reading: one-shot rescue menu for a fragment with zero anchored results —
+the said→unsaid class behavior the amended no-hijack rule (spec/09 item 2,
+2026-10) declares EXPECTED, not a hijack.
+
+Continuing to type (`sain` — no longer contiguous anywhere):
+
+```
+sain                                         ← input line
+────────────────────────────────────────────
+INSERT                                       ← NO widget line: menu narrowed away
+```
+
+Reading: the cousin menu narrows away as typing continues — tier-0 only
+rescues fragments the anchored scan cannot serve at all, and only while a
+contiguous run exists.
+
+**Scenario 2 — `#query` path completion via `#` loose mode: PASS**
+
+Line cleared (4 × backspace), then `#query` typed char-by-char. The
+anchored scan for trigger fragment `query` against the stored path key
+fails at the anchor (`q` ≠ `s` of `src/core/query.ts`) — plain anchored
+matching can NEVER serve this query; the `#` loose-mode tier-0 pass finds
+the contiguous run `query` at offset 10 (score 85 − 40·10/17 = 62 ≥ 45
+loose threshold):
+
+```
+#query                                       ← input line
+────────────────────────────────────────────
+INSERT
+src/core/query.ts                            ← widget line: the whole path offered
+```
+
+Tab accepted:
+
+```
+src/core/query.ts                            ← input line: WHOLE path inserted, `#` consumed
+────────────────────────────────────────────
+INSERT                                       ← menu dismissed after accept
+```
+
+Reading: rule-4d conversational path completion works through the trigger
+char exactly via the loose mode; Tab inserts the whole display and
+dismisses.
+
+**Scenario 3 — tier-0 never arms a chain (absence evidence): PASS**
+
+Immediately after the tier-0 Tab accept above, a separator space was typed
+(cursor now at the next word start):
+
+```
+src/core/query.ts                           ← input line (cursor after the trailing space)
+────────────────────────────────────────────
+INSERT                                       ← NO successor offer line
+```
+
+Reading: NO chain offer appears — and this absence is load-bearing, not
+vacuous: the seed message contains the path TWICE, so the store holds the
+successor entry `src/core/query.ts → src/core/query.ts`; a chain wrongly
+armed by the tier-0 accept would have rendered a successor offer at this
+exact word start. None did — chains arm on anchored-tier accepts only
+(P1.M1.T2.S2 rule); the tier-0 rescue is a one-shot menu, never an arming
+event.
+
+### Live-smoke honesty notes
+
+- **Exemplar-word note (procedure, not drift):** the spec's exemplar pair
+  is `said`→`unsaid`; the literal word `unsaid` is dictionary-ATTESTED and
+  therefore REJECTS at admission under the M3 length-conditioned `R_eff`
+  curve (attested q ≥ 12 at ≤ 8 chars) — the first seed attempt with plain
+  `unsaid` stored nothing and correctly produced no menu. The smoke
+  therefore uses the same-class dictionary-ABSENT cousin `unsaidlock`
+  (absent → group-0 admit), which exhibits the identical tier-0 contract.
+  The spec's example names the CLASS (`said→unsaid class`), not a promise
+  that the literal token admits — no spec contradiction; recorded here so
+  the next smoke does not re-derive it.
+- **Interrupt note (environment, not drift):** on this pi build the
+  working turn did not cancel on `Ctrl+C` (spec/09 h2.57's wording); the
+  live-cancel keybind is `app.interrupt` = `Escape` (pi-vim consumes the
+  first Escape as INSERT→NORMAL, the second aborts — "Operation aborted"
+  captured). Seed finalization otherwise worked exactly as the spec
+  describes. hapax behavior was unaffected.
+- Widget latency: captures were taken ~0.6 s after the final keystroke of
+  each probe (well inside the debounce/settle window); all three menus
+  appeared on the first capture attempt of their scenario.
+
+## Drift report (spec read-only this run): NONE FOUND
+
+The four verified-agreeing checks (re-verified 2026-09-30, cheaply —
+grep/sed/ls, not edited):
+
+1. **Module rows** spec/02:64–68 ↔ `src/pi/editor.ts` / `src/pi/debug.ts` /
+   `src/pi/paths.ts` — files exist, roles match the rows (enter-submit
+   guard; `/acwords` read-only dump, registered when `config.debug`;
+   jiti-safe dict path resolution). ✅
+2. **Dictionary figures** spec/03:37–54 ↔ the shipped artifact:
+   `dict/common-en.bin` is **850,554 bytes** on disk (ls-verified) and
+   **48,802 entries** (asserted by `test/shipped-dict.test.ts`, green in
+   this sweep's `npm test`; also printed by `tools/calibrate-bands.mjs`:
+   "entries=48802"). Load-factor ≈ 0.745 per the same suite. ✅
+3. **M2 DoD re-theme** — `test/acceptance.test.ts:838` reads
+   `"zero-typing chain — Zorp → space → top successor → Tab → Noria → Tab
+   → Inverter, zero typed word-chars (h2.54)"` on the `zephyr-chain.jsonl`
+   fixture, exactly the re-theme the records describe. ✅
+4. **Decision log** — `spec/SPEC.md:67` is the section heading
+   `## Decision log (all settled)` (a spec section, not an artifact). ✅
+
+Residuals carried from P1.M2.T1.S1's `research/stale-claims.md` (its
+"Residuals for P1.M2.T1.S2's drift report" section, restated): none
+functional — (1) README's perf-gate prose says "these three gates" while
+the table now carries five rows (pre-existing wording, left per
+don't-blanket-rewrite); (2) the tier-0 perf-budget row names "`#`
+loose-mode scans" inside the tier-0 budget, matching the spec/09 table
+verbatim (kept). Both are README-cosmetic and now shipped with S1's README
+sweep.
+
+New findings during this gauntlet/smoke: **none** — no spec-vs-repo
+mismatch surfaced. The one observation (exemplar word `unsaid` is
+admission-rejected under `R_eff`; see the live-smoke honesty note) is a
+smoke-procedure fact about fixture choice, consistent with the spec's own
+admission rules — recorded in the smoke section, not a drift item.
+`spec/*.md` was not edited.
+
+## Tree cleanliness (post-smoke)
+
+- No env-gated instrumentation was added at any point (the captures were
+  unambiguous); `git status` after the sweep shows only `README.md`
+  (P1.M2.T1.S1's parallel deliverable) and `docs/M1-DoD.md` (this section)
+  — zero files under `src/`, `test/`, or `spec/`.
+- The tmux session was killed after the captures; nothing persists.
+
+## Reproduction
+
+```bash
+git rev-parse HEAD                                # f2a219d… (or later; re-capture counts if src/ or test/ moved)
+npm run check
+npm test                                          # 37 files / 1046 passed / 1 skipped
+npx vitest --run test/perf-gates.test.ts --disable-console-intercept   # 9/9; [gate …] actuals incl. [gate t0]
+npm run bench                                     # reporting numbers (gate t0 row)
+# Live smoke (spec/09 h2.57): tmux + pi --no-session; seed a message whose
+# vocabulary includes a dictionary-ABSENT contiguous-run cousin (e.g.
+# "unsaidlock") AND the literal "src/core/query.ts" TWICE; Enter; interrupt
+# the turn (Escape ×2 on this build); then one-char-at-a-time:
+#   s a i        → tier-0 one-shot cousin menu;  n → narrows away
+#   # q u e r y  → src/core/query.ts offered;    Tab → whole path inserted
+#   Space        → NO successor offer (tier-0 never arms; store holds the
+#                  path's self-successor from the doubled seed, so the
+#                  absence is load-bearing)
+```
