@@ -11,7 +11,8 @@ path); where no editor factory exists, hapax falls back to pi's built-in
 vertical autocomplete menu (spec 07).
 
 **Status: M3 (v3) — complete, live-verified 2026-09-08** (one-line widget
-primary display, anchored-fuzzy matching with tier/frequency ranking,
+primary display, anchored-fuzzy matching with an anchorless tier-0
+fallback and tier/frequency ranking,
 length-conditioned R_eff admission; widget live-verified against the real
 pi + split-editor stack per spec 09). The M1 definition-of-done gauntlet —
 every gate, command, and measured number — is recorded in
@@ -36,16 +37,31 @@ keep it current; this README is a summary).
   starts — no position gating, no special mode. Matching is
   anchored-fuzzy (2026-10): the fragment's first character must equal the
   candidate's first character (the anchor), the rest matches as a
-  subsequence — `zsk` finds `zendesk`. Matches come in three strictness
-  tiers (exact prefix > contiguous tail > scattered), and a candidate
-  enters the result set only above the `fuzzThreshold` score (0–100;
-  100 = exact-prefix-only). The store's first-character index stays the
-  scan entry, preserving the < 1 ms query budget (`src/core/query.ts`,
-  spec 04).
+  subsequence — `zsk` finds `zendesk`. Matches come in four strictness
+  tiers (exact prefix > contiguous tail > scattered > **tier 0, the
+  anchorless fallback**), and a candidate enters the result set only
+  above the `fuzzThreshold` score (0–100; 100 = exact-prefix-only).
+  Tier 0 fires only when the anchored scan returns ZERO results — and
+  only then: one full-store pass matches the fragment (≥ 3 chars) as a
+  single contiguous run anywhere in the key (`esk` → `zendesk`,
+  `query` → `src/core/query.ts` — path filenames, which sub-word
+  splitting can't serve), scored `85 − 40·runStart/len`,
+  threshold-gated, sorted below tier 1. Under the trigger char (`#`)
+  the gates relax (spec 04/07): tier-0 runs are ALWAYS consulted — no
+  zero-result precondition (`#query` completes `src/core/query.ts`
+  directly) — and scattered tier-1 matches are visible (`#` default
+  threshold 45 vs ambient 60; an explicitly set `fuzzThreshold`
+  overrides both modes). The store's first-character index stays the
+  anchored scan entry, preserving the < 1 ms query budget; the fallback
+  pass carries its own (< 3 ms p99, empty-anchored path only)
+  (`src/core/query.ts`, spec 04).
 - **Predictable tiered menu order** — results order by match-strictness
-  tier, then in-session frequency (sessionCount) within a tier, then
+  tier (exact prefix > contiguous tail > scattered > anchorless run),
+  then in-session frequency (sessionCount) within a tier, then
   shorter key, then byte-lexicographic (a 4-key comparator; spec 09,
-  `src/core/query.ts`). The pure content-derived order (shortest match
+  `src/core/query.ts`). The zero-result tier-0 fallback can never enrich
+  a menu that would already open — it only rescues menus that would not
+  appear. The pure content-derived order (shortest match
   first, lexicographic) is RETIRED (2026-10 decision log). A bare-trigger
   listing has no tiers — frequency order. Session salience (recency,
   repetition, sticky user-typed, rarity) governs store
@@ -126,8 +142,10 @@ keep it current; this README is a summary).
   `Acme` → `Zephyr` → `Noria` → `Inverter` walks with nothing
   typed between accepts. Inserted chain words use the candidate's display
   casing (most-recent-casing-wins), exactly like word completions. Typed characters filter the live successor list
-  normally (fuzzy matches admitted into chains, gated by the same
-  `fuzzThreshold`). Chaining resets on `before_agent_start` (each new user
+  normally (anchored fuzzy matches admitted into chains, gated by the
+  same `fuzzThreshold`) — and chains stay ANCHORED everywhere: the chain
+  gate consults tiers 1–3 only; tier-0 anchorless matches never arm or
+  extend a chain (spec 07). Chaining resets on `before_agent_start` (each new user
   turn) and on disqualifying input — including the trigger char, which
   resets the chain to idle and honors trigger mode with the `#frag`
   prefix — and arms normally in resumed sessions —
@@ -192,7 +210,10 @@ above is reachable after a history replay (regression-pinned in
 `test/adversarial-typing.test.ts`).
 
 Ordinary prose: typing is identical to stock pi — no key is captured, no
-result line appears for common words, and Tab with no selection inserts a
+result line appears for common words **WITH ANCHORED MATCHES** — the
+zero-result tier-0 fallback MAY surface one-shot contiguous-run cousin
+menus (`said`→`unsaid` class, ~5–20% by fragment length) that narrow away
+as typing continues (spec 09 item 2) — and Tab with no selection inserts a
 literal Tab. Stock contexts are never preempted: slash-command lines
 (`/re`), `@` mentions, and fragments inside quoted paths complete exactly
 as they do in stock pi. The result line is strictly take-it-or-leave.
@@ -210,8 +231,8 @@ Two layers:
   admission + salience), `store` (per-session word candidates, 20k cap,
   plus the top-3 successor index fed by strict-adjacency bigrams captured
   from raw text at ingest — the 10,000-key bigram cap drains to ≤ cap
-  within the same ingest call), `query` (anchored-fuzzy matching +
-  tier/frequency ranking). No pi imports.
+  within the same ingest call), `query` (anchored-fuzzy matching + the
+  zero-result tier-0 fallback + tier/frequency ranking). No pi imports.
 - `src/pi/` — the pi adapter: `index` (extension factory + lifecycle +
   the dual-path display decision), `ingest` (message handling),
   `widget` (the primary one-line result display: visibility machine +
@@ -227,8 +248,9 @@ Three paths connect them:
   events feed a pipeline with a 300 ms trailing debounce and chunked
   processing (≤ 64 KB slices, event-loop yield between slices).
 - **Query** (synchronous, every keystroke): match-state extraction →
-  anchored-fuzzy tiered query (first-char bucket scan) → frequency
-  ranking, with zero awaits; Tab always resolves the live result.
+  anchored-fuzzy tiered query (first-char bucket scan; zero-result
+  tier-0 fallback) → frequency ranking, with zero awaits; Tab always
+  resolves the live result.
 - **Display** (dual-path, decided at session start): when an editor
   factory exists, the widget composition renders the one-line result
   line below the input — its own visibility machine (never with zero
@@ -252,7 +274,7 @@ Three paths connect them:
       │            src/core           │               │
       │ segment → shapeGate → dict →  │               │
       │  score → store (cap 20k) →    │               │
-      │  query (anchored fuzzy)       │               │
+      │  query (anchored + tier-0)    │               │
       └───────────────────────────────┘               │
 ```
 
@@ -426,7 +448,7 @@ silently (forward compatibility):
 | `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | retained but inert — matching is effectively 1 char (see spec 07) |
 | `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once (the widget line cap AND terminal-width truncation) |
 | `rejectCommonness` | number | `12`  | `1`–`255` (clamped)                                      | dictionary-attestation FLOOR of the length-conditioned reject curve R_eff (flat through 8 chars, sqrt ramp, admit-all at 20) — higher = looser; the whole curve scales from this floor. Also governs the conjugation guard's stem comparisons (via R_eff). Probe any word first: `node tools/calibrate-bands.mjs <words...>` prints q + verdict (lowercase and Capitalized). Default is the baked constant in `src/core/score.ts` |
-| `fuzzThreshold`  | number  | `60`    | `0`–`100` (clamped)                                      | minimum anchored-fuzzy match score for a candidate to enter a result set (spec 04). Higher = stricter; 100 = exact-prefix-only mode. Default is the calibration starting point (tuning protocol, spec 09), imported automatically from the baked constant in the query module — same pattern as `rejectCommonness` |
+| `fuzzThreshold`  | number  | `60`    | `0`–`100` (clamped)                                      | minimum fuzzy match score (spec 04) for a candidate to enter a result set. Per-mode defaults (2026-10): 60 ambient (word matching), 45 under the trigger char (scattered tier-1 visible there); an explicitly set value overrides BOTH modes. Higher = stricter; 100 = exact-prefix-only mode. Default is the calibration starting point (tuning protocol, spec 09), imported automatically from the baked constant in the query module — same pattern as `rejectCommonness` |
 | `menuDelayMs`     | number  | `0`     | `0`–`2000` (clamped)                                     | hesitation gate for the menu's first appearance; **default OFF** (150/300 calibration attempts failed against real rhythm — set only if flow-popping returns) |
 | `enableChaining` | boolean | `true`  | `true` / `false`                                         | gates chained (successor) completion only; word completion unaffected either way; `enablePhrases` is accepted as a deprecated alias and is mapped to this key |
 | `debug`          | boolean | `false` | `true` / `false`                                         | enables the `/acwords` command + store dump     |
@@ -451,7 +473,8 @@ booleans — no truthy coercion.
 
 #### Not configurable (by design)
 
-The match-tier boundaries and tier constants, the R_eff curve shape, the
+The match-tier boundaries and tier constants (including the tier-0
+fallback's 3-char floor and score formula), the R_eff curve shape, the
 conjugation-guard suffix set, salience weights, the eviction cap, debounce
 intervals, and popup timing are internal tuning constants — never
 user-configurable (only the two floors above are knobs; tier BOUNDARIES
@@ -577,6 +600,7 @@ Performance gates (PRD §09; asserted at 3× budget headroom by
 | Gate | Budget |
 |---|---|
 | 20k-candidate anchored-fuzzy query (first-char bucket + tiers + frequency sort + top 8) | < 1 ms p99 |
+| Tier-0 anchorless fallback pass (full store; fires only when the anchored scan returns zero; also `#` loose-mode scans) | < 3 ms p99 |
 | Dictionary load + full 20k-word lookup sweep | < 60 ms |
 | Ingest of 800 KB session text | < 60 ms, yield every ≤ 64 KB |
 | Steady-state heap delta (dict + store) | < 6 MB |
