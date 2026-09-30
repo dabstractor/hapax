@@ -32,6 +32,10 @@ shapes.
 - Process in ≤ 64 KB slices; `await` a microtask/yield between slices
   (`setImmediate` or `scheduler.yield()` if available) so the event loop
   breathes. A pathological multi-MB message must never block a keystroke.
+- A slice boundary never splits a token: the trailing partial token
+  (suffix of token-class characters) is carried into the next slice and
+  tokenized there exactly once, mirroring the open-line/open-tail run
+  carry.
 - Track cumulative stats (words seen, admitted, rejected-by-gate) for the
   debug command (see 08).
 

@@ -128,6 +128,23 @@ interface SegmentResult {
  *  regex decides, not that accident). */
 const WHITESPACE_GAP_RE = /^[ \t]+$/;
 
+/** Characters that can legally appear INSIDE a token — the exact union
+ *  of the five tokenize regexes in src/core/segment.ts (BASE adds _,
+ *  HEXISH is a subset, FILENAME adds '.', HYPHEN adds '-', LITERAL adds
+ *  ._@:+/~=-). A slice boundary can only split a token if the char before
+ *  AND after it are in this class — the token-carry loop trims exactly
+ *  this suffix (BUG-004). KEEP IN SYNC with the segment.ts regexes; a
+ *  drift here would under/over-carry across chunk seams. No /g flag —
+ *  no shared lastIndex. */
+const TOKEN_CHAR_RE = /[A-Za-z0-9._@:+/~=-]/;
+
+/** Carry cap (BUG-004): a >64KB single identifier would otherwise grow
+ *  the token carry unbounded; such a run matches no tokenize regex anyway
+ *  (max ~96 chars, LITERAL_RE). On overrun the carry keeps at most this
+ *  many trailing chars and the rest degrades to the pre-fix behavior —
+ *  no crash, bounded memory. */
+const MAX_CARRY = 1024;
+
 /** Cap on the per-pipeline admission memo (#admitMemo). Distinct raw
  *  tokens per session sit well below this in practice (the PRD's own
  *  vocabulary estimate is ~10–20k uniques per 300k tokens); on overflow
@@ -382,8 +399,16 @@ export class IngestPipeline {
    *  passesShape → admit → store.upsert, followed by an awaited yield so
    *  a multi-MB message never blocks a keystroke (§02 h2.15). P1.M3.T2.S3
    *  restore calls this directly to bypass the debounce. A slice boundary
-   *  can split one token — an accepted approximation (regex tokenize is
-   *  safe on any slice) — but NEVER an adjacency run: text is split on
+   *  never splits a token (BUG-004 fix): the trailing partial token of a
+   *  non-final slice — its suffix of token-class characters, capped at
+   *  MAX_CARRY — is carried into the next slice and tokenized there
+   *  exactly once, mirroring the openLine/openTail run carry, so tokens
+   *  AND adjacency runs/bigrams form across boundaries. Documented seam
+   *  limitations (accepted, deliberately not hardened): a structured
+   *  secret straddling the seam stays unmaskable (maskSecrets is per-
+   *  segment), and a unicode-letter (rule 3/R2) disqualification across
+   *  a seam is accepted as-is (rare). Still NEVER an adjacency run
+   *  otherwise: text is split on
    *  '\n' per slice, every newline-terminated segment finalizes a line,
    *  and an unterminated tail segment carries the open line AND its
    *  trailing gap text (openTail) into the next slice, so only a newline
@@ -400,8 +425,40 @@ export class IngestPipeline {
     // openTail + the next segment's prefix, so it chains like any other.
     let openLine: SpanEntry[] = [];
     let openTail = "";
+    let carry = ""; // trailing partial token carried from the previous slice
     for (let off = 0; off < text.length; off += this.#chunkBytes) {
-      const slice = text.slice(off, off + this.#chunkBytes);
+      const raw = text.slice(off, off + this.#chunkBytes);
+      // Token carry (BUG-004): a slice boundary never splits a token. On
+      // every NON-final slice, k = the raw tail's trailing maximal
+      // token-class run (≤ MAX_CARRY): those chars move into the NEXT
+      // slice and are tokenized there exactly once. The FINAL slice
+      // carries nothing (k = 0) — text ending mid-token admits that
+      // token whole, exactly like single-slice processing (the tokenize
+      // regexes have no right anchor). The raw tail is trimmed HERE,
+      // before appendSegment/openTail ever sees the slice: carried chars
+      // are token-class and would otherwise sit in openTail and WRONGLY
+      // BREAK the whitespace-gap run detection ("zorpwibble quuxblat"
+      // straddling the seam would stop chaining).
+      const nonFinal = off + this.#chunkBytes < text.length;
+      let k = 0;
+      if (nonFinal) {
+        while (
+          k < raw.length &&
+          k < MAX_CARRY &&
+          TOKEN_CHAR_RE.test(raw[raw.length - 1 - k]!)
+        ) {
+          k++;
+        }
+      }
+      // Prepend the PREVIOUS carry FIRST, then trim only the raw part's
+      // tail. The carry was class-boundary-trimmed last iteration (its
+      // run ended at a non-class char or it is a MAX_CARRY-capped
+      // continuation of a >1KB run that matches no tokenize regex) — it
+      // is never re-trimmed: carry-once semantics, no double admission.
+      // The carry holds no '\n' (not a class char), so prepending before
+      // split("\n") cannot merge lines.
+      const slice = carry + raw.slice(0, raw.length - k);
+      carry = raw.slice(raw.length - k);
       // Newline is the only STRUCTURAL break (PRD 002 §06 h3.6) — a chunk
       // boundary never breaks a run. segments[0..n-2] were each terminated
       // by a '\n' inside this slice → finalize each line's runs; the tail

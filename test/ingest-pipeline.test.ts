@@ -570,6 +570,34 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     expect(h.store.topSuccessors("lwlock")).toEqual([{ next: "norias", count: 1 }]);
   });
 
+  it("a chunk boundary INSIDE a token carries it whole (BUG-004): no junk half, bigram chains", async () => {
+    const calls: string[][][] = [];
+    // "lwlock Zorpwibble quuxblat" (26 chars) sliced at 12: the seam at
+    // offset 12 falls inside "Zorpwibble" ("Zorpw" | "ibble"). Slice 1
+    // carries "Zorpw"; slice 2 processes "Zorpwibble " whole; slice 2
+    // carries "quuxbla"; the final slice carries nothing and admits
+    // "quuxblat" ("quuxbla" + "at" reassembled). chunkBytes 12 keeps a
+    // non-class char in every raw slice, so no slice degenerates to a
+    // whole-raw class run (the documented >1KB degradation path).
+    const h = makePipeline({
+      chunkBytes: 12,
+      onAdmittedTokens: (runs) => calls.push(runs),
+    });
+    h.pipeline.onMessageEnd(userMsg("lwlock Zorpwibble quuxblat"));
+    await drainNow(h);
+    expect(h.counts.yields).toBe(3); // one yield per slice, carry or not
+    // The straddled token is admitted WHOLE; neither half exists.
+    expect(h.store.get("zorpwibble")).toBeDefined();
+    expect(h.store.get("ibble")).toBeUndefined();
+    expect(h.store.get("zorpw")).toBeUndefined();
+    // The run stitched across the boundary → the bigram forms.
+    expect(calls).toEqual([[["lwlock", "zorpwibble", "quuxblat"]]]);
+    h.store.recordBigramRuns(calls[0]!);
+    expect(h.store.topSuccessors("zorpwibble")).toEqual([
+      { next: "quuxblat", count: 1 },
+    ]);
+  });
+
   it("repeated runs double the successor count", async () => {
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
