@@ -134,7 +134,7 @@ console.log(
 console.log(
   `band populations (legacy flat view — admission is length-conditioned since 2026-10): ` +
     `reject(q≥${REJECT_COMMON_THRESHOLD})=${popReject(REJECT_COMMON_THRESHOLD)}  ` +
-    `group2(${MID_FREQ_THRESHOLD}≤q<${REJECT_COMMON_THRESHOLD})=${popBand2(MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD)}  ` +
+    `group2(retired/empty; was ${REJECT_COMMON_THRESHOLD}≤q<${MID_FREQ_THRESHOLD})=${popBand2(MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD)}  ` +
     `group1(q<${MID_FREQ_THRESHOLD}, attested)=${popBand2(0, MID_FREQ_THRESHOLD)}`,
 );
 

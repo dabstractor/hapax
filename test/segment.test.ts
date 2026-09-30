@@ -772,15 +772,34 @@ describe("path tokens (2026-10 rule 4d)", () => {
     expect(draftOf(p).key).toBe("example.com/a/b");
   });
 
-  it("'src/foo.ts:42:13' → ':line:col' trimmed from the KEY, display keeps the run", () => {
+  it("'src/foo.ts:42:13' → ':line:col' trimmed from KEY and display (§09: retype the path, not the line numbers)", () => {
     const p = pathTok("fix src/foo.ts:42:13 please")!;
     expect(p).toBeDefined();
-    expect(p.raw).toBe("src/foo.ts:42:13");
+    expect(p.raw).toBe("src/foo.ts");
     expect(p.trimFrom).toBe(0);
-    expect(p.trimTo).toBe(10); // "src/foo.ts"
+    expect(p.trimTo).toBe(10); // "src/foo.ts" — now also the display span
     const d = draftOf(p);
     expect(d.key).toBe("src/foo.ts");
-    expect(d.display).toBe("src/foo.ts:42:13");
+    expect(d.display).toBe("src/foo.ts");
+  });
+
+  it("sentence-final '.' never joins a path: key and display stay clean, class stays path (2026-10 validation MAJOR 2/3)", () => {
+    // MAJOR 2: `query.ts.` used to glue the period into key AND display;
+    // MAJOR 3: the period defeated the ':line:col' trim, so the
+    // sentence-final occurrence forked into a 4c literal that inserted
+    // line numbers. Both now reduce to the plain path.
+    const dotted = pathTok("open src/core/query.ts. then close it.")!;
+    expect(dotted).toBeDefined();
+    expect(dotted.raw).toBe("src/core/query.ts");
+    const colText = "jump to src/core/query.ts:42:13. end.";
+    const colDotted = pathTok(colText)!;
+    expect(colDotted).toBeDefined();
+    expect(colDotted.raw).toBe("src/core/query.ts");
+    expect(draftOf(colDotted).key).toBe("src/core/query.ts");
+    // No literal fork either way: the line:col string never surfaces.
+    const raws = tokenize(colText).map((t) => t.raw);
+    expect(raws).toContain("src/core/query.ts");
+    expect(raws).not.toContain("src/core/query.ts:42:13");
   });
 
   it("'4:36' and 'localhost:8080' are NOT paths (existing literal behavior)", () => {

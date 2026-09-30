@@ -260,6 +260,53 @@ describe("bare-run mask floor 32 (BUG-003 h3.2)", () => {
     expect(maskSecrets(`x ${run32} y`)).toBe(`x ${" ".repeat(32)} y`);
   });
 
+  describe("bare-run path guard (2026-10 validation MAJOR 1)", () => {
+    /** The 40-char SLASH-BEARING form of the classic AWS secret — the
+     *  leak class the '/' in the run alphabet exists for. Entropy 4.66
+     *  ≥ 4.5, mixed case, carries a digit → the texture guard masks it. */
+    const AWS_SLASH = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+
+    it("long conversational paths pass through unmasked (slash-bearing, word-like)", () => {
+      const srv =
+        "deploy to /srv/continuous/integration/deployments/release today";
+      expect(maskSecrets(srv)).toBe(srv); // 47-char slash run, all-lowercase
+      const home = "see /home/user/projects/hapax/README.md now";
+      expect(maskSecrets(home)).toBe(home); // mixed case, zero digits
+    });
+
+    it("the 40-char slash-bearing AWS secret still masks (random-base64 texture)", () => {
+      expect(AWS_SLASH.length).toBe(40);
+      const out = maskSecrets(`password ${AWS_SLASH} trailing`);
+      expect(out.length).toBe(`password ${AWS_SLASH} trailing`.length);
+      expect(out.replace(/ /g, "")).toBe("passwordtrailing");
+    });
+
+    it("pipeline: the srv path ranks; the slash-bearing key leaks zero", async () => {
+      const { pipeline, store } = makePipeline();
+      await pipeline.processText(
+        "deploy to /srv/continuous/integration/deployments/release today",
+        true,
+      );
+      expect(
+        rankMatches(store, "sr").map((m) => m.display),
+      ).toContain("/srv/continuous/integration/deployments/release");
+
+      const leak = makePipeline();
+      await leak.pipeline.processText(
+        `password ${AWS_SLASH} trailing turbine turbinez`,
+        true,
+      );
+      const keys = storedKeys(leak.store);
+      expect(
+        keys.some((k) => /wjalrxu|k7mdeng|bpxrfi|\//.test(k)),
+      ).toBe(false);
+      // Positive control: the sentence was ingested, only the key blanked.
+      expect(rankMatches(leak.store, "tur").map((m) => m.key)).toContain(
+        "turbinez",
+      );
+    });
+  });
+
   it("prose fixture replay: masking is a no-op on every text, so zero candidates are lost", async () => {
     const entries = parseSessionFixture("test/fixtures/sessions/prose.jsonl");
     const texts = messageEntriesOf(entries)

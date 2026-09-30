@@ -232,6 +232,11 @@ successor offers, live successor filtering, chain resets on
 `before_agent_start`, the one-word invariant (no multi-word item is ever
 offered — asserted in tests), and raw-text-adjacency window breaks:
 commas, quotes/brackets/backticks, digits, non-word characters, intervening
-words (stopword bridging forbidden), newlines. Integration item 7: accept
-`National` → with zero additional typed chars `Renewable` is the top result
-→ Tab → `Energy` → Tab → `Laboratory`.
+words (stopword bridging forbidden), newlines. Integration item 7
+(re-themed 2026-09: the PRD's `National` → `Renewable` → `Energy` →
+`Laboratory` walk cannot run at the shipped floors — `national` (q=90)
+and `energy` (q=94) reject at the floor length, so the bigram never
+forms; the inversion is pinned in test/acceptance.test.ts, the re-themed
+journey in test/fixtures/sessions/RESULTS.md): accept `Acme` → with zero
+additional typed chars `Zephyr` is the top result → Tab → `Noria` →
+Tab → `Inverter`.

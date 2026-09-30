@@ -132,15 +132,22 @@ Rules:
          `./`, `../` (and combinations) and a trailing `/` — matching
          happens on the trimmed form, because the editor fragment
          always starts at a letter. The DISPLAY preserves the original
-         edge symbols: `/home/...` inserts with its leading slash,
-         `../tools/build.mjs` with its `../`. Casing recency-merge is
-         unchanged.
+         LEADING edge symbols: `/home/...` inserts with its leading
+         slash, `../tools/build.mjs` with its `../`. TRAILING trims —
+         sentence periods, a trailing `/`, a trimmed `:line:col` tail —
+         leave key AND display alike (2026-09-30 validation fixes; 4c's
+         `fox.` guard applied to the path family): a sentence-final
+         `query.ts.` or `query.ts:42:13.` inserts as `query.ts`, never
+         the period or the line numbers, and one visible path stays ONE
+         candidate whether it was seen mid-sentence or sentence-final.
+         Casing recency-merge is unchanged.
        - **Line/column suffix.** A trailing `:digits(:digits)?` is
          trimmed when the remainder is path-shaped
          (`src/foo.ts:42:13` → `src/foo.ts`) — the user retypes the
-         path, not the line numbers. Non-path colons keep their
-         meaning: `4:36` (time) and `localhost:8080` (host:port) are
-         untouched.
+         path, not the line numbers; the trim applies to key AND
+         display, so Tab never inserts the suffix. Non-path colons
+         keep their meaning: `4:36` (time) and `localhost:8080`
+         (host:port) are untouched.
        - **Guards.** Single interior symbols only (interior `..`
          rejects the whole run — `a/../b` shreds; leading `../` is an
          EDGE, trimmed); rule-3 Unicode-letter adjacency applies;

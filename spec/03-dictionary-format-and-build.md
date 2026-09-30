@@ -34,9 +34,11 @@ Offset  Size        Field
                     value = entry index + 1; 0 = empty slot
 ```
 
-Expected size for 70k entries, avg 7 bytes/word:
-420 KB blob + 280 KB offsets + 70 KB scores + 512 KB buckets (128k buckets) ≈
-**1.3 MB**.
+Expected size at the shipped scale — 48,802 entries (50k-word vendored
+unigram corpus; an earlier 70k figure predated corpus selection), avg
+7 bytes/word: ~342 KB blob + ~195 KB offsets + ~48 KB scores + 256 KB
+buckets (65,536 = next pow2 ≥ 1.3 × 48,802) ≈ **0.85 MB** — the shipped
+`dict/common-en.bin` is 850,554 bytes.
 
 ## Hash and probing
 
@@ -45,7 +47,11 @@ Expected size for 70k entries, avg 7 bytes/word:
 - Probing: linear. On collision, compare `memcmp(word, blob+offsets[idx], len)`
   plus exact length match. Insert until empty bucket (table is pre-sized, no
   runtime inserts).
-- Lookup is one hash + ~1.1 probes average (load factor ≤ 0.55): ~100 ns.
+- Lookup is one hash plus a small constant number of probes on average
+  (linear probing at the load factor the 1.3N sizing rule yields; an
+  earlier "load factor ≤ 0.55 / ~1.1 probes" belonged to a nominal
+  70k-table sketch and was inconsistent with that rule): ~100 ns
+  (bench-gated). Shipped artifact: 48,802 / 65,536 buckets = LF 0.745.
 
 ## Loader contract (`src/core/dictionary.ts`)
 

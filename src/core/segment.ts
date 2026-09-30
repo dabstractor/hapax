@@ -230,10 +230,14 @@ function pathShaped(raw: string, from: number, to: number): boolean {
  *  it does not qualify as a path. Runs in the pass-4 loop try this
  *  BEFORE classifyLiteral — a slash-bearing run qualifying both ways
  *  takes the path class (spec/04:128-131). A path must:
- *   1. Trim EDGE symbols from the key: leading `/`, `~`, `./`, `../` and
- *      combinations (every char in "/~."), and one trailing `/`. The raw
- *      span itself is NOT trimmed — it stays the display/insertion form
- *      (the key≠display divergence is the point of 4d).
+ *   1. Trim EDGE symbols: leading `/`, `~`, `./`, `../` and combinations
+ *      (every char in "/~."), trailing sentence periods (ALL — `.` never
+ *      ends a file name; 4c's `fox.` guard applied to the path family),
+ *      and one trailing `/` (periods may interleave: `a/b./` → `a/b`).
+ *      Periods and the trailing `/` trim from KEY and DISPLAY alike — the
+ *      caller slices raw to [0, to) so the insertion text never carries a
+ *      sentence period (2026-10 validation MAJOR 2); leading edge symbols
+ *      stay display-only (the key≠display divergence is the point of 4d).
  *   2. Carry no two adjacent interior symbols — interior `..` ('a/../b')
  *      rejects the WHOLE run, exactly like 4c's `//`/`::`. Leading `../`
  *      was already trimmed as an edge, so only interior doubles die.
@@ -255,7 +259,19 @@ export function classifyPath(raw: string): { from: number; to: number } | null {
   let from = 0;
   let to = raw.length;
   while (from < to && "/~.".includes(raw.charAt(from))) from++;
-  if (to > from && raw.charAt(to - 1) === "/") to--;
+  // Trailing trim (2026-10 validation MAJOR 2/3): sentence periods come
+  // off BEFORE the `:line:col` tail is consulted, so `src/foo.ts:42:13.`
+  // loses the period first and the digit tail then matches; a trailing
+  // `/` still trims exactly one, and periods may follow it.
+  let slashTrimmed = false;
+  while (to > from) {
+    const c = raw.charAt(to - 1);
+    if (c === ".") to--;
+    else if (c === "/" && !slashTrimmed) {
+      to--;
+      slashTrimmed = true;
+    } else break;
+  }
   const len = to - from;
   if (len < LITERAL_MIN_LENGTH || len > 96) return null;
   let prevSymbol = false;
@@ -484,10 +500,12 @@ export function tokenize(text: string): RawToken[] {
   //    literal class exists for what the other passes CANNOT see:
   //    digit-initial runs and symbol-joined codes.
   const literals: Array<{ raw: string; start: number; end: number }> = [];
-  // Rule 4d path spans: raw/start/end are the ORIGINAL match (the display
-  // span — never the trimmed bounds, unlike literals); trimFrom/trimTo
-  // carry the KEY bounds inside raw (raw.slice(trimFrom, trimTo) is the
-  // store key source; expandCandidates lowercases it).
+  // Rule 4d path spans: start/end bound the DISPLAY span — the original
+  // match minus its trailing trims (sentence periods, one trailing `/`,
+  // a trimmed `:line:col` tail; classifyPath owns the trim decisions).
+  // raw is the sliced display text (text.slice(start, end) === raw) and
+  // trimFrom/trimTo carry the KEY bounds inside it (raw.slice(trimFrom,
+  // trimTo) is the store key source; expandCandidates lowercases it).
   const paths: Array<{
     raw: string;
     start: number;
@@ -506,10 +524,18 @@ export function tokenize(text: string): RawToken[] {
     const p = classifyPath(m[0]);
     if (p !== null) {
       const start = m.index;
-      const end = start + m[0].length;
+      // Span end = KEY end: the trimmed tail (sentence period, trailing
+      // `/`, `:line:col`) is off the DISPLAY too — the user retypes the
+      // path, not line numbers (spec/04 4d) — and ending the span BEFORE
+      // a sentence period breaks the strict-whitespace adjacency run
+      // there, so a sentence-final path never bigrams into the next
+      // sentence.
+      const end = start + p.to;
       // Rule-3 guard at the TRIMMED bounds (the KEY's edges — a Unicode
       // letter glued to the key disqualifies the run whole; this is why
-      // the guard cannot reuse the raw match bounds).
+      // the guard cannot reuse the raw match bounds). The char AT p.to is
+      // a trimmed `.`/`/`/`:` — never a Unicode letter — so the guard's
+      // verdict is unchanged by the span shrink.
       if (
         isUniLetterBefore(text, start + p.from) ||
         isUniLetter(text.codePointAt(start + p.to))
@@ -522,7 +548,13 @@ export function tokenize(text: string): RawToken[] {
         continue; // equal-span defer — structurally impossible for paths
         // (they contain '/'), kept for symmetry with the literal pass
       }
-      paths.push({ raw: m[0], start, end, trimFrom: p.from, trimTo: p.to });
+      paths.push({
+        raw: m[0].slice(0, p.to),
+        start,
+        end,
+        trimFrom: p.from,
+        trimTo: p.to,
+      });
       continue;
     }
     const lit = classifyLiteral(m[0]);
@@ -730,9 +762,12 @@ export function expandCandidates(token: RawToken): CandidateDraft[] {
   // manufacture junk sub-candidates.
   //
   // PATHS (rule 4d) — the ONLY key≠display site beyond casing: the key
-  // is the trimmed lowercase slice (edge `/~.` chains and one
-  // ':line(:col)?' tail stripped) while display is the ORIGINAL raw run
-  // (insertion preserves the leading '/' and '..' exactly as typed).
+  // is the trimmed lowercase slice (edge `/~.` chains, one
+  // ':line(:col)?' tail, trailing sentence periods stripped) while
+  // display keeps the leading edge symbols (insertion preserves the
+  // leading '/' and '..' exactly as typed); line numbers and sentence
+  // punctuation are not user intent and are already gone from token.raw
+  // (see the pass-4 span comment).
   // properName is pinned FALSE — a documented choice: paths are not
   // names (spec is silent; recorded for T2.S3's display-flow audit).
   if (token.path) {

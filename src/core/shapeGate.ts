@@ -518,20 +518,30 @@ function hasHighEntropySecretRun(display: string): boolean {
  *     secret access key (the BUG-003 h3.2 leak — its slash-free form
  *     slipped under the old bare-40 floor and its camelCase fragments
  *     reached expandCandidates) and safely above anything prose-shaped
- *     (longest English words ~28–30; URLs break runs on ':'/'.'). Over-
- *     masking is accepted: such runs are never legitimate completion
- *     vocabulary (fixture-vocabulary FP test pins this).
+ *     (longest English words ~28–30; URLs break runs on ':'/'.').
+ *     SLASH-BEARING matches mask only when isSecretTexturedRun confirms
+ *     random-base64 texture (mixed case + ≥ 1 digit + charset-relative
+ *     entropy ≥ BASE64_ENTROPY_MIN): '/' entered this alphabet for base64
+ *     AWS secrets but is also the PATH separator, and the unguarded
+ *     catch-all blanked long conversational paths wholesale (2026-09-30
+ *     validation MAJOR 1 — `/srv/continuous/integration/deployments/release`
+ *     never became a candidate). Slash-free matches mask outright,
+ *     unchanged. Over-masking of the remaining class is accepted: such
+ *     runs are never legitimate completion vocabulary (fixture-vocabulary
+ *     FP test pins this).
  */
 /** Min length of the raw-text bare alnum run the greedy catch-all (rule
- *  10) masks. 32 sits safely BELOW the 38-char classic AWS secret access
+ *  11) masks. 32 sits safely BELOW the 38-char classic AWS secret access
  *  key (the BUG-003 h3.2 leak class: at the old floor of 40 the slash-free
  *  form slipped past and its camelCase sub-word fragments survived every
  *  token-level gate) and safely ABOVE anything prose-shaped — the longest
  *  unbroken English words are ~28–30 chars, and URLs break runs on
  *  ':'/'.'/'?' anyway. 32+ pure-hex runs are private-key-shaped by intent
  *  (the token-level pure-hex rule rejects ≥ 20 at the gate; masking here
- *  only prevents candidate generation). Baked per PRD §08 — no config
- *  surface. */
+ *  only prevents candidate generation). Slash-bearing matches must ALSO
+ *  clear the isSecretTexturedRun texture guard — paths share the alphabet
+ *  via '/' (see that function's calibration notes). Baked per PRD §08 —
+ *  no config surface. */
 const BARE_RUN_MIN = 32;
 /** The catch-all run regex, precompiled ONCE at module scope — a regex
  *  literal cannot embed the constant. String.replace resets /g lastIndex,
@@ -541,6 +551,66 @@ const BARE_ALNUM_RUN_RE = new RegExp(
   `[0-9a-zA-Z/+]{${BARE_RUN_MIN},}`,
   "g",
 );
+
+/** Texture guard for the bare-run catch-all's SLASH-BEARING matches (rule
+ *  11). '/' is in the run alphabet for base64 AWS secrets but is also the
+ *  path separator, so an unguarded catch-all eats long conversational
+ *  paths whole (2026-09-30 validation MAJOR 1). A slash-bearing run masks
+ *  only when it reads as RANDOM base64 — the same "random, not word-like"
+ *  line rule 7a draws: ≥ 1 lower, ≥ 1 upper, ≥ 1 digit, and charset-
+ *  relative entropy ≥ BASE64_ENTROPY_MIN. Measured calibration
+ *  (bits/char, whole run): conversational paths land 3.7–4.5
+ *  (`/home/user/projects/hapax/README` 4.05,
+ *  `/srv/continuous/integration/deployments/release` 3.89, dense
+ *  camelCase paths ≈ 4.4) while the AWS secret class lands ≥ 4.6 (the
+ *  canonical `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` 4.66; random keys
+ *  ≈ 5.2) — the codebase's own 4.5 floor (prose ≈ 4.0–4.2, random base64
+ *  ≈ 6, external_deps.md §3) separates them. Slash-FREE runs skip the
+ *  guard and mask outright exactly as before (nothing path-shaped is
+ *  slash-free; the BUG-003 h3.2 slash-free leak class keeps full
+ *  coverage). Documented residual (owner-accepted, mirroring rule 7a's):
+ *  a LOW-entropy slash-bearing secret blob — structured IDs in URL path
+ *  form, e.g. Slack-webhook-shaped `…/T00000000/B00000000/XXXX…` — fails
+ *  the entropy floor and stays unmasked by THIS catch-all; the structured
+ *  regexes (rules 1–10) still own every known key format, and an
+ *  unmasked path-shaped secret would still face the gate's rule-7a scan.
+ *  True iff the run should MASK. */
+function isSecretTexturedRun(run: string): boolean {
+  if (!run.includes("/")) return true; // slash-free: bare ≥32 run masks outright
+  let lower = 0;
+  let upper = 0;
+  let digit = 0;
+  for (let i = 0; i < run.length; i++) {
+    const ch = run.charAt(i);
+    if (ch >= "a" && ch <= "z") lower++;
+    else if (ch >= "A" && ch <= "Z") upper++;
+    else if (ch >= "0" && ch <= "9") digit++;
+  }
+  return (
+    lower > 0 && upper > 0 && digit > 0 && charEntropy(run) >= BASE64_ENTROPY_MIN
+  );
+}
+
+/** Index-aligned optional guards for SECRET_WINDOW_RES: when defined, the
+ *  rule's replace callback consults it per match and masks only when the
+ *  guard returns true. Only the bare-run catch-all (last rule) carries
+ *  one — every anchored rule masks unconditionally (undefined). */
+const SECRET_WINDOW_GUARDS: readonly (
+  | undefined
+  | ((run: string) => boolean)
+)[] = [
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  isSecretTexturedRun,
+];
 
 const SECRET_WINDOW_RES: readonly RegExp[] = [
   /(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16,}/g,
@@ -587,8 +657,11 @@ const SECRET_WINDOW_ANCHORS: readonly (readonly string[])[] = [
  * Blank structured secret windows in one raw segment (BUG-003 layer 1).
  *
  * Runs the fixed SECRET_WINDOW_RES inventory in order over the segment,
- * replacing every match with same-length spaces (see the inventory JSDoc
- * for the rule list, the always-on status, and the masking semantics).
+ * replacing every match a rule accepts with same-length spaces (see the
+ * inventory JSDoc for the rule list, the always-on status, and the
+ * masking semantics; the bare-run catch-all consults its
+ * SECRET_WINDOW_GUARDS entry per match — paths survive it, random-base64
+ * textures do not).
  * The result feeds tokenize() unchanged otherwise; ordinary prose, URLs,
  * and short identifiers pass through byte-identical.
  *
@@ -611,7 +684,10 @@ export function maskSecrets(segment: string): string {
       if (segment.indexOf(anchors[a]!) !== -1) present = true;
     }
     if (!present) continue;
-    segment = segment.replace(SECRET_WINDOW_RES[i]!, (m) => " ".repeat(m.length));
+    const guard = SECRET_WINDOW_GUARDS[i];
+    segment = segment.replace(SECRET_WINDOW_RES[i]!, (m) =>
+      guard !== undefined && !guard(m) ? m : " ".repeat(m.length),
+    );
   }
   return segment;
 }

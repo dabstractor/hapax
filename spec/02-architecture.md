@@ -61,6 +61,11 @@ hapax/
 │       ├── widget.ts         # one-line result widget — PRIMARY display
 │       │                     #   path: rendering, key handling,
 │       │                     #   visibility state machine (M3, 07)
+│       ├── editor.ts         # enter-submits-while-autocompleting guard
+│       │                     #   (07: Enter accepts the menu instead)
+│       ├── debug.ts          # /acwords read-only store+stats dump
+│       │                     #   (08 h2.48; registered when config.debug)
+│       ├── paths.ts          # jiti-safe dictionary path resolution
 │       └── config.ts         # config load/merge with defaults
 └── test/
     ├── segment.test.ts

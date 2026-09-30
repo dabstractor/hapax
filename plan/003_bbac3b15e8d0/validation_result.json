@@ -1,0 +1,5 @@
+{
+  "hasIssues": true,
+  "issueCount": 7,
+  "summary": "3 major path-handling spec deviations (maskSecrets destroys >32-char path candidates; sentence-final paths glue trailing period into key/display; :line:col trim defeated by sentence period) + 4 minor (spec M2-DoD item-7 drift, module-layout drift, tracked junk files url/audit-output.txt, stale spec numeric claims)."
+}
