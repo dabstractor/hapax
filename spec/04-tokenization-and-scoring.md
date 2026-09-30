@@ -98,11 +98,13 @@ Rules:
          `--`/`~` trim (`--mode=2` → `mode=2`, `~2.1.0` → `2.1.0`).
        - **Length floor 4** mirrors "numbers over 3 digits": `123` and
          two-char codes (`4K`) stay out.
-       - **Strictly additive.** A literal with EXACTLY the span of a
-         kept base/hexish/compound token defers to that token
-         (`utf8Reader` keeps camelCase subword splitting; `0f3a9c2`
-         stays hexish-flagged); literals absorb only strictly-contained
-         tokens (`2560x1440@2` absorbs its `x1440` tail). Rule 3
+       - **Strictly additive.** A literal whose post-trim span EQUALS OR
+         IS CONTAINED IN a kept base/hexish/compound token defers to
+         that token (`utf8Reader` keeps camelCase subword splitting;
+         `0f3a9c2` stays hexish-flagged; `FOO_1_` keeps its base token —
+         the trailing-`_` trim cannot fork a `FOO_1` literal);
+         literals absorb only strictly-contained tokens
+         (`2560x1440@2` absorbs its `x1440` tail). Rule 3
          (Unicode-letter adjacency) applies to literals like every
          pass. Literals are OPAQUE to subword splitting — codes
          complete whole as typed.

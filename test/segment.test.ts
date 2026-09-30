@@ -300,6 +300,9 @@ describe("tokenize — span offsets (P1.M1.T3.S1)", () => {
       "0f3a9c2 absorbs its base-captured tail f3a9c2",
       "前回の session トークン", // CJK neighbors
       "𝕏 fix", // astral char = 2 UTF-16 units; offsets shift by 2, stay valid
+      "FOO_1_", // BUG-002 straddle class: '_' is a base word char AND a
+      "rename FOO_1_ ok", // literal trim symbol — spans must stay disjoint
+      "USER_2_TOKEN_",
     ];
     for (const text of cases) {
       const toks = tokenize(text);
@@ -635,6 +638,20 @@ describe("technical literals (2026-10 rule 4c)", () => {
     expect("2560x1440@2 to 2560x1440@2.".slice(t!.start, t!.end)).toBe(
       "2560x1440@2",
     );
+  });
+
+  it("trailing-'_' trim defers to the containing base token (BUG-002): 'FOO_1_' is ONE base token", () => {
+    // '_' is a word char for the base pass but a trim symbol for the
+    // literal pass — the only straddle character. Pre-fix this emitted
+    // the 'FOO_1' literal [0,5) AND the 'FOO_1_' base [0,6): overlapping
+    // spans → duplicate store candidates ('foo_1' + 'foo_1_').
+    expect(raws("FOO_1_")).toEqual(["FOO_1_"]);
+    expect(tokenize("FOO_1_")[0]!.raw).toBe("FOO_1_");
+    expect(tokenize("FOO_1_")[0]!.literal).not.toBe(true); // base class — no literal fork
+    expect(raws("rename FOO_1_ ok")).toEqual(["rename", "FOO_1_", "ok"]);
+    expect(raws("call API_V2_KEY_ now")).toEqual([
+      "call", "API_V2_KEY_", "now",
+    ]);
   });
 
   it("pure digit runs ≥ 4 are literals; shorter ones stay out", () => {

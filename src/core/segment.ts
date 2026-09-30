@@ -566,8 +566,16 @@ export function tokenize(text: string): RawToken[] {
     }
     while (ck < out.length && out[ck].end <= start) ck++; // ends before us
     const o = out[ck];
-    if (o !== undefined && o.start === start && o.end === end) {
-      continue; // equal-span token wins — pass is additive-only
+    if (o !== undefined && o.start <= start && end <= o.end) {
+      continue; // containing token wins — pass is additive-only (BUG-002).
+      // Equal span is the subset case; a kept base/hexish token that
+      // CONTAINS the trimmed literal span (equal or larger) wins and no
+      // literal is emitted. The trailing-'_' trim case: 'FOO_1_' keeps
+      // its base token (the '_' is a word char for rule 1), no 'FOO_1'
+      // literal forks. Only '_' can straddle (sole char in both BASE_RE's
+      // class and LITERAL_SYMBOL_CHARS); o is the only candidate container
+      // (base spans are disjoint, so only a base starting at/before the
+      // literal start can overlap).
     }
     literals.push({ raw: text.slice(start, end), start, end });
   }
@@ -657,7 +665,12 @@ export function tokenize(text: string): RawToken[] {
         continue;
       }
       if (fn !== undefined && fn.start < tok.end) {
-        emitFn(f); // overlap safety (\b boundaries make this unreachable)
+        emitFn(f); // overlap safety — last-resort guard. The old comment
+        // ("\b boundaries make this unreachable") was FALSE for rule 4c:
+        // LITERAL_RE has no \b (it mirrored the hexish pass's note). The
+        // containment defer in the literal pass makes this branch dead
+        // for the trailing-'_' straddle class, but it remains the correct
+        // defensive fallback for any future family overlap.
         f++;
       }
       kept.push(tok);

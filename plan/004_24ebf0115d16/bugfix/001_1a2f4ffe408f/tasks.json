@@ -148,14 +148,14 @@
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "BUG-002: tokenizer overlap — defer to the containing base token for trailing-'_' literals",
-              "status": "Planned",
+              "status": "Ready",
               "description": "segment.ts pass 4's literal loop only defers on exact equal spans; a base token that strictly CONTAINS the trimmed literal span (trailing-'_' trim, e.g. tokenize('FOO_1_') → overlapping ['FOO_1'[0,5), 'FOO_1_'[0,6)]) is emitted alongside the literal, producing duplicate menu candidates. Fix: containment defer (o.start <= start && end <= o.end) + spec/04 'Strictly additive' bullet extension.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "Containment defer in tokenize pass 4 + segment tests + spec/04 sync",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/004_24ebf0115d16/bugfix/001_1a2f4ffe408f/architecture/r2-tokenizer-overlap.md (all claims live-verified). '_' is the ONLY character in both BASE_RE's word class (segment.ts:75) and LITERAL_SYMBOL_CHARS (:109), so the trailing-'_' trim is the only straddle possible. The equal-span defer sits at segment.ts:569; the overlap-safety branch (:658-662) emits the literal AND keeps the straddling base (its '\\b boundaries make this unreachable' comment is false for rule 4c — LITERAL_RE has no \\b). Chosen fix (b) defer-to-containing-base: consistent with the equal-span defer and spec/04:104-105 ('literals absorb only strictly-contained tokens'); fix (a) overlap-absorption was REJECTED because it contradicts that spec clause and would complete 'FOO_1' by deleting a typed '_'.\n2. INPUT: tokenize()'s pass-4 literal loop in src/core/segment.ts (~560-680): the out-cursor token o (first not-yet-passed token ending after start), the trimmed literal span [start, end), and the final merge's overlap-safety branch.\n3. LOGIC: At segment.ts:569 change the defer condition from (o.start === start && o.end === end) to (o.start <= start && end <= o.end) — equality is the subset case; a kept base/hexish token that CONTAINS the trimmed literal span wins and no literal is emitted ('FOO_1_' keeps its base token). Update the overlap-safety comment at :660 (branch stays as a defensive guard; note the 4c caveat). Tests (TDD): raws('FOO_1_') === ['FOO_1_'] in the rule-4c describe block (test/segment.test.ts ~615+); add trailing-'_' inputs ('FOO_1_', 'rename FOO_1_ ok', 'USER_2_TOKEN_') to the disjoint-spans invariant cases (test/segment.test.ts:293-305). Adjacent invariants must keep passing: '2560x1440@2' absorption (:617-631 — strictly-contained bases still absorb; the new defer only fires when the BASE is the container), opaque-literal equal-span class pins (:679-690), hexish/CJK/path cases.\n4. OUTPUT: tokenize() honoring its documented disjoint-span invariant (segment.ts:316) — one token for the trailing-'_' class; consumed by P1.M2.T1.S2's end-to-end assertion.\n5. DOCS: Mode A — extend spec/04-tokenization-and-scoring.md's 'Strictly additive' bullet (:101-106): a literal whose post-trim span equals or is contained in a kept base/hexish/compound token defers to that token; add the FOO_1_ example. Lands with the code (AGENTS.md binding policy).",
@@ -170,7 +170,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "End-to-end no-duplicate assertion (ingest → store → rankMatches)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 0.5,
                   "dependencies": [
                     "P1.M2.T1.S1"
@@ -188,14 +188,14 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "BUG-003: release widget suppression by dismissed-buffer fingerprint, not numeric start",
-              "status": "Planned",
+              "status": "Ready",
               "description": "createVisibilityMachine's suppression release compares numeric fragment starts (widget.ts:628-637), so a dismissal at start 0 (Tab acceptance, Escape, Enter-submit of a message's first word) never releases for the NEXT message's first word — also start 0 in the cleared buffer — silently hiding its completion line. Fix: record the dismissed buffer fingerprint and stay suppressed only while the current buffer is a same-word continuation.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "Record dismissed-buffer fingerprint and release suppression on context change",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S1"
