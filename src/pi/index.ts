@@ -10,10 +10,13 @@
  *
  *   session_start — load config (trust-gated, warning-notifying), build a
  *     fresh CandidateStore + lazily-loading dictionary + IngestPipeline,
- *     register the display-debounced autocomplete provider, register
- *     /acwords when config.debug, and kick a fire-and-forget history
- *     restore (fresh store only for a genuinely new AND empty session;
- *     PRD §05 h2.33).
+ *     then the dual-path display branch (spec 07 h2.42): an editor
+ *     factory installed → widget PRIMARY (the widget composition wraps
+ *     the factory; NO autocomplete provider is registered); no factory →
+ *     FALLBACK — the display-debounced autocomplete provider, today's
+ *     pre-2026-10 behavior verbatim. /acwords when config.debug and the
+ *     fire-and-forget history restore are shared by both paths (fresh
+ *     store only for a genuinely new AND empty session; PRD §05 h2.33).
  *
  *   message_end — feed the pipeline. NEVER returns a value: pi treats a
  *     MessageEndEventResult as a message REPLACEMENT (PRD §02 h2.12), so
@@ -54,6 +57,7 @@ import {
   createStartupGate,
 } from "./provider.js";
 import type { ChainMachine } from "./provider.js";
+import { createWidgetEditorFactory, isWidgetWrapper } from "./widget.js";
 
 /**
  * Dictionary path resolution lives in ./paths.js (P1.M3.T5.S2): the seam
@@ -207,51 +211,111 @@ export default function hapax(pi: ExtensionAPI): void {
       markReady = resolve;
     });
 
-    ctx.ui.addAutocompleteProvider((current) => {
-      const p = createDisplayProvider(
-        createStartupGate(
-          createHapaxProvider(store!, config, current, sessionChain),
-          restoreReady,
-        ),
-        {
-          // Hesitation gate (2026-09 menuDelayMs): full-speed typing
-          // never pops the menu. Explicit intent bypasses: trigger-char
-          // prefixes and armed-chain successor sets (description
-          // "chain") always show immediately.
-          firstPaintDelayMs: config.menuDelayMs,
-          getPreviousKeystrokeAt: () => inputClock.prevAt,
-          isIntentResult: (r) =>
-            (config.triggerChar !== "" && r.prefix.startsWith(config.triggerChar)) ||
-            r.items.some((i) => i.description === "chain"),
-        },
-      );
-      displayProvider = p;
-      return p;
-    });
-
-    // Enter-submits guard (2026-09, src/pi/editor.ts): with menus
-    // auto-opening on typing, pi-tui's Enter-accepts-word-menu behavior
-    // would insert candidates instead of submitting. Wrap whatever
-    // editor factory an extension set (pi-vim etc.) — capture-previous
-    // composition per the extension docs. Idempotent across reloads
-    // (a factory that is already ours is not re-wrapped).
-    //
-    // The proxy ALSO feeds `inputClock` — one tick per real keystroke,
-    // the only such seam (a closed menu gets one getSuggestions call
-    // per WORD, useless for inter-keystroke timing — the first-cut
-    // menuDelayMs gate measured word-to-word gaps and never suppressed;
-    // that bug is why this clock exists). The display layer's hesitation
-    // gate reads clock.prevAt: the keystroke before the one triggering
-    // the current query.
+    // Shared input clock — hoisted ABOVE the display branch: BOTH paths
+    // need it (the widget composition ticks it via the editor layer; the
+    // fallback's enter-submit wrap ticks it today). The display layer's
+    // hesitation gate reads clock.prevAt: the keystroke before the one
+    // triggering the current query.
     const inputClock = { lastAt: null as number | null, prevAt: null as number | null };
     const tickInputClock = () => {
       const t = Date.now();
       inputClock.prevAt = inputClock.lastAt;
       inputClock.lastAt = t;
     };
+
+    // Dual-path display architecture (spec 07 h2.42): an editor factory
+    // means some extension owns the editor — hapax composes around it and
+    // renders its own one-line widget (PRIMARY). No factory → the proxy
+    // cannot install; register the provider and use pi-tui's vertical
+    // menu (FALLBACK, pre-2026-10 behavior). TOCTOU with later extensions
+    // is the same accepted tolerance as today's enter-submit wrap.
     const editorFactory = ctx.ui.getEditorComponent?.();
-    if (editorFactory && !isEnterSubmitWrapper(editorFactory)) {
-      ctx.ui.setEditorComponent?.(wrapEditorFactory(editorFactory, tickInputClock));
+    if (editorFactory && !isWidgetWrapper(editorFactory)) {
+      // PRIMARY: no addAutocompleteProvider — ever. The widget layer owns
+      // display + key semantics (skeleton here; S2/T2/T3 extend it). The
+      // composition itself includes the Enter-submits guard — never ALSO
+      // call wrapEditorFactory (that would stack guards).
+      ctx.ui.setEditorComponent?.(
+        createWidgetEditorFactory({
+          inner: editorFactory,
+          store: sessionStore, // bound const, not the nullable slot
+          config, // triggerChar, maxSuggestions, menuDelayMs,
+          // fuzzThreshold, trigger modes… (S2/T2/T3 consume)
+          chain: sessionChain,
+          restoreReady, // startup gate — shared with the fallback
+          onKeystroke: tickInputClock, // shared input clock (hesitation timing)
+        }),
+      );
+      // Display-provider slot audit: the widget path leaves the slot
+      // empty — every consumer is already null-safe (shutdown disposes
+      // via ?., nothing else dereferences it).
+      displayProvider = null;
+    } else if (editorFactory) {
+      // Reload cycle: our widget wrapper is already installed (the
+      // WIDGET_WRAPPED marker mirrors editor.ts's WRAPPED guard) — never
+      // stack a second layer, never re-install. The widget layer keeps
+      // owning display: still no provider.
+      displayProvider = null;
+    } else {
+      // FALLBACK: today's steps 3–4, byte-for-byte (provider registration
+      // with createStartupGate + hesitation-gate options; the enter-submit
+      // wrap below cannot install — there is no factory — the tolerated
+      // pre-2026-10 state).
+
+      // Stack the hapax provider on pi's current one. Re-registration on
+      // reload is acceptable (fresh session, fresh provider); no unregister
+      // API exists, and degradation after a dict failure keeps this provider
+      // registered with an empty store — zero candidates → delegation.
+      // Startup gate (2026-09, src/pi/provider.ts createStartupGate): the
+      // replay signal resolves when history restore settles (end, abort,
+      // or error — see restoreFromHistory's onSettled). First queries wait
+      // for it (≤ 500 ms) so a word typed while the store replays gets a
+      // LATE menu instead of a permanently missing one (pi-tui asks once
+      // per word). Fresh sessions with no replay resolve immediately.
+      ctx.ui.addAutocompleteProvider((current) => {
+        const p = createDisplayProvider(
+          createStartupGate(
+            createHapaxProvider(store!, config, current, sessionChain),
+            restoreReady,
+          ),
+          {
+            // Hesitation gate (2026-09 menuDelayMs): full-speed typing
+            // never pops the menu. Explicit intent bypasses: trigger-char
+            // prefixes and armed-chain successor sets (description
+            // "chain") always show immediately.
+            firstPaintDelayMs: config.menuDelayMs,
+            getPreviousKeystrokeAt: () => inputClock.prevAt,
+            isIntentResult: (r) =>
+              (config.triggerChar !== "" && r.prefix.startsWith(config.triggerChar)) ||
+              r.items.some((i) => i.description === "chain"),
+          },
+        );
+        displayProvider = p;
+        return p;
+      });
+
+      // Enter-submits guard (2026-09, src/pi/editor.ts): with menus
+      // auto-opening on typing, pi-tui's Enter-accepts-word-menu behavior
+      // would insert candidates instead of submitting. Wrap whatever
+      // editor factory an extension set (pi-vim etc.) — capture-previous
+      // composition per the extension docs. Idempotent across reloads
+      // (a factory that is already ours is not re-wrapped).
+      //
+      // The proxy ALSO feeds `inputClock` — one tick per real keystroke,
+      // the only such seam (a closed menu gets one getSuggestions call
+      // per WORD, useless for inter-keystroke timing — the first-cut
+      // menuDelayMs gate measured word-to-word gaps and never suppressed;
+      // that bug is why this clock exists). The display layer's hesitation
+      // gate reads clock.prevAt: the keystroke before the one triggering
+      // the current query.
+      //
+      // Dual-path note: this block is INERT on the fallback path — there
+      // is no factory here (a factory would have taken the widget branch,
+      // whose composition includes the same guard). Kept byte-for-byte so
+      // the tolerated state is unchanged.
+      if (editorFactory && !isEnterSubmitWrapper(editorFactory)) {
+        ctx.ui.setEditorComponent?.(wrapEditorFactory(editorFactory, tickInputClock));
+      }
     }
 
     // /acwords only in debug mode (PRD §08 h2.48): the command must not

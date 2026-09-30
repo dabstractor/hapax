@@ -44,6 +44,7 @@ import hapax, {
   resolveDictPath,
 } from "../src/pi/index.js";
 import type { AgentMessage } from "../src/pi/ingest.js";
+import { isWidgetWrapper, widgetOptsOf } from "../src/pi/widget.js";
 import { CandidateStore } from "../src/core/store.js";
 import { writeDictFile } from "./helpers/dict-writer.js";
 
@@ -89,29 +90,38 @@ function fakePi(): {
 
 /** Fake extension context: notify + provider-factory + trust spies;
  *  branch/entries fakes with call counts (the restore gate is asserted
- *  via spy counts — restoreFromHistory would add its own getBranch call). */
+ *  via spy counts — restoreFromHistory would add its own getBranch call).
+ *  Editor-component fakes (spec 07 h2.42 dual-path tests): getEditor-
+ *  Component returns over.editorFactory (default undefined → every
+ *  pre-existing test runs the fallback path); setEditorComponent spies
+ *  the installation. */
 function fakeCtx(
   over: {
     cwd?: string;
     trusted?: boolean;
     branch?: SessionEntry[];
     entries?: SessionEntry[];
+    editorFactory?: unknown;
   } = {},
 ): {
   ctx: ExtensionContext;
   notify: Mock;
   addAutocompleteProvider: Mock;
+  getEditorComponent: Mock;
+  setEditorComponent: Mock;
   isProjectTrusted: Mock;
   getBranch: Mock;
   getEntries: Mock;
 } {
   const notify = vi.fn();
   const addAutocompleteProvider = vi.fn();
+  const getEditorComponent = vi.fn(() => over.editorFactory);
+  const setEditorComponent = vi.fn();
   const isProjectTrusted = vi.fn(() => over.trusted ?? true);
   const getBranch = vi.fn(() => over.branch ?? []);
   const getEntries = vi.fn(() => over.entries ?? []);
   const ctx = {
-    ui: { notify, addAutocompleteProvider },
+    ui: { notify, addAutocompleteProvider, getEditorComponent, setEditorComponent },
     cwd: over.cwd ?? cwd,
     isProjectTrusted,
     sessionManager: { getBranch, getEntries },
@@ -120,6 +130,8 @@ function fakeCtx(
     ctx,
     notify,
     addAutocompleteProvider,
+    getEditorComponent,
+    setEditorComponent,
     isProjectTrusted,
     getBranch,
     getEntries,
@@ -240,8 +252,16 @@ function wired(over?: Parameters<typeof fakeCtx>[0]) {
   useDictPath();
   const { pi, on, registerCommand, handlers } = fakePi();
   hapax(pi);
-  const { ctx, notify, addAutocompleteProvider, isProjectTrusted, getBranch, getEntries } =
-    fakeCtx(over);
+  const {
+    ctx,
+    notify,
+    addAutocompleteProvider,
+    getEditorComponent,
+    setEditorComponent,
+    isProjectTrusted,
+    getBranch,
+    getEntries,
+  } = fakeCtx(over);
   return {
     pi,
     on,
@@ -250,6 +270,8 @@ function wired(over?: Parameters<typeof fakeCtx>[0]) {
     ctx,
     notify,
     addAutocompleteProvider,
+    getEditorComponent,
+    setEditorComponent,
     isProjectTrusted,
     getBranch,
     getEntries,
@@ -710,5 +732,138 @@ describe("shutdown → session_start reload cycle", () => {
       const text = await dump(acwords2);
       expect(wordsSeenIn(text)).toBeGreaterThan(0);
     });
+  });
+});
+// --- dual-path display branch (spec 07 h2.42) -----------------------------------
+
+describe("dual-path display branch (spec 07 h2.42)", () => {
+  /** A stock (foreign) editor factory — what pi-vim et al. install. */
+  const stockFactory = (): { handleInput: (d: string) => string } => ({
+    handleInput: (d: string) => d,
+  });
+
+  it("factory present → NO provider registration; exactly one widget-composed factory installed", () => {
+    const { handlers, ctx, addAutocompleteProvider, setEditorComponent } = wired({
+      editorFactory: stockFactory(),
+    });
+
+    startSession(handlers.get("session_start")!, ctx);
+
+    expect(addAutocompleteProvider).not.toHaveBeenCalled();
+    expect(setEditorComponent).toHaveBeenCalledTimes(1);
+    expect(isWidgetWrapper(setEditorComponent.mock.calls[0]![0])).toBe(true);
+  });
+
+  it("the widget composition builds the inner verbatim, guards input, mutates nothing", () => {
+    const built = {
+      handleInput: vi.fn((d: string) => d),
+      extra: "verbatim",
+    };
+    const innerSpy = vi.fn(() => built);
+    const { handlers, ctx, setEditorComponent } = wired({ editorFactory: innerSpy });
+
+    startSession(handlers.get("session_start")!, ctx);
+
+    const installed = setEditorComponent.mock.calls[0]![0] as (
+      tui: unknown,
+      theme: unknown,
+      keybindings: unknown,
+    ) => unknown;
+    const TUI = { tui: true };
+    const THEME = { theme: true };
+    const KB = { matches: () => false }; // nothing is the submit key
+    const editor = installed(TUI, THEME, KB) as Record<string, unknown>;
+
+    // The inner factory received the exact arguments, verbatim.
+    expect(innerSpy).toHaveBeenCalledWith(TUI, THEME, KB);
+    // Foreign members delegate verbatim; the composed editor is never a
+    // thenable (createEnterSubmitEditor pins `then` → undefined).
+    expect(editor.extra).toBe("verbatim");
+    expect(editor.then).toBeUndefined();
+    // handleInput is the composed enter-submit guard — a different
+    // function than the inner's own — and the inner INSTANCE was never
+    // mutated (v1 recursion crash lesson).
+    const ownHandleInput = built.handleInput;
+    expect(editor.handleInput).not.toBe(ownHandleInput);
+    (editor.handleInput as (d: string) => unknown)("x");
+    expect(ownHandleInput).toHaveBeenCalledWith("x"); // delegated after the guard
+    expect(built.handleInput).toBe(ownHandleInput); // still the original
+  });
+
+  it("reload cycle: session_start re-run neither stacks a wrapper nor re-installs; still no provider", () => {
+    let current: unknown = stockFactory(); // pi's editor slot, pre-seeded
+    const { handlers, ctx, addAutocompleteProvider, setEditorComponent, getEditorComponent } =
+      wired({ editorFactory: current });
+    setEditorComponent.mockImplementation((f: unknown) => {
+      current = f;
+    });
+    getEditorComponent.mockImplementation(() => current);
+
+    startSession(handlers.get("session_start")!, ctx, "startup");
+    const firstInstall = current;
+    expect(isWidgetWrapper(firstInstall)).toBe(true);
+
+    // Reload: getEditorComponent now returns OUR wrapper — the
+    // WIDGET_WRAPPED guard must skip re-install (no stacking) and stay
+    // provider-free (the widget layer keeps owning display).
+    startSession(handlers.get("session_start")!, ctx, "startup");
+    expect(setEditorComponent).toHaveBeenCalledTimes(1);
+    expect(current).toBe(firstInstall);
+    expect(addAutocompleteProvider).not.toHaveBeenCalled();
+  });
+
+  it("no factory → fallback: provider registered once, editor untouched, disposed at shutdown", () => {
+    const { handlers, ctx, addAutocompleteProvider, setEditorComponent } = wired();
+
+    startSession(handlers.get("session_start")!, ctx);
+
+    expect(addAutocompleteProvider).toHaveBeenCalledTimes(1);
+    expect(setEditorComponent).not.toHaveBeenCalled(); // nothing to wrap
+    // displayProvider slot audit (fallback): the provider pi builds is
+    // disposed at shutdown. On the widget path the slot stays null and
+    // this dispose is a null-safe no-op.
+    const factory = addAutocompleteProvider.mock.calls[0]![0] as (
+      current: unknown,
+    ) => { dispose: () => void };
+    const provider = factory(currentFake());
+    const disposeSpy = vi.spyOn(provider, "dispose");
+    handlers.get("session_shutdown")!({ type: "session_shutdown" }, ctx);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("widget path: restore gating runs identically (history replay reaches the store)", async () => {
+    useDict();
+    enableDebug();
+    const { handlers, ctx, registerCommand } = wired({
+      editorFactory: stockFactory(),
+      branch: [msgEntry("e1", userMsg("hello zephyr world"))],
+    });
+
+    startSession(handlers.get("session_start")!, ctx, "resume");
+
+    // Same fire-and-forget replay as the fallback path — poll the real
+    // /acwords dump until the history words are counted.
+    const handler = acwordsHandler(registerCommand);
+    await vi.waitFor(async () => {
+      const text = await dump(handler);
+      expect(wordsSeenIn(text)).toBeGreaterThan(0);
+    });
+  });
+
+  it("widget layer receives the session's shared core (store/config/chain/restoreReady/clock)", () => {
+    const { handlers, ctx, setEditorComponent } = wired({
+      editorFactory: stockFactory(),
+    });
+
+    startSession(handlers.get("session_start")!, ctx);
+
+    const opts = widgetOptsOf(setEditorComponent.mock.calls[0]![0]);
+    expect(opts).toBeDefined();
+    expect(opts!.store).toBeInstanceOf(CandidateStore); // this session's store
+    expect(opts!.config.triggerChar).toBe("#"); // default config flowed in
+    expect(opts!.config.maxSuggestions).toBe(8);
+    expect(typeof opts!.chain.reset).toBe("function"); // the chain machine
+    expect(opts!.restoreReady).toBeInstanceOf(Promise); // startup gate signal
+    expect(typeof opts!.onKeystroke).toBe("function"); // shared input clock tick
   });
 });
