@@ -22,6 +22,7 @@ import { CandidateStore } from "../src/core/store.js";
 import type { RankedMatch, Sighting } from "../src/core/types.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
+import type { ChainMachine } from "../src/pi/provider.js";
 import {
   createVisibilityMachine,
   type VisibilityMachine,
@@ -76,6 +77,7 @@ async function build(
     query?: (fragment: string, mode: "trigger" | "ambient") => RankedMatch[];
     store?: CandidateStore;
     restoreReady?: Promise<void>;
+    chain?: ChainMachine;
   } = {},
 ): Promise<{ machine: VisibilityMachine; editor: ReturnType<typeof fakeEditor> }> {
   const editor = fakeEditor();
@@ -89,6 +91,7 @@ async function build(
     }),
     restoreReady: over.restoreReady ?? Promise.resolve(),
     ...(over.query ? { query: over.query } : {}),
+    ...(over.chain ? { chain: over.chain } : {}),
   };
   const machine = createVisibilityMachine(deps);
   await vi.advanceTimersByTimeAsync(0);
@@ -576,5 +579,208 @@ describe("visibility machine — painted() accessor (BUG-001 arming seam)", () =
       "zendkrypto",
     ]);
     expect(machine.painted()[1]!.tier).toBe(2);
+  });
+});
+
+// ── armed chain consult (BUG-001 fix, P1.M1.T2.S1) ─────────────────────────
+
+describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
+  /** Recording ChainMachine double — starts IDLE so build()'s settle-
+   *  wake evaluate (which runs against the empty editor) never consults
+   *  the branch; call armNow() to arm before the ticks under test
+   *  (arming itself is T1.S1/S2's, pinned elsewhere). reset calls are
+   *  the assertion surface for the disqualification paths. */
+  const armedChain = (
+    word: string,
+  ): {
+    chain: ChainMachine;
+    armNow: () => void;
+    reset: ReturnType<typeof vi.fn>;
+  } => {
+    const chain = {
+      state: vi.fn((): { word: string } | null => null),
+      arm: vi.fn(),
+      reset: vi.fn(),
+    };
+    return {
+      chain: chain as unknown as ChainMachine,
+      armNow: () => chain.state.mockImplementation(() => ({ word })),
+      reset: chain.reset,
+    };
+  };
+
+  const seedChainStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    s.recordBigramRuns([["zorpwibble", "quuxblat"]]);
+    s.recordBigramRuns([["zorpwibble", "quuxblat"]]);
+    s.recordBigramRuns([["zorpwibble", "deltaword"]]);
+    const put = (key: string, display: string): void =>
+      s.upsert({
+        key,
+        display,
+        ordinal: s.currentOrdinal() + 1,
+        fromUser: false,
+        properName: false,
+        rankGroup: 0,
+        isSubword: false,
+      });
+    put("zorpwibble", "zorpwibble");
+    put("quuxblat", "Quuxblat"); // distinct casing: display comes from the store entry
+    put("deltaword", "deltaword");
+    return s;
+  };
+
+  it("(1) zero-char offer: an empty word start paints the successors IMMEDIATELY (count order, store casing, no reset)", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    c.armNow();
+    editor.set("zorpwibble ", 12);
+    const st = machine.onInput();
+    expect(st.visible).toBe(true);
+    expect(st.currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+      "deltaword",
+    ]); // count-desc order; store display casing (Quuxblat)
+    expect(machine.painted().map((m) => m.key)).toEqual([
+      "quuxblat",
+      "deltaword",
+    ]);
+    expect(machine.painted().every((m) => m.description === "chain")).toBe(
+      true,
+    );
+    expect(c.reset).not.toHaveBeenCalled();
+  });
+
+  it("(2) typed fragment filters via matchFragment membership; the swap is R6-debounced, not immediate", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    c.armNow();
+    editor.set("zorpwibble ", 12);
+    machine.onInput(); // full offer paints (count order)
+    editor.set("zorpwibble qu", 14);
+    machine.onInput(); // inside the 100 ms window → parked, OLD set stays
+    expect(machine.painted().map((m) => m.key)).toEqual([
+      "quuxblat",
+      "deltaword",
+    ]); // narrowing must not close+repaint
+    await vi.advanceTimersByTimeAsync(100); // R6 promotion through paint()
+    expect(machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+    ]); // deltaword filtered (anchored 'd' ≠ 'q')
+    expect(machine.painted().map((m) => m.key)).toEqual(["quuxblat"]);
+    expect(c.reset).not.toHaveBeenCalled();
+  });
+
+  it("(3) glued trigger fragment '#q' resets the chain; trigger mode answers (no chain shim)", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    c.armNow();
+    editor.set("zorpwibble #q", 13); // col = line length (13)
+    const st = machine.onInput();
+    expect(c.reset).toHaveBeenCalledTimes(1); // disqualify → idle
+    expect(st.visible).toBe(true); // the normal path answered — trigger mode
+    expect(machine.painted().every((m) => m.description !== "chain")).toBe(
+      true,
+    );
+  });
+
+  it("(4) punctuation-glued fragment resets and falls through (word-start guard)", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    c.armNow();
+    editor.set("zorpwibble!qu", 13);
+    const st = machine.onInput();
+    expect(c.reset).toHaveBeenCalledTimes(1);
+    expect(st.visible).toBe(true); // threshold path answered — never an empty return
+    expect(machine.painted().every((m) => m.description !== "chain")).toBe(
+      true,
+    );
+  });
+
+  it("(5) empty successor set → reset + fall-through; NEVER a visible line with zero candidates", async () => {
+    const c = armedChain("loneword"); // armed, but no bigrams seeded
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    c.armNow();
+    editor.set("loneword ", 9);
+    const st = machine.onInput();
+    expect(c.reset).toHaveBeenCalledTimes(1);
+    expect(st.visible).toBe(false); // R3 close on the fall-through
+    expect(st.currentSet).toEqual([]);
+    expect(machine.painted()).toEqual([]);
+  });
+
+  it("(6) stock context wins: R1 hides before the branch runs (no paint, no reset)", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    c.armNow();
+    editor.set("/cmd", 4); // line-0 slash command → stock context
+    const st = machine.onInput();
+    expect(st.visible).toBe(false);
+    expect(c.reset).not.toHaveBeenCalled(); // R1 returned before the branch
+    expect(machine.painted()).toEqual([]);
+  });
+
+  it("(7) enableChaining false: the branch is fully inert (idle byte-identical)", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({
+      store: seedChainStore(),
+      chain: c.chain,
+      config: { enableChaining: false },
+    });
+    c.armNow();
+    editor.set("zorpwibble ", 12);
+    const st = machine.onInput();
+    expect(st.visible).toBe(false); // trailing space → the R3 close, as idle
+    expect(machine.painted()).toEqual([]);
+    expect(c.reset).not.toHaveBeenCalled(); // never consulted
+  });
+
+  it("(8) hesitation bypass: a chain offer paints immediately under menuDelayMs (a word-mode reopen would be held)", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({
+      store: seedChainStore(),
+      chain: c.chain,
+      config: { menuDelayMs: 2000 },
+    });
+    c.armNow();
+    // Disqualify first: fragment 'x' matches no successor → reset + the
+    // normal query closes the line (closeAt stamped).
+    editor.set("zorpwibble x", 13);
+    machine.onInput();
+    expect(machine.getState().visible).toBe(false);
+    // 300 ms later: past freshReopen (200), far under menuDelayMs (2000).
+    await vi.advanceTimersByTime(300);
+    editor.set("zorpwibble ", 12);
+    const st = machine.onInput();
+    // The chain offer is INTENT — it paints NOW; a word-mode reopen at
+    // this gap would sit in the hesitation gate.
+    expect(st.visible).toBe(true);
+    expect(st.currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+      "deltaword",
+    ]);
+  });
+
+  it("(9) restore-gate parity: chain offers hold until the replay settles, then paint", async () => {
+    const c = armedChain("zorpwibble");
+    const gate = deferred();
+    const { machine, editor } = await build({
+      store: seedChainStore(),
+      chain: c.chain,
+      restoreReady: gate.promise,
+    });
+    c.armNow();
+    editor.set("zorpwibble ", 12);
+    let st = machine.onInput();
+    expect(st.visible).toBe(false); // held — armGate, never painted
+    expect(machine.painted()).toEqual([]);
+    gate.resolve();
+    await vi.advanceTimersByTimeAsync(0); // settle microtask → wakeEvaluate
+    st = machine.getState();
+    expect(st.visible).toBe(true);
+    expect(st.currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+      "deltaword",
+    ]);
   });
 });

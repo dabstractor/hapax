@@ -96,9 +96,9 @@
  */
 
 import { matchesKey } from "@earendil-works/pi-tui";
-import { rankMatches } from "../core/query.js";
+import { matchFragment, rankMatches } from "../core/query.js";
 import type { CandidateStore } from "../core/store.js";
-import type { RankedMatch } from "../core/types.js";
+import type { RankedMatch, Successor } from "../core/types.js";
 import { resolveFuzzThreshold, type HapaxConfig } from "./config.js";
 import {
   createEnterSubmitEditor,
@@ -356,14 +356,22 @@ export interface VisibilityMachineDeps {
    *  discard happens inside, so "≥ 1 candidate above fuzzThreshold" ===
    *  non-empty result. */
   query?: (fragment: string, mode: "trigger" | "ambient") => RankedMatch[];
+  /** Tab-chain machine (BUG-001 fix, P1.M1.T2.S1): when armed (and
+   *  config.enableChaining), evaluate consults store.topSuccessors at
+   *  empty word starts / word-start fragments BEFORE the normal query —
+   *  mirroring the provider armed branch (provider.ts). Optional so
+   *  idle-chain builds and tests without a machine change behavior. */
+  chain?: ChainMachine;
   /** Called after every paint() — INCLUDING swap-timer promotions — so
    *  the wiring can push the fresh snapshot and request a repaint even
    *  when no keystroke tick follows (W1 fix, P1.M3.T4.S1: a parked swap
    *  that promotes at rest must still reach the screen). */
   onPaint?: () => void;
   /** Intent test ADDITIONAL to trigger mode (explicit intent bypasses
-   *  the hesitation gate, spec h2.46 rule 2): T3's armed-chain
-   *  successors land here via this seam. Default: nothing extra. */
+   *  the hesitation gate, spec h2.46 rule 2). The machine accounts for
+   *  its OWN chain offers internally (chainIntent — a chain paint this
+   *  tick bypasses hesitation without consulting this dep); this seam
+   *  remains for EXTERNAL intent sources. Default: nothing extra. */
   isIntentBypass?: () => boolean;
   /** Swap-debounce window; default 100 (spec h2.46 rule 2). */
   debounceMs?: number;
@@ -509,6 +517,32 @@ export function createVisibilityMachine(
   // starts is what makes "extend the same word stays hidden" true.
   let suppressedFragmentStart: number | null = null;
 
+  // Chain-offer intent (BUG-001 fix, P1.M1.T2.S1): set when THIS tick's
+  // evaluation painted a chain offer, read by R5's intent computation,
+  // reset at the TOP of every evaluate — a stale flag would bypass
+  // hesitation for a subsequent normal word-mode paint.
+  let chainIntent = false;
+
+  /** RankedMatch shim for one chain successor (BUG-001 fix): painted
+   *  through paint() so currentSet + painted() populate together.
+   *  - key = s.next PLAIN (no prefix — the widget has no liveKeyByValue;
+   *    the plain key IS the store key, so T1.S2's tab-insert arming
+   *    (which reads painted()) re-arms at s.next for free).
+   *  - display from the word's own store entry (most-recent-casing-wins,
+   *    same as word completions); evicted successor → lowercase key.
+   *  - tier deliberately OMITTED: the arming gate is `rec.tier !== 0`,
+   *    so undefined arms (chain members passed an anchored membership
+   *    gate) — setting tier: 0 would silently break successor re-arm.
+   *  - salience is negative-count (provider publishChain parity); count
+   *    order is preserved by topSuccessors — no re-sort anywhere. */
+  const chainShim = (s: Successor): RankedMatch => ({
+    key: s.next,
+    display: deps.store.get(s.next)?.display ?? s.next,
+    description: "chain", // provenance marker (provider publishChain parity)
+    salience: -s.count,
+    sessionCount: s.count,
+  });
+
   // Rule 2 — startup gate.
   let settled = false;
   let gateDeadline: number | null = null;
@@ -617,12 +651,102 @@ export function createVisibilityMachine(
     line: number,
     col: number,
   ): VisibilityState {
+    // Chain-offer intent is per-tick: reset BEFORE any path can set it.
+    chainIntent = false;
     // R1 — stock contexts OWN slash/@/quoted-path/path verdicts; classify
     // FIRST (extractMatchState is blind to them). Hidden, no suppression,
     // no close stamp: leaving pi's context is not a hapax close.
     if (classifyStockContext(lines, line, col) !== null) {
       hide();
       return state();
+    }
+
+    // BUG-001 fix (P1.M1.T2.S1) — CHAIN CONSULT: while a word is armed
+    // (and chaining enabled), the chain answers BEFORE the normal query,
+    // mirroring the provider's armed branch (provider.ts): (a) a zero-
+    // typed-char offer at an empty word start; (b) word-start fragment
+    // filtering at threshold 0 (matchFragment membership — NEVER
+    // resolveFuzzThreshold here: the chain gate is membership, full
+    // stop); (c) disqualification resets and falls through to the normal
+    // path on this SAME tick. R1 already ran above — armed chains never
+    // override stock contexts (provider.ts parity). All chain calls are
+    // fully defensive (optional member access): a partial/double-shaped
+    // dep degrades to inert, never to a thrown tick.
+    const armed = deps.chain?.state?.();
+    if (armed && deps.config.enableChaining) {
+      const before = (lines[line] ?? "").slice(0, col);
+
+      // Restore-gate parity with R2: chain offers never fire during
+      // history replay (they would race the replaying store) — hold
+      // exactly like a normal query would; the settle/deadline wake
+      // re-evaluates the live state.
+      if (!settled && (gateDeadline === null || now < gateDeadline)) {
+        armGate(now);
+        return state();
+      }
+
+      const succ: Successor[] = [];
+      if (before === "" || /[ \t]$/.test(before)) {
+        // (a) Zero-typed-char offer: cursor at an EMPTY word start.
+        succ.push(
+          ...deps.store
+            .topSuccessors(armed.word)
+            .slice(0, deps.config.maxSuggestions),
+        );
+      } else {
+        // (b) Typed fragment at a WORD START (BUG-005 guard, provider
+        // parity): a fragment glued to the trigger char or punctuation
+        // is not a chain fragment — pi-tui-style blind prefix deletion
+        // would strand the glue. Membership filter, threshold 0.
+        const frag = before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0];
+        const fragAt = frag === undefined ? -1 : before.length - frag.length;
+        const atWordStart =
+          frag !== undefined &&
+          (fragAt === 0 || /[ \t]/.test(before[fragAt - 1] ?? ""));
+        if (frag !== undefined && atWordStart) {
+          succ.push(
+            ...deps.store
+              .topSuccessors(armed.word)
+              .filter((s) => matchFragment(frag, s.next) !== null)
+              .slice(0, deps.config.maxSuggestions),
+          );
+        }
+      }
+
+      if (succ.length > 0) {
+        const items = succ.map(chainShim);
+        chainIntent = true; // R5 intent: a chain paint bypasses hesitation
+        const sig = items.map((m) => m.display).join("\u0000");
+        // Suppression note: chain offers are INTENT — this branch paints
+        // even under explicit-dismissal suppression (mirroring trigger
+        // mode's R4 bypass). Suppression-release refinement lands in
+        // P1.M2.T2.S1 on this same block.
+        // R6/R7 composition (fallback parity): the FIRST paint is
+        // immediate; a visible line refreshes idempotently on the same
+        // set, paints an elapsed-window change, and PARKS a differing
+        // set inside the swap window (narrowing never closes+reopens).
+        if (!visible) {
+          paint(items, sig, now);
+          return state();
+        }
+        if (sig === displayedSig) {
+          paint(items, sig, now);
+          return state();
+        }
+        if (now - lastPaintAt >= debounceMs) {
+          paint(items, sig, now);
+          return state();
+        }
+        parkSwap(items);
+        return state();
+      }
+      // (c) Disqualification: glued fragment ('#q' — trigger mode wins
+      // at '#q'), non-start/punctuation fragment, or zero matching
+      // successors → reset + fall through to the normal path on this
+      // SAME tick (the provider's reset-WITHOUT-return precedent).
+      // NEVER paint an empty set; NEVER return one from this branch.
+      deps.chain?.reset?.();
+      chainIntent = false;
     }
 
     const match = extractMatchState(lines, line, col, deps.config);
@@ -667,7 +791,7 @@ export function createVisibilityMachine(
     }
 
     const intent =
-      match.mode === "trigger" || (deps.isIntentBypass?.() ?? false);
+      match.mode === "trigger" || chainIntent || (deps.isIntentBypass?.() ?? false);
     // R7 — fresh-reopen hysteresis: a close < reopenMs ago means active
     // editing — the reopen is immediate (hesitation bypassed) and FRESH
     // (the set below is this tick's live query, never the old one).
@@ -920,8 +1044,34 @@ function insertHighlighted(
     }
     if (spanLen <= 0) {
       const word = before.match(/[A-Za-z][A-Za-z0-9_-]*$/);
-      if (!word) return false; // no fragment span → forward the literal Tab
-      spanLen = word[0].length;
+      if (word) {
+        spanLen = word[0].length;
+      } else if (
+        state.items.length > 0 &&
+        (before === "" || /[ \t]$/.test(before)) &&
+        visibility
+          .painted()
+          [
+            Math.min(
+              Math.max(state.highlightIndex, 0),
+              state.items.length - 1,
+            )
+          ]?.description === "chain"
+      ) {
+        // Zero-typed-char acceptance (BUG-001 fix, P1.M1.T2.S1): the
+        // visibility machine's CHAIN CONSULT painted a successor offer at
+        // an EMPTY word start (cursor right after the separating space),
+        // so there is no typed span to replace — a zero-length span
+        // inserts the highlighted successor at the cursor. Gated on the
+        // highlighted painted record being a chain shim (description
+        // "chain"): a word-mode set is never painted at a fragment-less
+        // cursor, so this can only be the armed-chain offer — every other
+        // position still forwards the literal Tab (never-hijack), and the
+        // arming gate at the call site still applies downstream.
+        spanLen = 0;
+      } else {
+        return false; // no fragment span → forward the literal Tab
+      }
     }
 
     const start = col - spanLen;
@@ -1010,6 +1160,10 @@ export function createWidgetEditorFactory(
       store: opts.store,
       config: opts.config,
       restoreReady: opts.restoreReady,
+      // BUG-001 fix (P1.M1.T2.S1): the SAME chain instance the tab-insert
+      // branch arms — evaluate consults it at empty word starts /
+      // word-start fragments (the successor-offer half of the fix).
+      chain: opts.chain,
       getEditorState: () => ({
         lines: editorRef?.getLines?.() ?? [],
         line: editorRef?.getCursor?.().line ?? 0,

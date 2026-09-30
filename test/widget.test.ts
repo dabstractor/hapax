@@ -1276,3 +1276,74 @@ describe("widget Tab acceptance arms the chain — classification matrix (BUG-00
     expect(chain.state()).toBeNull(); // the chain machine stays idle
   });
 });
+
+describe("widget chain offers render + re-arm (BUG-001 fix, P1.M1.T2.S1 consult branch)", () => {
+  it("armed chain: the empty-word-start tick paints the successor offer on the widget line; Tab accepts it with ZERO typed chars and re-arms at the successor key", async () => {
+    const chain = spiedChain();
+    // Pre-armed (T1.S1/S2 own arming — pinned in the matrix above); this
+    // case is the CONSULT half: the visibility machine must offer the
+    // armed word's successors and the Tab accept must re-arm downstream.
+    chain.state = vi.fn(() => ({ word: "zorpwibble" }));
+    const store = seedStore([
+      ["zorpwibble", "zorpwibble"],
+      ["quuxblat", "Quuxblat"],
+    ]);
+    store.recordBigramRuns([["zorpwibble", "quuxblat"]]);
+    store.recordBigramRuns([["zorpwibble", "quuxblat"]]);
+    const h = makeInsertHarness({ lines: ["zorpwibble "], line: 0, col: 11 }, {
+      chain,
+      store,
+    });
+
+    h.press("x"); // forwarded event ticks the machine (W1: reads the live buffer)
+    await flushPaint();
+
+    // The consult branch painted the successor offer through paint():
+    expect(h.machine.getState().visible).toBe(true); // the widget line is live…
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+    ]); // …with the successor offer
+    const rec = h.machine.painted()[0]!;
+    expect(rec.key).toBe("quuxblat"); // PLAIN store key — no chain prefix
+    expect(rec.tier).toBeUndefined(); // shims OMIT tier → the accept re-arms
+    expect(rec.description).toBe("chain"); // provenance marker
+
+    h.innerCalls.length = 0; // drop the tick keystroke — assert the Tab below
+    h.press("\t"); // consumed acceptance at ZERO typed chars
+    expect(h.buf.lines).toEqual(["zorpwibble Quuxblat"]); // inserted at the cursor
+    expect(h.state.hidden).toBe(true); // consumed → dismissed
+    expect(h.innerCalls).toEqual([]); // fully consumed
+    // Re-arm seam: the painted() record (plain key, tier undefined) fed
+    // the tab-insert arming gate → armed at the SUCCESSOR's key.
+    expect(chain.arm).toHaveBeenCalledTimes(1);
+    expect((chain.arm as Mock).mock.calls[0]![0]).toBe("quuxblat");
+  });
+
+  it("armed chain + typed fragment 'qu' on the widget line: Tab completes the filtered successor over the typed span", async () => {
+    const chain = spiedChain();
+    chain.state = vi.fn(() => ({ word: "zorpwibble" }));
+    const store = seedStore([
+      ["zorpwibble", "zorpwibble"],
+      ["quuxblat", "Quuxblat"],
+      ["deltaword", "deltaword"],
+    ]);
+    store.recordBigramRuns([["zorpwibble", "quuxblat"]]);
+    store.recordBigramRuns([["zorpwibble", "deltaword"]]);
+    const h = makeInsertHarness(
+      { lines: ["zorpwibble qu"], line: 0, col: 13 },
+      { chain, store },
+    );
+
+    h.press("x");
+    await flushPaint();
+
+    // Fragment filter at threshold 0: quuxblat matches 'qu', deltaword does not.
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+    ]);
+    h.innerCalls.length = 0;
+    h.press("\t"); // the word span "qu" exists → the NORMAL span path inserts
+    expect(h.buf.lines).toEqual(["zorpwibble Quuxblat"]);
+    expect((chain.arm as Mock).mock.calls[0]![0]).toBe("quuxblat");
+  });
+});
