@@ -526,11 +526,24 @@ export function createVisibilityMachine(
   // NOT stock-context hides: leaving pi's context is not a hapax close).
   let closeAt: number | null = null;
 
-  // Rule 4 — explicit-dismissal suppression: released at a NEW word
-  // start (fragment start differs from the suppressed one) or trigger
-  // mode. Same-word continuation is at "a word start" too — comparing
-  // starts is what makes "extend the same word stays hidden" true.
+  // Rule 4 — explicit-dismissal suppression (spec/07:72–75: "Explicit
+  // dismissal … suppresses the line for the REST OF THE WORD. Re-open
+  // only at the next word start or trigger char."): released at a NEW
+  // word start — at a word boundary whose fragment start differs from
+  // the dismissed one AND whose buffer is not a same-word continuation
+  // of the dismissed buffer. Same-word continuation (extend / edit /
+  // backspace within one buffer) means one buffer is a prefix of the
+  // other; a submitted-and-cleared buffer matches neither direction, so
+  // the next message's first word — which is a start-0 word start, the
+  // numeric-start comparison's blind spot (BUG-003: a start-0 dismissal
+  // used to suppress every following message's first word) — releases.
+  // The fingerprint is lines.join("\n") of the DISMISSED buffer (multi-
+  // line safe; distinct from rule 7's lastFingerprint — different
+  // lifetime). null means context-free: the dismissal happened on an
+  // empty buffer, so any boundary releases. Cleared ONLY in paint(),
+  // beside suppressedFragmentStart.
   let suppressedFragmentStart: number | null = null;
+  let suppressedFingerprint: string | null = null;
 
   // Chain-offer intent (BUG-001 fix, P1.M1.T2.S1): set when THIS tick's
   // evaluation painted a chain offer, read by R5's intent computation,
@@ -611,6 +624,7 @@ export function createVisibilityMachine(
     closeAt = null;
     suppressed = false;
     suppressedFragmentStart = null;
+    suppressedFingerprint = null;
     deps.onPaint?.(); // W1 fix: timer-driven paints must reach the screen too
   };
 
@@ -816,15 +830,33 @@ export function createVisibilityMachine(
     }
 
     // R4 — explicit-dismissal suppression: word-mode results show only
-    // at a NEW word start (line start / after a non-word char) — and a
-    // DIFFERENT one from the dismissed fragment's, so extending the
-    // same word stays hidden. Trigger mode bypasses entirely.
+    // at a NEW word start (line start / after a non-word char) — a
+    // DIFFERENT one from the dismissed fragment's, AND a buffer that is
+    // not a same-word continuation of the dismissed one, so extending
+    // the same word stays hidden while the next message's first word
+    // releases (BUG-003: the start-only test leaked across messages).
+    // Trigger mode bypasses entirely.
     if (suppressed && match.mode !== "trigger") {
       const start = col - match.fragment.length;
       const atBoundary =
         start <= 0 || !/[A-Za-z0-9_]/.test((lines[line] ?? "")[start - 1]!);
-      if (!atBoundary || start === suppressedFragmentStart) {
-        return state(); // stay suppressed — hidden, flag kept
+      // Same-word continuation (BUG-003): the current buffer must still
+      // be the dismissed context — one of the two a prefix of the other.
+      // A cleared/rewritten buffer matches neither direction → release.
+      // fp === null (empty dismissed buffer) is context-free: release.
+      // An empty CURRENT buffer stays suppressed (fp.startsWith("") —
+      // backspacing the word away keeps the same-word context; the next
+      // typed char re-tests).
+      const fp = suppressedFingerprint;
+      const current = lines.join("\n");
+      const sameWordContinuation =
+        fp !== null && (current.startsWith(fp) || fp.startsWith(current));
+      const released =
+        !atBoundary ||
+        start !== suppressedFragmentStart ||
+        !sameWordContinuation;
+      if (!released) {
+        return state(); // stay suppressed — hidden, flags kept
       }
     }
 
@@ -899,9 +931,13 @@ export function createVisibilityMachine(
     onDismissed(explicit: boolean): void {
       const now = Date.now();
       if (explicit) {
-        // T3 seam (Escape / boundary-Esc): suppress until a NEW word
-        // start or trigger char. Record the dismissed fragment's start
-        // so same-word continuation (same start) stays hidden.
+        // T3 seam (Escape / boundary-Esc / Tab-accept / Enter-submit):
+        // suppress until a NEW word start or trigger char. Record the
+        // dismissed fragment's start (the word-start half of the release
+        // test) AND the dismissed buffer's fingerprint (the same-word
+        // half — BUG-003), so release requires BOTH a different word
+        // start AND a non-continuation buffer. An empty buffer records
+        // null — context-free, any boundary releases.
         const { lines, line, col } = deps.getEditorState();
         const match = extractMatchState(lines, line, col, deps.config);
         suppressed = true;
@@ -909,6 +945,8 @@ export function createVisibilityMachine(
           match !== null && match.mode === "threshold"
             ? col - match.fragment.length
             : col;
+        const dismissedBuffer = lines.join("\n");
+        suppressedFingerprint = dismissedBuffer === "" ? null : dismissedBuffer;
       }
       closeWith(now);
     },

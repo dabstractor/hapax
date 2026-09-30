@@ -902,3 +902,180 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
     expect(c.reset).toHaveBeenCalledTimes(1); // not re-spent — one shot
   });
 });
+
+// ── R4 — fingerprint release (BUG-003: dismissal must not leak across messages) ──
+
+describe("R4 — fingerprint release (BUG-003)", () => {
+  /** Chain double + store, mirroring the armed-chain-consult describe's
+   *  harness (those helpers are describe-scoped; this block needs its
+   *  own). */
+  const armedChain = (word: string) => {
+    const chain = {
+      state: vi.fn((): { word: string } | null => null),
+      arm: vi.fn(),
+      reset: vi.fn((): void => {
+        chain.state.mockImplementation(() => null);
+      }),
+    };
+    const grant = createChainGrantTracker();
+    return {
+      chain: chain as unknown as ChainMachine,
+      grant,
+      armNow: () => {
+        chain.state.mockImplementation(() => ({ word }));
+        grant.reset();
+      },
+    };
+  };
+
+  const seedChainStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    s.recordBigramRuns([["zorpwibble", "quuxblat"]]);
+    s.recordBigramRuns([["zorpwibble", "quuxblat"]]);
+    s.recordBigramRuns([["zorpwibble", "deltaword"]]);
+    const put = (key: string, display: string): void =>
+      s.upsert({
+        key,
+        display,
+        ordinal: s.currentOrdinal() + 1,
+        fromUser: false,
+        properName: false,
+        rankGroup: 0,
+        isSubword: false,
+      });
+    put("zorpwibble", "zorpwibble");
+    put("quuxblat", "Quuxblat");
+    put("deltaword", "deltaword");
+    return s;
+  };
+
+  it("Escape variant: dismiss 'ze' at start 0 → a fresh buffer's first word ('lw') paints", async () => {
+    const { machine, editor } = await build({
+      query: canned({ ze: [rm("Zendesk")], lw: [rm("Lwlock")] }),
+    });
+    editor.set("ze", 2);
+    machine.onInput(); // paints
+    expect(machine.getState().visible).toBe(true);
+
+    machine.onDismissed(true); // Escape: start 0, fingerprint "ze"
+    expect(machine.getState()).toMatchObject({
+      visible: false,
+      suppressUntilWordStart: true,
+    });
+
+    // The submitted message clears the buffer: an empty-buffer tick is a
+    // plain close (no fragment), still suppressed.
+    editor.set("", 0);
+    await vi.advanceTimersByTime(10);
+    expect(machine.onInput()).toMatchObject({
+      visible: false,
+      suppressUntilWordStart: true,
+    });
+
+    // THE inversion: the next message's first word at start 0 — neither
+    // buffer is a prefix of the other → released, lwlock visible.
+    await vi.advanceTimersByTime(10);
+    editor.set("lw", 2);
+    const st = machine.onInput();
+    expect(st.visible).toBe(true);
+    expect(st.suppressUntilWordStart).toBe(false);
+    expect(st.currentSet).toEqual([{ display: "Lwlock" }]);
+  });
+
+  it("Tab-accept variant: dismiss the completed 'Zendesk' → cleared buffer → 'lw' paints", async () => {
+    // insertHighlighted's seam (widget.ts Tab path): the COMPLETED buffer
+    // is on screen when the key layer fires onDismissed(true), so the
+    // recorded fingerprint is the post-accept buffer.
+    const { machine, editor } = await build({
+      query: canned({ lw: [rm("Lwlock")] }),
+    });
+    editor.set("Zendesk", 7);
+    machine.onDismissed(true); // Tab-accept: start 0, fingerprint "Zendesk"
+    expect(machine.getState().suppressUntilWordStart).toBe(true);
+
+    editor.set("", 0); // Enter-submit cleared the buffer
+    await vi.advanceTimersByTime(10);
+    expect(machine.onInput()).toMatchObject({
+      visible: false,
+      suppressUntilWordStart: true,
+    });
+
+    await vi.advanceTimersByTime(10);
+    editor.set("lw", 2);
+    const st = machine.onInput();
+    expect(st.visible).toBe(true);
+    expect(st.suppressUntilWordStart).toBe(false);
+    expect(st.currentSet).toEqual([{ display: "Lwlock" }]);
+  });
+
+  it("Enter-submit variant: dismiss 'ze' pre-submit → cleared buffer → 'lw' paints", async () => {
+    const { machine, editor } = await build({
+      query: canned({ ze: [rm("Zendesk")], lw: [rm("Lwlock")] }),
+    });
+    editor.set("ze", 2);
+    machine.onInput();
+    machine.onDismissed(true); // Enter fires onDismissed BEFORE clearing (:1113-1119)
+    editor.set("", 0); // the submit clears the buffer
+    await vi.advanceTimersByTime(10);
+    machine.onInput();
+
+    await vi.advanceTimersByTime(10);
+    editor.set("lw", 2);
+    const st = machine.onInput();
+    expect(st.visible).toBe(true);
+    expect(st.suppressUntilWordStart).toBe(false);
+  });
+
+  it("same-word backspace within the SAME buffer stays suppressed (prefix relation)", async () => {
+    const { machine, editor } = await build({
+      query: canned({ zend: [rm("Zendesk")], zen: [rm("Zendesk")] }),
+    });
+    editor.set("zend", 4);
+    machine.onInput();
+    machine.onDismissed(true); // fingerprint "zend", start 0
+
+    await vi.advanceTimersByTime(10);
+    editor.set("zen", 3); // backspace: current is a prefix OF the dismissed buffer
+    expect(machine.onInput()).toMatchObject({
+      visible: false,
+      suppressUntilWordStart: true,
+    });
+  });
+
+  it("empty-dismissed buffer is context-free: any boundary releases", async () => {
+    const { machine, editor } = await build({
+      query: canned({ lw: [rm("Lwlock")] }),
+    });
+    editor.set("", 0);
+    machine.onDismissed(true); // fingerprint "" → null (context-free)
+
+    await vi.advanceTimersByTime(10);
+    editor.set("lw", 2);
+    const st = machine.onInput();
+    expect(st.visible).toBe(true);
+    expect(st.suppressUntilWordStart).toBe(false);
+  });
+
+  it("BUG-001 composition: a zero-char chain offer at start 0 paints after a Tab-accept dismissal", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({
+      store: seedChainStore(),
+      chain: c.chain,
+      grant: c.grant,
+    });
+    editor.set("zorpwibble", 10);
+    machine.onDismissed(true); // Tab-accept dismissal at start 0, fingerprint "zorpwibble"
+    expect(machine.getState().suppressUntilWordStart).toBe(true);
+    c.armNow(); // the acceptance armed the chain (arm ⇒ fresh grant)
+
+    await vi.advanceTimersByTime(10);
+    editor.set("zorpwibble ", 12); // the next word start
+    const st = machine.onInput(); // the zero-char successor offer PAINTS
+    expect(st.visible).toBe(true);
+    expect(st.suppressUntilWordStart).toBe(false);
+    expect(st.currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+      "deltaword",
+    ]);
+  });
+});
