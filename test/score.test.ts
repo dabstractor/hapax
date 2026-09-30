@@ -25,6 +25,13 @@
  * protocol as shapeGate.test.ts), the τ = 50 eviction decay, and the three
  * PRD §09 orderings by name (frequency-beats-rare-once, recency decay,
  * userTyped tie-flip) plus both tie-breaks and full-sort determinism.
+ *
+ * The 2026-10 gradient (R_eff) replaces the flat table row: attested words
+ * ≤ REJECT_LEN_FLOOR chars keep the flat floor; 9–19 chars ramp the reject
+ * threshold toward 255 by sqrt; ≥ REJECT_LEN_FULL chars admit everything
+ * (rEff returns a 256 sentinel so q=255 admits). All R_eff boundaries are
+ * asserted relative to the imported constants, with the measured 9-char
+ * 81/82 boundary pinned explicitly (float compare — no rounding).
  */
 
 import { describe, expect, it } from "vitest";
@@ -35,6 +42,9 @@ import {
   admit,
   compareCandidates,
   evictionScore,
+  rEff,
+  REJECT_LEN_FLOOR,
+  REJECT_LEN_FULL,
   salience,
 } from "../src/core/score.js";
 import type { CandidateDraft } from "../src/core/segment.js";
@@ -85,6 +95,119 @@ describe("admit — baked thresholds (PRD §04/§08)", () => {
   it("exports REJECT_COMMON_THRESHOLD = 12 (2026-09 retighten) and MID_FREQ_THRESHOLD = 20", () => {
     expect(REJECT_COMMON_THRESHOLD).toBe(12);
     expect(MID_FREQ_THRESHOLD).toBe(20); // guard tier-2 only; the g2 table band is retired
+  });
+});
+
+describe("R_eff length-conditioned admission (2026-10 gradient)", () => {
+  // Spec/04 h2.26: R_eff(len) = floor for len ≤ 8; floor + (255−floor)·√((len−8)/12)
+  // for 8 < len < 20; admit-all at len ≥ 20 (rEff returns 256, above the q
+  // domain, so q=255 admits — the naive 255 would reject the most-common q).
+  it("pins the exported curve constants", () => {
+    expect(REJECT_LEN_FLOOR).toBe(8);
+    expect(REJECT_LEN_FULL).toBe(20);
+  });
+
+  it("floor hold: q = REJECT rejects at any len ≤ REJECT_LEN_FLOOR", () => {
+    for (const [key, len] of [
+      ["ok", 2],
+      ["token", 5],
+      ["tokenish", 8],
+    ] as const) {
+      expect(key.length).toBe(len);
+      expect(admit(draft(key), dict({ [key]: REJECT_COMMON_THRESHOLD }))).toBe(
+        "reject",
+      );
+    }
+  });
+
+  it("floor hold: q = REJECT − 1 admits at flat group 1", () => {
+    expect(
+      admit(draft("tokenish"), dict({ tokenish: REJECT_COMMON_THRESHOLD - 1 })),
+    ).toBe(1);
+  });
+
+  it("sqrt ramp boundary at 9 chars: rEff ≈ 82.15 → q=82 admits, q=83 rejects (float compare, no rounding)", () => {
+    // PRP-fencepost note: ceil(82.147) = 83, so the measured boundary is
+    // last-admit 82 / first-reject 83 (the self-relative construction rule:
+    // q_reject = ceil(rEff)). Rounding down to 82 would flip q=82 to reject
+    // — this pair pins the no-rounding contract.
+    expect(rEff(REJECT_COMMON_THRESHOLD, 9)).toBeCloseTo(82.147, 2);
+    expect(admit(draft("ninechars"), dict({ ninechars: 82 }))).toBe(1);
+    expect(admit(draft("ninechars"), dict({ ninechars: 83 }))).toBe("reject");
+  });
+
+  it("ramp probes (spec h2.26 measured values): 10-char 110/139, 14-char 183/184", () => {
+    // rEff(12,10) ≈ 111.2 → 110 admits, 139 rejects;
+    // rEff(12,14) ≈ 183.8 → 183 admits, 184 rejects.
+    expect(admit(draft("government"), dict({ government: 110 }))).toBe(1);
+    expect(admit(draft("everything"), dict({ everything: 139 }))).toBe("reject");
+    expect(admit(draft("characteristic"), dict({ characteristic: 183 }))).toBe(1);
+    expect(
+      admit(draft("characteristic"), dict({ characteristic: 184 })),
+    ).toBe("reject");
+  });
+
+  it("admit-all at len ≥ REJECT_LEN_FULL, including q=255 (sentinel, not 255)", () => {
+    const key20 = "x".repeat(20);
+    const key21 = "y".repeat(21);
+    expect(rEff(REJECT_COMMON_THRESHOLD, 20)).toBe(256);
+    expect(admit(draft(key20), dict({ [key20]: 255 }))).toBe(1);
+    expect(admit(draft(key21), dict({ [key21]: 255 }))).toBe(1);
+  });
+
+  it("every attested admission lands at flat group 1 — no table path to group 2", () => {
+    expect(admit(draft("ninechars"), dict({ ninechars: 81 }))).toBe(1);
+    expect(admit(draft("tokenish"), dict({ tokenish: 0 }))).toBe(1);
+    expect(admit(draft("token"), dict({ token: REJECT_COMMON_THRESHOLD - 1 }))).toBe(1);
+    // The old MID row is gone: a mid-band q at floor length rejects flat,
+    // never demotes to 2.
+    expect(
+      admit(draft("tokenish"), dict({ tokenish: MID_FREQ_THRESHOLD })),
+    ).toBe("reject");
+  });
+
+  it("absent stays group 0 at all lengths, including ≥ REJECT_LEN_FULL", () => {
+    expect(admit(draft("zzqv"), dict({}))).toBe(0);
+    expect(admit(draft("x".repeat(20)), dict({}))).toBe(0);
+  });
+
+  it("rejectCommonness knob moves the floor AND the curve", () => {
+    // Floor at knob 10: q=10 rejects at len 8 (admits at default 12).
+    expect(
+      admit(draft("tokenish"), dict({ tokenish: 10 }), undefined, {
+        rejectCommonness: 10,
+      }),
+    ).toBe("reject");
+    expect(
+      admit(draft("tokenish"), dict({ tokenish: 9 }), undefined, {
+        rejectCommonness: 10,
+      }),
+    ).toBe(1);
+    // Curve: rEff(10, 9) = 10 + 245·√(1/12) ≈ 80.725 → 80 admits, 81 rejects.
+    expect(rEff(10, 9)).toBeCloseTo(80.725, 2);
+    expect(
+      admit(draft("ninechars"), dict({ ninechars: 80 }), undefined, {
+        rejectCommonness: 10,
+      }),
+    ).toBe(1);
+    expect(
+      admit(draft("ninechars"), dict({ ninechars: 81 }), undefined, {
+        rejectCommonness: 10,
+      }),
+    ).toBe("reject");
+  });
+
+  it("rEff arithmetic sanity: exact floor edge, sentinel, monotone non-decreasing", () => {
+    expect(rEff(12, 0)).toBe(12);
+    expect(rEff(12, REJECT_LEN_FLOOR)).toBe(12);
+    expect(rEff(12, REJECT_LEN_FULL)).toBe(256);
+    expect(rEff(12, 25)).toBe(256);
+    let prev = -Infinity;
+    for (let len = 0; len <= 25; len++) {
+      const v = rEff(REJECT_COMMON_THRESHOLD, len);
+      expect(v).toBeGreaterThanOrEqual(prev);
+      prev = v;
+    }
   });
 });
 
@@ -327,14 +450,21 @@ describe("admit — proper-noun relief (RETIRED-IN-PLACE, 2026-09)", () => {
     // 2026-09: table group 2 is retired, so a 2-parent arrives only via
     // the (retired) relief or legacy store entries — the clamp itself is
     // unchanged and stays pinned: own table result rare (→ 1) with
-    // parent 2 → min(2, max(1, 3)) = 2; own q=30 now rejects (table)
-    // before the clamp.
+    // parent 2 → min(2, max(1, 3)) = 2. Under the 2026-10 gradient an
+    // ATTESTED 9-char sub-word (q=30 < R_eff(9)=82.15) also reaches the
+    // clamp and lands at 2; mid-band q still rejects outright at floor
+    // lengths (≤ 8 chars), where the flat band is unchanged.
     expect(
       admit(draft("energise", true), dict({ energise: 10 }), 2),
     ).toBe(2);
     expect(
       admit(draft("energetic", true), dict({ energetic: 30 }), 2),
-    ).toBe("reject"); // old g2 table row is gone
+    ).toBe(2); // 2026-10: 9-char q=30 rides the ramp down (82.15) → table 1, clamps to 2
+    // Mid-band q must still reject at floor lengths (≤ 8 chars): the old g2
+    // table row is gone, so 6-char q=30 ≥ floor(12) rejects before the clamp.
+    expect(
+      admit(draft("energy", true), dict({ energy: 30 }), 2),
+    ).toBe("reject");
   });
 
   it("capitalized dictionary-absent word stays group 0 (relief never demotes)", () => {

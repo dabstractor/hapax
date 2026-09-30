@@ -1054,32 +1054,51 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
 // re-breaks the phrase fails the sanity test at `store.get(...)`.
 //
 // Fixture sterility (deliberate): every surrounding word is either < 4
-// chars (shape gate), q ≥ 95 (rejected at/above the ceiling), or a
-// lowercase-only band word (the casing-gated relief rejects it) — the
-// replayed store holds EXACTLY the four phrase words, so the successor
-// chains are exact and the 'na' menu has a single candidate.
+// chars (shape gate), q ≥ 95 at floor length (rejected at/above the flat
+// band), or a lowercase-only band word (the casing-gated relief rejects
+// it) — under the 2026-10 gradient the replayed store holds EXACTLY the
+// two long phrase words (renewable, laboratory, both table group 1), so
+// the successor chains are exact and the 'na' menu has a single behavior.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("acceptance item 7 — NREL phrase (nrel-chain.jsonl, bugfix 001_0f4b641cf9ce)", () => {
   // 2026-09 retighten: the proper-noun relief is RETIRED-IN-PLACE (ceiling
-  // == reject band), and dictionary attestation is near-disqualifying —
-  // the entire phrase rejects at the table now (national q=90, renewable
-  // 19, energy 94, laboratory 57; all ≥ 12). These tests pin the
-  // RETIREMENT: nothing stores, no chain forms, every probe delegates.
-  // The historical BUG-002/relief story (why the fixture exists) lives in
-  // spec 04 + score.ts calibration history. Restoring named-entity
-  // completion is an allowlist design question (spec/04).
-  it("retirement pin — the four phrase words all REJECT; store empty, no chain, probes delegate", async () => {
+  // == reject band) — retired words must never return via the relief.
+  // 2026-10 gradient (spec/04 h2.26): the two LONG phrase words now admit
+  // via the TABLE at flat group 1 — renewable (9 chars, q=19 < R_eff(9) ≈
+  // 82.15) and laboratory (10 chars, q=57 < R_eff(10) ≈ 111.2) — which is
+  // the owner-measured intent (long attested words carry typing savings),
+  // NOT a relief revival: the rankGroup === 1 assertions below prove the
+  // table (relief would read 2). The floor-length words keep the 2026-09
+  // behavior: national (8 chars, q=90) and energy (6 chars, q=94) reject.
+  // The CHAIN still never forms — rejected energy splits the phrase, so
+  // no two admitted tokens are ever adjacent: bigramSize stays 0,
+  // topSuccessors stays empty, and both probes delegate. Restoring
+  // named-entity completion is an allowlist design question (spec/04).
+  it("relief stays retired; floor words reject; long words admit at table group 1; no chain; probes delegate", async () => {
     const { store, pipeline } = makeChainPipeline(true);
     const entries = parseSessionFixture(`${FIXTURES}/nrel-chain.jsonl`);
     await replayChain(pipeline, entries);
 
-    for (const w of ["national", "renewable", "energy", "laboratory"]) {
-      expect(store.get(w), `${w} must reject (relief retired, q ≥ 12)`).toBeUndefined();
+    // Floor lengths (≤ REJECT_LEN_FLOOR): flat band unchanged — reject.
+    for (const w of ["national", "energy"]) {
+      expect(store.get(w), `${w} must reject (floor band, q ≥ 12)`).toBeUndefined();
     }
-    expect(store.size).toBe(0);
+    // Long words ride the R_eff ramp in at flat group 1 (table, NOT the
+    // retired relief — group 2 would mean the relief came back).
+    for (const w of ["renewable", "laboratory"]) {
+      const c = store.get(w);
+      expect(c, `${w} admits via the 2026-10 gradient`).toBeDefined();
+      expect(c!.rankGroup, `${w} must be a TABLE admission (group 1), never relief (group 2)`).toBe(1);
+      expect(c!.properName).toBe(true);
+    }
+    expect(store.size).toBe(2);
+    // The chain never forms: rejected energy separates renewable from
+    // laboratory in every occurrence, so no two admitted tokens are ever
+    // adjacent — no bigram runs, no successors.
     expect(store.bigramSize).toBe(0);
     expect(store.topSuccessors("national")).toEqual([]);
+    expect(store.topSuccessors("renewable")).toEqual([]);
 
     // The PRD's own probe inverts: 'na' → zero candidates.
     expect(rankMatches(store, "na")).toEqual([]);

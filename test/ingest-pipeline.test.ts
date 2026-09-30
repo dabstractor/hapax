@@ -83,15 +83,22 @@ function deepFreeze<T>(value: T): T {
  *  to die at the GATE (tooShort) and the stub never needed to attest
  *  them; now only the commonness band rejects them, exactly as the
  *  shipped dictionary does (q=240/230, deep in the reject band). */
-const COMMON = new Set(["context", "contextlwlock", "the", "of"]);
+const COMMON = new Set(["context", "the", "of"]);
+const COMMON_LONG = new Set(["contextlwlock"]);
 const MIDFREQ = new Set(["granite", "graniteore"]);
 const stubDict = (): Dictionary => ({
   lookup: (w) =>
     COMMON.has(w)
       ? REJECT_COMMON_THRESHOLD + 30
-      : MIDFREQ.has(w)
-        ? REJECT_COMMON_THRESHOLD - 2
-        : null,
+      : COMMON_LONG.has(w)
+        ? // 2026-10 gradient: a 13-char compound must attest DEEP in the
+          // band to stay a reject under its sqrt ramp (rEff(12,13) ≈ 168.9),
+          // matching how the shipped dictionary attests common words
+          // (q=240/230 — see the fixture note above).
+          230
+        : MIDFREQ.has(w)
+          ? REJECT_COMMON_THRESHOLD - 2
+          : null,
   version: 1,
   entryCount: 0,
 });

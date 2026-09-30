@@ -2,21 +2,34 @@
  * Score — stage 3 of the segment → shapeGate → score → store → query
  * pipeline (PRD §04), two halves sharing one module.
  *
- * ADMISSION (h2.24, P1.M2.T3.S1; 2026-09 retighten): `admit` maps a
+ * ADMISSION (h2.24, P1.M2.T3.S1; 2026-10 gradient): `admit` maps a
  * shape-gated CandidateDraft plus a dictionary lookup to a RankGroup
  * (0 | 1 | 2) or 'reject'. Dictionary ATTESTATION is near-disqualifying
  * evidence — hapax completes identifiers/hashes/jargon (the ABSENT
- * class), not ordinary English:
+ * class), not ordinary English — but its weight now scales with word
+ * length (spec/04 h2.26, 2026-10 owner-measured sqrt gradient):
  *
  *   q = dictionary.lookup(draft.key)   (0–255 quantized rank; 0 = rarest,
  *                                      255 = most common; null = absent)
- *   q === null                 → group 0    rare-by-default (THE value:
+ *   q === null                  → group 0   rare-by-default (THE value:
  *                                           identifiers, jargon, hashes)
- *   q < REJECT_COMMON_THRESHOLD (12) → group 1  rarest English tail only
- *   otherwise                  → 'reject'   attested English
- *   + proper-noun relief: RETIRED-IN-PLACE (ceiling == reject band —
- *     can no longer admit table-rejected words; see
- *     PROPER_NOUN_ADMIT_CEILING's history).
+ *   q < R_eff(len)              → group 1   flat (no table path to group 2)
+ *   q ≥ R_eff(len)              → 'reject'  attested English
+ *
+ * R_eff(len) is the length-conditioned reject threshold (rEff below):
+ * flat floor R = REJECT_COMMON_THRESHOLD (12) through 8 chars — the
+ * 2026-09 retighten behavior, preserved verbatim for short words — then
+ * a sqrt ramp R + (255−R)·√((len−8)/12) across 9–19 chars (commonness
+ * stops being noise evidence as words lengthen: typing savings grow,
+ * noise mass collapses), then admit-all from 20 chars (sentinel 256 so
+ * even q=255 admits). Attested admissions are ALWAYS group 1 — the old
+ * mid-band demotion row is gone; group 2 remains reachable only via the
+ * subword clamp (and the retired-in-place relief).
+ *
+ * + proper-noun relief: RETIRED-IN-PLACE (ceiling == reject band —
+ *   can no longer admit table-rejected words; see
+ *   PROPER_NOUN_ADMIT_CEILING's history; still provably dead under the
+ *   curve: R_eff ≥ R = ceiling everywhere).
  *
  * Band values are pinned by MEASUREMENT against the shipped artifact —
  * tools/calibrate-bands.mjs prints the rank↔word↔q table and re-verifies the
@@ -103,7 +116,13 @@ export const REJECT_COMMON_THRESHOLD = 12 as const;
  *  demotion matters) and group 2 is effectively retired — this constant
  *  now serves only the conjugation guard's tier-2 (stem q ≥ 20 rejects
  *  absent inflections), which tier-1 (stem ≥ 12) largely subsumes.
- *  Redundant but harmless; kept to avoid touching the guard's shape. */
+ *  Redundant but harmless; kept to avoid touching the guard's shape.
+ *
+ *  2026-10: the table's MID demotion row is DELETED outright (the R_eff
+ *  gradient has no group-2 path; every attested admission is flat group
+ *  1). This constant survives ONLY for the guard's tier-2 comparison
+ *  and tools/calibrate-bands.mjs; its retiral/repointing is the next
+ *  subtask's (S2's) business. */
 export const MID_FREQ_THRESHOLD = 20 as const;
 
 /** Relief ceiling for capitalized whole tokens — **RETIRED-IN-PLACE
@@ -128,6 +147,46 @@ export const MID_FREQ_THRESHOLD = 20 as const;
  *  failed, file) — the owner retired it: "it's for completing commit
  *  hashes and variable names, not half of the english language." */
 export const PROPER_NOUN_ADMIT_CEILING = 12 as const;
+
+/** 2026-10 length gradient (spec/04 h2.26): the flat reject floor holds
+ *  through this word length. Nothing below 9 chars changed vs the 2026-09
+ *  flat band. Baked per PRD §08. */
+export const REJECT_LEN_FLOOR = 8 as const;
+
+/** 2026-10 length gradient (spec/04 h2.26): admit-all from this word
+ *  length — rEff returns a 256 sentinel (above the 0–255 q domain) so
+ *  `q >= rEff` can never reject, including at q = 255. Baked per §08. */
+export const REJECT_LEN_FULL = 20 as const;
+
+/**
+ * Length-conditioned reject threshold R_eff(len) — spec/04 h2.26
+ * (2026-10 owner rule): dictionary attestation is near-disqualifying at
+ * short lengths (hapax completes the ABSENT class), but commonness stops
+ * being noise evidence as words lengthen — typing savings grow and the
+ * noise mass collapses. The sqrt shape is steep where noise dies (9–12
+ * chars) and saturates where nothing remains to admit (16+). Owner
+ * measured ≈10.5k corpus flips; linear and floor-10 variants rejected.
+ *
+ *   R_eff(len) = floor                              len ≤ 8   (floor hold)
+ *   R_eff(len) = floor + (255 − floor)·√((len − 8)/12)   8 < len < 20
+ *   R_eff(len) = 256 (sentinel)                     len ≥ 20  (admit-all)
+ *
+ * `floor` is the RESOLVED floor — callers pass rejectAt (the
+ * rejectCommonness knob or its baked default), never the constant, so
+ * the knob moves the floor AND scales the whole curve (the 255
+ * asymptote constant stays literal: the ramp saturates toward max-q
+ * regardless of floor). Returns 256 — NOT 255 — at len ≥
+ * REJECT_LEN_FULL: q ≥ 255 would still reject the most-common q;
+ * the sentinel makes admit-all hold for the entire q domain. Callers
+ * compare floats directly (q integer ≥ rEff float) — never round:
+ * rounding shifts the 9-char 81/82 boundary. Pure math; baked shaping
+ * constants per §08.
+ */
+export function rEff(floor: number, len: number): number {
+  if (len >= REJECT_LEN_FULL) return 256;
+  if (len <= REJECT_LEN_FLOOR) return floor;
+  return floor + (255 - floor) * Math.sqrt((len - REJECT_LEN_FLOOR) / 12);
+}
 
 /** Admission outcome: a rank group (0 = rarest/best … 2 = mid-frequency)
  *  or 'reject' (never enters the store). */
@@ -176,12 +235,15 @@ function inflectionStems(word: string): string[] {
 }
 
 /**
- * Admission decision for one shape-gated candidate draft (PRD §04 h2.24).
+ * Admission decision for one shape-gated candidate draft (PRD §04 h2.24;
+ * 2026-10 R_eff gradient).
  *
- * Looks up the draft's lowercase key and applies the four-row banding table,
- * then — for sub-words only — clamps the result so it never ranks above the
+ * Looks up the draft's lowercase key and applies the banding table against
+ * the length-conditioned threshold R_eff(rejectAt, len) (see rEff), then —
+ * for sub-words only — clamps the result so it never ranks above the
  * parent whole token's group + 1 (saturated at 2). 'reject' passes through
- * unclamped.
+ * unclamped. Attested admissions are ALWAYS group 1 (the old mid-band row
+ * is gone); group 2 remains reachable only via the clamp.
  *
  * Proper-noun relief (BUG-002, bugfix/001_0f4b641cf9ce): BEFORE the reject
  * early-return, a candidate that tabled as 'reject' is admitted at group 2
@@ -227,12 +289,14 @@ export function admit(
   opts: AdmissionOptions = {},
 ): AdmissionResult {
   const rejectAt = opts.rejectCommonness ?? REJECT_COMMON_THRESHOLD;
+  // R_eff rides the RESOLVED floor so the knob scales the whole curve;
+  // float compare (q integer ≥ rEff float) — no rounding (2026-10).
+  const threshold = rEff(rejectAt, draft.key.length);
   const q = dictionary.lookup(draft.key);
   let result: AdmissionResult;
   if (q === null) result = 0;
-  else if (q >= rejectAt) result = "reject";
-  else if (q >= MID_FREQ_THRESHOLD) result = 2;
-  else result = 1;
+  else if (q >= threshold) result = "reject";
+  else result = 1; // flat — the 2026-10 gradient deleted the MID demotion row
 
   // Proper-noun relief (BUG-002): capitalized whole tokens below the
   // ceiling admit at group 2 — M2 integration item 7 (National Renewable

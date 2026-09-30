@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "M3 landing — R_eff gradient, path candidates (4d), anchored-fuzzy matching, one-line widget",
-      "status": "Ready",
+      "status": "Planned",
       "description": "Bring the code into agreement with spec at af63f1d for the four unimplemented deltas: R1 length-conditioned admission curve, R2 rule-4d slash-joined path candidates, R3 anchored-fuzzy matching + tier/sessionCount ranking + fuzzThreshold, R4 one-line widget primary display with dual-path architecture; close with R5 changeset-level documentation and DoD re-verification. Everything else in the PRD diff is already shipped and verified — do not redo. Spec/*.md is read-only this run; record drift in reports.",
       "milestones": [
         {
@@ -18,38 +18,60 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "R_eff length-conditioned reject curve (R1; spec 04 Admission decision)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Replace the flat REJECT_COMMON_THRESHOLD=12 rejection in admit() with R_eff(len): flat R for len<=8; R+(255-R)*sqrt((len-8)/12) for 8<len<20; admit-all for len>=20. R is the rejectCommonness-resolved floor; the whole curve scales from it. Attested admissions land at rank group 1 flat (dead MID table row deleted; group 2 kept only for the subword clamp). Both conjugation-guard tiers compare stems against R_eff(len(word)). calibrate-bands.mjs prints R_eff-aware verdicts.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T1.S1",
                   "title": "R_eff curve + admit() rewrite + knob scaling + admit-all edge",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [],
-                  "prd_selectors": ["h2.26", "h2.5", "h2.51", "h2.52", "h2.55", "h2.8", "h2.62"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/003_bbac3b15e8d0/architecture/r1-admission-reff.md — src/core/score.ts admit() today rejects at flat `q >= rejectAt` where rejectAt = opts.rejectCommonness ?? REJECT_COMMON_THRESHOLD (12); the `else if (q >= MID_FREQ_THRESHOLD) result = 2` table row is dead; RankGroup = 0|1|2 (types.ts:17), group 2 only producible via the subword clamp; q = dictionary.lookup(draft.key), null = absent; knob flows per-call from IngestPipeline (ingest.ts:558-563), default baked at config.ts:91 — no config changes needed.\n2. INPUT: CandidateDraft (src/core/types.ts) with .key and .key.length; AdmissionOptions.rejectCommonness (existing optional param).\n3. LOGIC: export `rEff(floor: number, len: number): number` (plus REJECT_LEN_FLOOR=8 / REJECT_LEN_FULL=20 constants) from score.ts. admit(): reject iff q !== null && q >= rEff(rejectAt, draft.key.length); DELETE the dead MID table row so every attested admission lands at group 1 flat; q === null stays group 0. CRITICAL EDGE: len >= 20 is admit-all — a naive rEff=255 with `q >= 255` rejects q=255 words; special-case (sentinel 256 or len>=20 short-circuit). Pure function over the dictionary lookup; mock the dictionary with the existing stub-dict test helper (test/score.test.ts `dict(entries)`). TDD (test/score.test.ts): assert RELATIVE to imported constants — floor hold (q>=R rejects at any len<=8), sqrt-ramp boundary probes (q=81 admits / q=82 rejects at 9 chars), admit-all at len>=20 incl. q=255, flat group 1, knob override (e.g. {rejectCommonness:10}) moves floor AND curve. Keep the existing absolute pin test expecting REJECT_COMMON_THRESHOLD===12.\n4. OUTPUT: exported rEff consumed by P1.M1.T1.S2 (guard), P1.M1.T1.S3 (probe), and tests; admit() signature unchanged for ingest.ts callers.\n5. DOCS: none — no user-facing/config surface change (README rejectCommonness row rewording is R5, Mode B, P1.M4.T1.S1). JSDoc on rEff explaining the curve rides with the code."
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/003_bbac3b15e8d0/architecture/r1-admission-reff.md — src/core/score.ts admit() today rejects at flat `q >= rejectAt` where rejectAt = opts.rejectCommonness ?? REJECT_COMMON_THRESHOLD (12); the `else if (q >= MID_FREQ_THRESHOLD) result = 2` table row is dead; RankGroup = 0|1|2 (types.ts:17), group 2 only producible via the subword clamp; q = dictionary.lookup(draft.key), null = absent; knob flows per-call from IngestPipeline (ingest.ts:558-563), default baked at config.ts:91 — no config changes needed.\n2. INPUT: CandidateDraft (src/core/types.ts) with .key and .key.length; AdmissionOptions.rejectCommonness (existing optional param).\n3. LOGIC: export `rEff(floor: number, len: number): number` (plus REJECT_LEN_FLOOR=8 / REJECT_LEN_FULL=20 constants) from score.ts. admit(): reject iff q !== null && q >= rEff(rejectAt, draft.key.length); DELETE the dead MID table row so every attested admission lands at group 1 flat; q === null stays group 0. CRITICAL EDGE: len >= 20 is admit-all — a naive rEff=255 with `q >= 255` rejects q=255 words; special-case (sentinel 256 or len>=20 short-circuit). Pure function over the dictionary lookup; mock the dictionary with the existing stub-dict test helper (test/score.test.ts `dict(entries)`). TDD (test/score.test.ts): assert RELATIVE to imported constants — floor hold (q>=R rejects at any len<=8), sqrt-ramp boundary probes (q=81 admits / q=82 rejects at 9 chars), admit-all at len>=20 incl. q=255, flat group 1, knob override (e.g. {rejectCommonness:10}) moves floor AND curve. Keep the existing absolute pin test expecting REJECT_COMMON_THRESHOLD===12.\n4. OUTPUT: exported rEff consumed by P1.M1.T1.S2 (guard), P1.M1.T1.S3 (probe), and tests; admit() signature unchanged for ingest.ts callers.\n5. DOCS: none — no user-facing/config surface change (README rejectCommonness row rewording is R5, Mode B, P1.M4.T1.S1). JSDoc on rEff explaining the curve rides with the code.",
+                  "prd_selectors": [
+                    "h2.26",
+                    "h2.5",
+                    "h2.51",
+                    "h2.52",
+                    "h2.55",
+                    "h2.8",
+                    "h2.62"
+                  ]
                 },
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "Conjugation guard rides R_eff(len(word)); MID demoted to compatibility constant; relief stays dead",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1"],
-                  "prd_selectors": ["h2.26", "h2.55", "h2.62"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r1-admission-reff.md §2 — guard body (score.ts ~L269-283) iterates inflectionStems(draft.key); tier-1 today `qs >= rejectAt`, tier-2 `q === null && qs >= MID_FREQ_THRESHOLD` (flat 20); properName drafts skip the guard; subwords are guarded; PROPER_NOUN_ADMIT_CEILING=12 relief is dead code (ceiling == floor). Measured boundary words: `uploads` (word absent, stem `upload` q=38, len 7 -> R_eff=12) REJECTS today and must keep rejecting; `configurations` (absent, stem `configuration` q=26, len 15 -> R_eff~197) REJECTS TODAY via tier-1 and must FLIP to ADMIT.\n2. INPUT: rEff export + rejectAt resolution from P1.M1.T1.S1.\n3. LOGIC: BOTH guard tiers compare the stem q against rEff(rejectAt, draft.key.length) — the WORD's length, not the stem's. Tier-2 loses its MID_FREQ_THRESHOLD comparison (subsumed); keep MID_FREQ_THRESHOLD exported unchanged as a compatibility constant (test/score.test.ts, tools/calibrate-bands.mjs, test/config.test.ts import it). Relief stays retired-in-place: ceiling 12 <= every R_eff when R >= 12 (and for knob R > 12 it stays dead) — add a pin test that no capitalized table-reject ever relieves under the ramp (long capitalized words admit via R_eff at group 1, not relief). Mock dictionary via stub-dict helper; boundary tests `uploads` REJECT / `configurations` ADMIT with measured stem quants expressed relative to imported constants where possible.\n4. OUTPUT: guard semantics final for the whole admission path; no API change; consumed implicitly by ingest admission and pinned by test/calibration.test.ts re-audit (see P1.M1.T1.S3 for the probe fixture side).\n5. DOCS: none — internal semantics; README rejectCommonness row is R5 (Mode B)."
+                  "dependencies": [
+                    "P1.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r1-admission-reff.md §2 — guard body (score.ts ~L269-283) iterates inflectionStems(draft.key); tier-1 today `qs >= rejectAt`, tier-2 `q === null && qs >= MID_FREQ_THRESHOLD` (flat 20); properName drafts skip the guard; subwords are guarded; PROPER_NOUN_ADMIT_CEILING=12 relief is dead code (ceiling == floor). Measured boundary words: `uploads` (word absent, stem `upload` q=38, len 7 -> R_eff=12) REJECTS today and must keep rejecting; `configurations` (absent, stem `configuration` q=26, len 15 -> R_eff~197) REJECTS TODAY via tier-1 and must FLIP to ADMIT.\n2. INPUT: rEff export + rejectAt resolution from P1.M1.T1.S1.\n3. LOGIC: BOTH guard tiers compare the stem q against rEff(rejectAt, draft.key.length) — the WORD's length, not the stem's. Tier-2 loses its MID_FREQ_THRESHOLD comparison (subsumed); keep MID_FREQ_THRESHOLD exported unchanged as a compatibility constant (test/score.test.ts, tools/calibrate-bands.mjs, test/config.test.ts import it). Relief stays retired-in-place: ceiling 12 <= every R_eff when R >= 12 (and for knob R > 12 it stays dead) — add a pin test that no capitalized table-reject ever relieves under the ramp (long capitalized words admit via R_eff at group 1, not relief). Mock dictionary via stub-dict helper; boundary tests `uploads` REJECT / `configurations` ADMIT with measured stem quants expressed relative to imported constants where possible.\n4. OUTPUT: guard semantics final for the whole admission path; no API change; consumed implicitly by ingest admission and pinned by test/calibration.test.ts re-audit (see P1.M1.T1.S3 for the probe fixture side).\n5. DOCS: none — internal semantics; README rejectCommonness row is R5 (Mode B).",
+                  "prd_selectors": [
+                    "h2.26",
+                    "h2.55",
+                    "h2.62"
+                  ]
                 },
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T1.S3",
                   "title": "calibrate-bands.mjs R_eff-aware verdicts + prose fixture re-audit (Mode A)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1"],
-                  "prd_selectors": ["h2.59", "h2.54", "h2.51", "h2.26", "h2.55"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r1-admission-reff.md §5-6 — tools/calibrate-bands.mjs probe mode (`node tools/calibrate-bands.mjs <word...>`) prints q + admit() verdict for lowercase AND Capitalized drafts via native TS-stripping imports of ../src/core/score.ts; zero-arg mode prints band populations, rank/q probe table, flat threshold sweep T=15..255, acceptance assertions, exit 1 on drift. test/calibration.test.ts (real IngestPipeline + shipped dict + prose.jsonl) asserts store EMPTY for prose — 9+ char common prose words now ADMIT under the ramp, so that gate needs re-measurement, and test/shipped-dict.test.ts prose-no-menu gate must be re-checked (COMMON_PROBES are 4-6 chars and survive).\n2. INPUT: rEff export from P1.M1.T1.S1; dictionary loader API (loadDictionary on dict/common-en.bin).\n3. LOGIC: probe header prints the curve formula + active floor; verdicts apply rEff(floor, word.length) for both lc and Cap drafts. Make the flat sweep/populations sections length-aware or explicitly labeled legacy. Add acceptance assertions for the boundary words (`uploads` REJECT, `configurations` ADMIT) and re-check 'group-2 band empty' under the curve. Re-audit test/calibration.test.ts: re-measure prose.jsonl admissions; adjust the fixture expectation to the R_eff-correct behavior (fixture content or assertion — whichever keeps the test meaningful; do NOT weaken the shipped-dict guarantee). Run the probe on the shipped binary to confirm.\n4. OUTPUT: `node tools/calibrate-bands.mjs <words...>` as the spec-08/09-named probe for the current bands; green test/calibration.test.ts + test/shipped-dict.test.ts.\n5. DOCS: Mode A — update tools/calibrate-bands.mjs header/output comments to describe R_eff-aware verdicts (this rides WITH the work; no separate docs subtask). README rejectCommonness row is R5 (Mode B)."
+                  "dependencies": [
+                    "P1.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r1-admission-reff.md §5-6 — tools/calibrate-bands.mjs probe mode (`node tools/calibrate-bands.mjs <word...>`) prints q + admit() verdict for lowercase AND Capitalized drafts via native TS-stripping imports of ../src/core/score.ts; zero-arg mode prints band populations, rank/q probe table, flat threshold sweep T=15..255, acceptance assertions, exit 1 on drift. test/calibration.test.ts (real IngestPipeline + shipped dict + prose.jsonl) asserts store EMPTY for prose — 9+ char common prose words now ADMIT under the ramp, so that gate needs re-measurement, and test/shipped-dict.test.ts prose-no-menu gate must be re-checked (COMMON_PROBES are 4-6 chars and survive).\n2. INPUT: rEff export from P1.M1.T1.S1; dictionary loader API (loadDictionary on dict/common-en.bin).\n3. LOGIC: probe header prints the curve formula + active floor; verdicts apply rEff(floor, word.length) for both lc and Cap drafts. Make the flat sweep/populations sections length-aware or explicitly labeled legacy. Add acceptance assertions for the boundary words (`uploads` REJECT, `configurations` ADMIT) and re-check 'group-2 band empty' under the curve. Re-audit test/calibration.test.ts: re-measure prose.jsonl admissions; adjust the fixture expectation to the R_eff-correct behavior (fixture content or assertion — whichever keeps the test meaningful; do NOT weaken the shipped-dict guarantee). Run the probe on the shipped binary to confirm.\n4. OUTPUT: `node tools/calibrate-bands.mjs <words...>` as the spec-08/09-named probe for the current bands; green test/calibration.test.ts + test/shipped-dict.test.ts.\n5. DOCS: Mode A — update tools/calibrate-bands.mjs header/output comments to describe R_eff-aware verdicts (this rides WITH the work; no separate docs subtask). README rejectCommonness row is R5 (Mode B).",
+                  "prd_selectors": [
+                    "h2.59",
+                    "h2.54",
+                    "h2.51",
+                    "h2.26",
+                    "h2.55"
+                  ]
                 }
               ]
             },
@@ -67,8 +89,14 @@
                   "status": "Planned",
                   "story_points": 2,
                   "dependencies": [],
-                  "prd_selectors": ["h2.24", "h2.24/h3.3", "h2.30", "h2.55", "h2.8"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/003_bbac3b15e8d0/architecture/r2-path-candidates.md — pass 4 scans LITERAL_RE = /[A-Za-z0-9._@:+/~=-]{4,80}/g (segment.ts:63) — code window is 80, spec says 96: widen to {4,96} IN THIS CHANGE. classifyLiteral (segment.ts:150-190) shows the trim/validate pattern; RawToken/CandidateDraft gain `path?: boolean` mirroring `literal?` (types.ts:83-113); expandCandidates today emits key=raw.toLowerCase(), display=raw (segment.ts:545-546) and returns [whole] for hexish/literal (segment.ts:557-559); rule-3 Unicode adjacency helper isUniLetter/isUniLetterBefore applied per match at segment.ts:461-463; equal-span tokens defer to the existing class (segment.ts:466-468).\n2. INPUT: raw literal-charset match + text + index from the pass-4 scan (existing machinery).\n3. LOGIC: add classifyPath(raw) sibling of classifyLiteral. Predicate after edge trimming of leading '/', '~', './', '../' (combinations) and trailing '/': >=2 interior single '/' separators OR exactly 1 interior '/' plus a dotted component => ONE opaque token. KEY = trimmed lowercased slice; DISPLAY/token span = ORIGINAL run (first key!=display divergence beyond casing — today literal tokens emit the trimmed slice as raw, path tokens must keep the untrimmed span + trim metadata for the key). Trailing ':digits(:digits)?' trimmed (key+display computation) only when the remainder is path-shaped; non-path colons ('4:36', 'localhost:8080') untouched; one retrim iteration suffices (pin 'a/b.ts:42:13:99' behavior). Guards: interior '..' rejects the WHOLE run ('a/../b' shreds); adjacent interior symbols rejected (reuse classifyLiteral rule); digit-bearing runs qualifying via 4c take the path class when they qualify both ways (emit path:true, literal:false); rule-3 Unicode adjacency at the TRIMMED bounds; strictly additive vs equal spans (paths contain '/' so equal-span collisions with other classes are impossible — keep the guard for symmetry/tests). expandCandidates: path branch emits {key: trimmed.toLowerCase(), display: originalRaw, isSubword:false} and returns [whole] (opaque to subword splitting). TDD per spec 09 (test/segment.test.ts): src/core/query.ts; /home/user/projects/hapax (key trims leading '/', display keeps); docs/architecture.md; ../tools/build.mjs; example.com/a/b; ':line:col' trims; 'and/or' NOT a token; interior '..' rejects whole.\n4. OUTPUT: RawToken{path:true, raw=original, trim metadata} consumed by P1.M1.T2.S2 (gate) and expandCandidates drafts consumed by P1.M1.T2.S3 (store) — no mock needed (pure text functions).\n5. DOCS: none — internal tokenization; spec 04 already describes 4d (spec read-only this run)."
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/003_bbac3b15e8d0/architecture/r2-path-candidates.md — pass 4 scans LITERAL_RE = /[A-Za-z0-9._@:+/~=-]{4,80}/g (segment.ts:63) — code window is 80, spec says 96: widen to {4,96} IN THIS CHANGE. classifyLiteral (segment.ts:150-190) shows the trim/validate pattern; RawToken/CandidateDraft gain `path?: boolean` mirroring `literal?` (types.ts:83-113); expandCandidates today emits key=raw.toLowerCase(), display=raw (segment.ts:545-546) and returns [whole] for hexish/literal (segment.ts:557-559); rule-3 Unicode adjacency helper isUniLetter/isUniLetterBefore applied per match at segment.ts:461-463; equal-span tokens defer to the existing class (segment.ts:466-468).\n2. INPUT: raw literal-charset match + text + index from the pass-4 scan (existing machinery).\n3. LOGIC: add classifyPath(raw) sibling of classifyLiteral. Predicate after edge trimming of leading '/', '~', './', '../' (combinations) and trailing '/': >=2 interior single '/' separators OR exactly 1 interior '/' plus a dotted component => ONE opaque token. KEY = trimmed lowercased slice; DISPLAY/token span = ORIGINAL run (first key!=display divergence beyond casing — today literal tokens emit the trimmed slice as raw, path tokens must keep the untrimmed span + trim metadata for the key). Trailing ':digits(:digits)?' trimmed (key+display computation) only when the remainder is path-shaped; non-path colons ('4:36', 'localhost:8080') untouched; one retrim iteration suffices (pin 'a/b.ts:42:13:99' behavior). Guards: interior '..' rejects the WHOLE run ('a/../b' shreds); adjacent interior symbols rejected (reuse classifyLiteral rule); digit-bearing runs qualifying via 4c take the path class when they qualify both ways (emit path:true, literal:false); rule-3 Unicode adjacency at the TRIMMED bounds; strictly additive vs equal spans (paths contain '/' so equal-span collisions with other classes are impossible — keep the guard for symmetry/tests). expandCandidates: path branch emits {key: trimmed.toLowerCase(), display: originalRaw, isSubword:false} and returns [whole] (opaque to subword splitting). TDD per spec 09 (test/segment.test.ts): src/core/query.ts; /home/user/projects/hapax (key trims leading '/', display keeps); docs/architecture.md; ../tools/build.mjs; example.com/a/b; ':line:col' trims; 'and/or' NOT a token; interior '..' rejects whole.\n4. OUTPUT: RawToken{path:true, raw=original, trim metadata} consumed by P1.M1.T2.S2 (gate) and expandCandidates drafts consumed by P1.M1.T2.S3 (store) — no mock needed (pure text functions).\n5. DOCS: none — internal tokenization; spec 04 already describes 4d (spec read-only this run).",
+                  "prd_selectors": [
+                    "h2.24",
+                    "h2.24/h3.3",
+                    "h2.30",
+                    "h2.55",
+                    "h2.8"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -76,9 +104,15 @@
                   "title": "Shape-gate path-class cap 4-96 + secret/entropy application",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T2.S1"],
-                  "prd_selectors": ["h2.25", "h2.24", "h2.55"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r2-path-candidates.md §2 — passesShape (shapeGate.ts:171-194) selects caps by draft.isSubword ONLY (MIN_LENGTH=2, MAX_WHOLE_LENGTH=64, MAX_SUBWORD_LENGTH=32): there is no per-class cap mechanism today — add one keyed on the new CandidateDraft.path flag. Entropy floor charEntropy(key) < 1.5 bits rejects letter-bearing keys only (/[a-z]/ test — paths are letter-bearing so it applies as-is). isSecretShaped(display) (shapeGate.ts:233-289) fires on the DISPLAY (raw edges included): '@'+'.', base64 run >=24, pure hex >=20, pure decimal >=16, base64url run >=16 with mixed case + digits — a base64url-texture path segment rejects the WHOLE candidate (conservative, spec'd).\n2. INPUT: path-flagged CandidateDraft (key=trimmed, display=original) from P1.M1.T2.S1.\n3. LOGIC: class-conditional caps in passesShape: path drafts require post-trim key length 4-96 (floor 4 — NOT the global MIN_LENGTH 2; ceiling 96 replaces MAX_WHOLE_LENGTH 64 for this class only; all other classes unchanged). Secret + entropy rules apply unchanged (verify a URL-ish display with '@' and '.' rejects whole; verify an ordinary deep path admits). TDD (test/shapeGate.test.ts): path key cap 96/97 boundary, floor 4, accept/reject texture cases per spec 09 shapeGate bullets.\n4. OUTPUT: gated path candidate drafts only, for P1.M1.T2.S3.\n5. DOCS: none."
+                  "dependencies": [
+                    "P1.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r2-path-candidates.md §2 — passesShape (shapeGate.ts:171-194) selects caps by draft.isSubword ONLY (MIN_LENGTH=2, MAX_WHOLE_LENGTH=64, MAX_SUBWORD_LENGTH=32): there is no per-class cap mechanism today — add one keyed on the new CandidateDraft.path flag. Entropy floor charEntropy(key) < 1.5 bits rejects letter-bearing keys only (/[a-z]/ test — paths are letter-bearing so it applies as-is). isSecretShaped(display) (shapeGate.ts:233-289) fires on the DISPLAY (raw edges included): '@'+'.', base64 run >=24, pure hex >=20, pure decimal >=16, base64url run >=16 with mixed case + digits — a base64url-texture path segment rejects the WHOLE candidate (conservative, spec'd).\n2. INPUT: path-flagged CandidateDraft (key=trimmed, display=original) from P1.M1.T2.S1.\n3. LOGIC: class-conditional caps in passesShape: path drafts require post-trim key length 4-96 (floor 4 — NOT the global MIN_LENGTH 2; ceiling 96 replaces MAX_WHOLE_LENGTH 64 for this class only; all other classes unchanged). Secret + entropy rules apply unchanged (verify a URL-ish display with '@' and '.' rejects whole; verify an ordinary deep path admits). TDD (test/shapeGate.test.ts): path key cap 96/97 boundary, floor 4, accept/reject texture cases per spec 09 shapeGate bullets.\n4. OUTPUT: gated path candidate drafts only, for P1.M1.T2.S3.\n5. DOCS: none.",
+                  "prd_selectors": [
+                    "h2.25",
+                    "h2.24",
+                    "h2.55"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -86,9 +120,17 @@
                   "title": "Store display flow + key!=display audit + bigram whole-token entry",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T2.S2"],
-                  "prd_selectors": ["h2.38", "h2.39", "h2.41/h3.6", "h2.30", "h2.55"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r2-path-candidates.md §3-4 — store.ts needs ZERO structural changes: upsert display merge is recency-wins (store.ts:222 `existing.display = sighting.display`) and nothing assumes display.toLowerCase() === key, so /home/... vs home/... sightings both upsert key 'home/...' with latest display winning. Bigrams: ingest.ts splitRuns (156-171) + store.recordBigramRuns (479-515) take whole-token keys — a path draft's trimmed key enters runs as ONE key automatically; keys contain no whitespace so the ' ' join/split invariants hold. KNOWN ASSUMPTION SURFACES TO AUDIT: query.ts one-word-invariant comment (query.ts:6,83,118), /acwords dump (debug.ts:74,203 prints c.display — flows fine), store tests asserting display==key+casing.\n2. INPUT: gated path candidates from P1.M1.T2.S2 (key trimmed-lower, display original-edges).\n3. LOGIC: verify + pin with tests (test/store.test.ts, test/bigrams.test.ts or successors): upsert of the same path under different edge variants (leading '/' vs none, trailing '/') merges to one key with recency-wins display; display-bearing path candidates flow out through /acwords unchanged in format; 'edit' -> path bigram pair recorded ('edit src/core/query.ts' adjacency produces successor pair) — add the spec 09 bigram adjacency case. Grep-audit and fix any code/test assuming display.toLowerCase() === key (silent-breakage risk flagged in research).\n4. OUTPUT: store accepts/returns path candidates for the query core (P1.M2) and /acwords; bigram successor index contains path successors.\n5. DOCS: none — /acwords output format unchanged (verify; debug dump is config-gated debug surface, no README row)."
+                  "dependencies": [
+                    "P1.M1.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r2-path-candidates.md §3-4 — store.ts needs ZERO structural changes: upsert display merge is recency-wins (store.ts:222 `existing.display = sighting.display`) and nothing assumes display.toLowerCase() === key, so /home/... vs home/... sightings both upsert key 'home/...' with latest display winning. Bigrams: ingest.ts splitRuns (156-171) + store.recordBigramRuns (479-515) take whole-token keys — a path draft's trimmed key enters runs as ONE key automatically; keys contain no whitespace so the ' ' join/split invariants hold. KNOWN ASSUMPTION SURFACES TO AUDIT: query.ts one-word-invariant comment (query.ts:6,83,118), /acwords dump (debug.ts:74,203 prints c.display — flows fine), store tests asserting display==key+casing.\n2. INPUT: gated path candidates from P1.M1.T2.S2 (key trimmed-lower, display original-edges).\n3. LOGIC: verify + pin with tests (test/store.test.ts, test/bigrams.test.ts or successors): upsert of the same path under different edge variants (leading '/' vs none, trailing '/') merges to one key with recency-wins display; display-bearing path candidates flow out through /acwords unchanged in format; 'edit' -> path bigram pair recorded ('edit src/core/query.ts' adjacency produces successor pair) — add the spec 09 bigram adjacency case. Grep-audit and fix any code/test assuming display.toLowerCase() === key (silent-breakage risk flagged in research).\n4. OUTPUT: store accepts/returns path candidates for the query core (P1.M2) and /acwords; bigram successor index contains path successors.\n5. DOCS: none — /acwords output format unchanged (verify; debug dump is config-gated debug surface, no README row).",
+                  "prd_selectors": [
+                    "h2.38",
+                    "h2.39",
+                    "h2.41/h3.6",
+                    "h2.30",
+                    "h2.55"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -96,9 +138,18 @@
                   "title": "Query-interaction + perf regression verification (paths under the CURRENT matcher)",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T2.S3"],
-                  "prd_selectors": ["h2.28", "h2.44", "h2.45", "h2.55", "h2.58", "h2.56"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r2-path-candidates.md §6-7 — threshold-mode fragment regex /[A-Za-z][A-Za-z0-9_-]*$/ (provider.ts:105) admits no '/', so paths surface at the FIRST segment ('sr' -> key src/core/query.ts via prefixRange, Tab inserts the whole path with display casing); classifyStockContext (provider.ts:115-160, 'path' case 153-156) runs BEFORE fragment matching, so once a '/' precedes the cursor pi's stock file completion owns it — unchanged by 4d. Trigger-mode fragments can contain '/' (regex excludes only whitespace + trigger char) — the stock gate disarms them, but pin it. PERF RISK: 800 KB ingest gate (test/perf-gates.test.ts:165-166, budget <60 ms / CI <180 ms) has thin headroom (~174-187 ms baseline) and the window widening 80->96 adds pass-4 matches; history shows two O(n^2) regressions from this pass — keep per-match work linear.\n2. INPUT: store populated with path candidates from P1.M1.T2.S3.\n3. LOGIC: verification-only subtask (no new features): regression tests pinning — paths surface at first segment under the CURRENT prefix matcher; path keys only matchable by pre-first-slash prefix; stock path/slash/@ delegation unchanged (incl. trigger-mode '/' fragments); re-run test/perf-gates.test.ts + test/shipped-dict.test.ts + npm run bench and confirm the 800 KB ingest gate still holds (if the widened window breaks the CI bound, optimize within segment.ts pass 4 — never weaken the gate).\n4. OUTPUT: green gates + pinned interaction baseline for the fuzzy anchor (P1.M2: anchor matches first char of the TRIMMED key) and integration item 7 (P1.M3.T4.S1 / P1.M4.T1.S2).\n5. DOCS: none."
+                  "dependencies": [
+                    "P1.M1.T2.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r2-path-candidates.md §6-7 — threshold-mode fragment regex /[A-Za-z][A-Za-z0-9_-]*$/ (provider.ts:105) admits no '/', so paths surface at the FIRST segment ('sr' -> key src/core/query.ts via prefixRange, Tab inserts the whole path with display casing); classifyStockContext (provider.ts:115-160, 'path' case 153-156) runs BEFORE fragment matching, so once a '/' precedes the cursor pi's stock file completion owns it — unchanged by 4d. Trigger-mode fragments can contain '/' (regex excludes only whitespace + trigger char) — the stock gate disarms them, but pin it. PERF RISK: 800 KB ingest gate (test/perf-gates.test.ts:165-166, budget <60 ms / CI <180 ms) has thin headroom (~174-187 ms baseline) and the window widening 80->96 adds pass-4 matches; history shows two O(n^2) regressions from this pass — keep per-match work linear.\n2. INPUT: store populated with path candidates from P1.M1.T2.S3.\n3. LOGIC: verification-only subtask (no new features): regression tests pinning — paths surface at first segment under the CURRENT prefix matcher; path keys only matchable by pre-first-slash prefix; stock path/slash/@ delegation unchanged (incl. trigger-mode '/' fragments); re-run test/perf-gates.test.ts + test/shipped-dict.test.ts + npm run bench and confirm the 800 KB ingest gate still holds (if the widened window breaks the CI bound, optimize within segment.ts pass 4 — never weaken the gate).\n4. OUTPUT: green gates + pinned interaction baseline for the fuzzy anchor (P1.M2: anchor matches first char of the TRIMMED key) and integration item 7 (P1.M3.T4.S1 / P1.M4.T1.S2).\n5. DOCS: none.",
+                  "prd_selectors": [
+                    "h2.28",
+                    "h2.44",
+                    "h2.45",
+                    "h2.55",
+                    "h2.58",
+                    "h2.56"
+                  ]
                 }
               ]
             }
@@ -124,9 +175,16 @@
                   "title": "matchFragment: first-char anchor + greedy subsequence + tiers 3/2/1",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T2.S1"],
-                  "prd_selectors": ["h2.28", "h2.5", "h2.55", "h2.8"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/003_bbac3b15e8d0/architecture/r3-query-fuzzy.md — query.ts (176 lines) never does its own string compare today; matching is implicit via store.prefixRange(lower) (query.ts:107); case handling lowercases the fragment before prefixRange (store throws RangeError on uppercase) and keeps stored display casing; path keys (up to 96 chars, '/'-bearing, from P1.M1.T2) flow through the same scan — spot-check the matcher treats '/' sanely on the candidate side.\n2. INPUT: fragment f (string) and candidate key c (string, lowercase store key) from the first-char range scan (P1.M2.T2.S2).\n3. LOGIC: export `matchFragment(f: string, c: string): { tier: 1|2|3; score: number } | null` — case-insensitive; anchor f[0]===c[0]; anchored subsequence of f[1..] in c[1..] greedy leftmost (single two-pointer pass; tier 2 detectable as contiguous run during the same pass, or c.indexOf(f.slice(1),1)). Tiers: 3 = exact prefix; 2 = contiguous tail ('zsk' -> 'zendesk', 'zlock' -> 'z_lwlock'); 1 = scattered ('hrp' -> 'handleResponseProxy'). 'esk' NEVER matches 'zendesk' (anchor fails). Retire plain prefix as the only match mode. Score stub may return 0 here if it eases review, but prefer landing S2's arithmetic in the same function. TDD (test/query.test.ts): anchor cases incl. 'esk' never matches 'zendesk'; 'roun' -> 'Rounding' via stored display/subword candidates; tier classification cases above; case-insensitivity.\n4. OUTPUT: matchFragment consumed by P1.M2.T1.S2 (scoring/threshold), P1.M2.T2 (ranking + scan), P1.M2.T3.S1 (chain gate), P1.M3.T2.S1 (widget visibility >=1-candidate rule).\n5. DOCS: none — JSDoc on the exported matcher rides with the code."
+                  "dependencies": [
+                    "P1.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/003_bbac3b15e8d0/architecture/r3-query-fuzzy.md — query.ts (176 lines) never does its own string compare today; matching is implicit via store.prefixRange(lower) (query.ts:107); case handling lowercases the fragment before prefixRange (store throws RangeError on uppercase) and keeps stored display casing; path keys (up to 96 chars, '/'-bearing, from P1.M1.T2) flow through the same scan — spot-check the matcher treats '/' sanely on the candidate side.\n2. INPUT: fragment f (string) and candidate key c (string, lowercase store key) from the first-char range scan (P1.M2.T2.S2).\n3. LOGIC: export `matchFragment(f: string, c: string): { tier: 1|2|3; score: number } | null` — case-insensitive; anchor f[0]===c[0]; anchored subsequence of f[1..] in c[1..] greedy leftmost (single two-pointer pass; tier 2 detectable as contiguous run during the same pass, or c.indexOf(f.slice(1),1)). Tiers: 3 = exact prefix; 2 = contiguous tail ('zsk' -> 'zendesk', 'zlock' -> 'z_lwlock'); 1 = scattered ('hrp' -> 'handleResponseProxy'). 'esk' NEVER matches 'zendesk' (anchor fails). Retire plain prefix as the only match mode. Score stub may return 0 here if it eases review, but prefer landing S2's arithmetic in the same function. TDD (test/query.test.ts): anchor cases incl. 'esk' never matches 'zendesk'; 'roun' -> 'Rounding' via stored display/subword candidates; tier classification cases above; case-insensitivity.\n4. OUTPUT: matchFragment consumed by P1.M2.T1.S2 (scoring/threshold), P1.M2.T2 (ranking + scan), P1.M2.T3.S1 (chain gate), P1.M3.T2.S1 (widget visibility >=1-candidate rule).\n5. DOCS: none — JSDoc on the exported matcher rides with the code.",
+                  "prd_selectors": [
+                    "h2.28",
+                    "h2.5",
+                    "h2.55",
+                    "h2.8"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -134,9 +192,16 @@
                   "title": "Admission score arithmetic + below-threshold discard before ranking",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T1.S1"],
-                  "prd_selectors": ["h2.28", "h2.51", "h2.52", "h2.55"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r3-query-fuzzy.md §7 — score is admission-only (compare to fuzzThreshold before building the result item), all inputs available in the match pass: len(c), charsSkippedBeforeRun from the tier-2 match position, gapRuns/gapChars from the tier-1 greedy trace. Tier 1 max score is 50 — with default threshold 60 ALL scattered matches are gated out (intended per spec 04 'gates out most scattered matches'; pin it so it can't silently regress). 'zsk'->'zendesk' scores ~62 — passes barely; pin.\n2. INPUT: matchFragment trace from P1.M2.T1.S1; fuzzThreshold option (P1.M2.T1.S3 supplies the config plumbing).\n3. LOGIC: score 0-100, NOT order-determining: tier 3 = 100; tier 2 = 85 - 40*(charsSkippedBeforeRun / len(c)); tier 1 = 50 - 5*gapRuns - min(gapChars, 15). Export the constants as named calibration starting points (spec 09 tuning protocol). Candidates below fuzzThreshold are discarded BEFORE ranking (inside the candidate loop, skip before pushing to matches). Zero-fragment ('#' alone / empty f): no anchor, no tiers — falls to the ranking path (P1.M2.T2.S1). TDD: score arithmetic per tier for each formula; below-threshold never renders; threshold 0 admits everything; default-60-kills-tier-1 pin.\n4. OUTPUT: scored, threshold-filtered match stream consumed by P1.M2.T2.S1 ranking.\n5. DOCS: none — JSDoc on exported score constants (calibration starting points)."
+                  "dependencies": [
+                    "P1.M2.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r3-query-fuzzy.md §7 — score is admission-only (compare to fuzzThreshold before building the result item), all inputs available in the match pass: len(c), charsSkippedBeforeRun from the tier-2 match position, gapRuns/gapChars from the tier-1 greedy trace. Tier 1 max score is 50 — with default threshold 60 ALL scattered matches are gated out (intended per spec 04 'gates out most scattered matches'; pin it so it can't silently regress). 'zsk'->'zendesk' scores ~62 — passes barely; pin.\n2. INPUT: matchFragment trace from P1.M2.T1.S1; fuzzThreshold option (P1.M2.T1.S3 supplies the config plumbing).\n3. LOGIC: score 0-100, NOT order-determining: tier 3 = 100; tier 2 = 85 - 40*(charsSkippedBeforeRun / len(c)); tier 1 = 50 - 5*gapRuns - min(gapChars, 15). Export the constants as named calibration starting points (spec 09 tuning protocol). Candidates below fuzzThreshold are discarded BEFORE ranking (inside the candidate loop, skip before pushing to matches). Zero-fragment ('#' alone / empty f): no anchor, no tiers — falls to the ranking path (P1.M2.T2.S1). TDD: score arithmetic per tier for each formula; below-threshold never renders; threshold 0 admits everything; default-60-kills-tier-1 pin.\n4. OUTPUT: scored, threshold-filtered match stream consumed by P1.M2.T2.S1 ranking.\n5. DOCS: none — JSDoc on exported score constants (calibration starting points).",
+                  "prd_selectors": [
+                    "h2.28",
+                    "h2.51",
+                    "h2.52",
+                    "h2.55"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -144,9 +209,17 @@
                   "title": "fuzzThreshold config surface (0-100 clamped, baked default auto-import)",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T1.S2"],
-                  "prd_selectors": ["h2.51", "h2.52", "h2.55", "h2.59", "h2.62"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r3-query-fuzzy.md §4 — exact precedent is rejectCommonness: (1) bake DEFAULT_FUZZ_THRESHOLD = 60 in src/core/query.ts (exported like DEFAULT_LIMIT); (2) field on HapaxConfig (src/pi/config.ts); (3) DEFAULT_CONFIG.fuzzThreshold = DEFAULT_FUZZ_THRESHOLD; (4) applyLayer branch with clampNumber(v, 0, 100) — out-of-range clamps silently, wrong type repairs with one warning; spec/08 schema row: '\"fuzzThreshold\": 60, // 0-100: minimum anchored-fuzzy match score … 100 = exact-prefix-only mode. Default … imported from the baked constant in the query module automatically — same pattern as rejectCommonness.'\n2. INPUT: DEFAULT_FUZZ_THRESHOLD + RankOptions.fuzzThreshold from P1.M2.T1.S2.\n3. LOGIC: wire the config surface exactly per the pattern above; rankMatches opts default to the baked constant; 100 = exact-prefix-only mode (tier 3 scores 100 >= 100 passes; tiers 2/1 max 85 all discard — falls out, pin it). TDD (test/config.test.ts): default === DEFAULT_FUZZ_THRESHOLD; override round-trip; clamp bounds 0/100; invalid type repairs with warning; (test/query.test.ts) fuzzThreshold:100 prefix-only.\n4. OUTPUT: config.fuzzThreshold consumed by rankMatches (provider passes it through provider.ts:583 call site) and by the widget visibility rule (P1.M3.T2.S1).\n5. DOCS: Mode A — JSDoc on the query module's exported constants (DEFAULT_FUZZ_THRESHOLD + score constants) documenting the knob semantics. README config-table row is R5 (Mode B, P1.M4.T1.S1) — do not touch README here."
+                  "dependencies": [
+                    "P1.M2.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r3-query-fuzzy.md §4 — exact precedent is rejectCommonness: (1) bake DEFAULT_FUZZ_THRESHOLD = 60 in src/core/query.ts (exported like DEFAULT_LIMIT); (2) field on HapaxConfig (src/pi/config.ts); (3) DEFAULT_CONFIG.fuzzThreshold = DEFAULT_FUZZ_THRESHOLD; (4) applyLayer branch with clampNumber(v, 0, 100) — out-of-range clamps silently, wrong type repairs with one warning; spec/08 schema row: '\"fuzzThreshold\": 60, // 0-100: minimum anchored-fuzzy match score … 100 = exact-prefix-only mode. Default … imported from the baked constant in the query module automatically — same pattern as rejectCommonness.'\n2. INPUT: DEFAULT_FUZZ_THRESHOLD + RankOptions.fuzzThreshold from P1.M2.T1.S2.\n3. LOGIC: wire the config surface exactly per the pattern above; rankMatches opts default to the baked constant; 100 = exact-prefix-only mode (tier 3 scores 100 >= 100 passes; tiers 2/1 max 85 all discard — falls out, pin it). TDD (test/config.test.ts): default === DEFAULT_FUZZ_THRESHOLD; override round-trip; clamp bounds 0/100; invalid type repairs with warning; (test/query.test.ts) fuzzThreshold:100 prefix-only.\n4. OUTPUT: config.fuzzThreshold consumed by rankMatches (provider passes it through provider.ts:583 call site) and by the widget visibility rule (P1.M3.T2.S1).\n5. DOCS: Mode A — JSDoc on the query module's exported constants (DEFAULT_FUZZ_THRESHOLD + score constants) documenting the knob semantics. README config-table row is R5 (Mode B, P1.M4.T1.S1) — do not touch README here.",
+                  "prd_selectors": [
+                    "h2.51",
+                    "h2.52",
+                    "h2.55",
+                    "h2.59",
+                    "h2.62"
+                  ]
                 }
               ]
             },
@@ -163,9 +236,18 @@
                   "title": "4-key comparator + RankedMatch.sessionCount + zero-fragment + plural-prune position",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T1.S2", "P1.M1.T2.S3"],
-                  "prd_selectors": ["h2.29", "h2.30", "h2.5", "h2.50", "h2.55"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r3-query-fuzzy.md §2,§8 — compareRankedMatches (query.ts:73-78) is length->byte-lex today; RankedMatch is a pinned EXACTLY-4-field contract (key, display, description 'session x${sessionCount}', salience) pinned by test/query.test.ts:167-178 and mapped by provider.ts:626-630 — both move in lockstep. Plural pruning already runs after sort, before the limit slice (query.ts:131-149) — UNCHANGED. The retired order is encoded across the test suite: ordering block query.test.ts:181-257, oracle expectedOrder :66-79, plural tests :322-333, limit tests :295-310 — rewriting those tests IS the bulk of this subtask. provider.ts:603 comment mentions the old order — update.\n2. INPUT: scored threshold-filtered matches from P1.M2.T1.S2, including path candidates (keys up to 96 chars) from P1.M1.T2.S3.\n3. LOGIC: RankedMatch gains numeric sessionCount (salience may stay as a carried diagnostic — spec: it never orders; keep description as-is). compareRankedMatches: tier desc -> sessionCount desc within tier -> shorter key -> byte-lex (valid total order). Zero-fragment ('#' alone): sessionCount desc then the same ties (no tiers). maxSuggestions stays the return cap; limit<=0 -> [] unchanged. TDD per spec 09: tier descending always (1-count exact-prefix word outranks 40-count scattered match); counts reorder ONLY same-tier neighbors; shorter-then-lex ties; zero-fragment; plural pruning before the limit slice (slot-freed case re-based to the new order).\n4. OUTPUT: final ordered RankedMatch[] consumed by provider.ts:583 (fallback display) and the widget (P1.M3.T1.S2 renders this order left->right).\n5. DOCS: none."
+                  "dependencies": [
+                    "P1.M2.T1.S2",
+                    "P1.M1.T2.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r3-query-fuzzy.md §2,§8 — compareRankedMatches (query.ts:73-78) is length->byte-lex today; RankedMatch is a pinned EXACTLY-4-field contract (key, display, description 'session x${sessionCount}', salience) pinned by test/query.test.ts:167-178 and mapped by provider.ts:626-630 — both move in lockstep. Plural pruning already runs after sort, before the limit slice (query.ts:131-149) — UNCHANGED. The retired order is encoded across the test suite: ordering block query.test.ts:181-257, oracle expectedOrder :66-79, plural tests :322-333, limit tests :295-310 — rewriting those tests IS the bulk of this subtask. provider.ts:603 comment mentions the old order — update.\n2. INPUT: scored threshold-filtered matches from P1.M2.T1.S2, including path candidates (keys up to 96 chars) from P1.M1.T2.S3.\n3. LOGIC: RankedMatch gains numeric sessionCount (salience may stay as a carried diagnostic — spec: it never orders; keep description as-is). compareRankedMatches: tier desc -> sessionCount desc within tier -> shorter key -> byte-lex (valid total order). Zero-fragment ('#' alone): sessionCount desc then the same ties (no tiers). maxSuggestions stays the return cap; limit<=0 -> [] unchanged. TDD per spec 09: tier descending always (1-count exact-prefix word outranks 40-count scattered match); counts reorder ONLY same-tier neighbors; shorter-then-lex ties; zero-fragment; plural pruning before the limit slice (slot-freed case re-based to the new order).\n4. OUTPUT: final ordered RankedMatch[] consumed by provider.ts:583 (fallback display) and the widget (P1.M3.T1.S2 renders this order left->right).\n5. DOCS: none.",
+                  "prd_selectors": [
+                    "h2.29",
+                    "h2.30",
+                    "h2.5",
+                    "h2.50",
+                    "h2.55"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -173,9 +255,17 @@
                   "title": "prefixRange -> first-char range + perf gate re-basing (p99 hold)",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T1.S1"],
-                  "prd_selectors": ["h2.38", "h2.17", "h2.14/h3.1", "h2.29", "h2.58"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r3-query-fuzzy.md §3,§6 — prefixRange(prefix): [number, number] (store.ts:452-463) consolidates then binary-searches lowerBound then forward-scans startsWith; it is the ONLY binary-search surface and query.ts consumes it exclusively; rankMatches lowercases the fragment BEFORE the call (uppercase throws). Perf: gate a = rankMatches on 20k store, HOT_PREFIX 'co' ~150-candidate range, <1 ms p99 (test/bench/core.bench.ts:56-61); hard CI gate p99 < 3 ms over 1000 queries (test/perf-gates.test.ts:70-99) + gate a2 cold consolidation. The first-char bucket is ~n/26 (~770 keys at 20k) — the current fixture UNDERSTATES the new scan; re-base the bench fixture/prefix (or add a fuzzy-specific gate) before trusting <1 ms p99.\n2. INPUT: matchFragment from P1.M2.T1.S1 (anchor = first char).\n3. LOGIC: in rankMatches, scan entry becomes store.prefixRange(fragment[0].toLowerCase()) — identical lowerBound binary search, sorted-index entry point preserved; empty fragment keeps prefixRange(''). Store.ts itself needs NO change (verify; if a firstCharRange helper is cleaner, add it beside prefixRange with the same consolidation semantics). Keep the amortized INDEX_MERGE_BATCH=256 consolidation behavior. Re-base bench/gate fixtures to the ~770-key first-char range; confirm p99 < 1 ms budget and the < 3 ms CI gate; sanity-check the zero-fragment full-store sort (currently unmeasured — spec budget '20k-candidate anchored-fuzzy query … < 1 ms p99' covers the hot path; add a loose zero-fragment sanity bound if cheap).\n4. OUTPUT: scan-entry API consumed by rankMatches; perf gates green and now representative of fuzzy scans.\n5. DOCS: none."
+                  "dependencies": [
+                    "P1.M2.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r3-query-fuzzy.md §3,§6 — prefixRange(prefix): [number, number] (store.ts:452-463) consolidates then binary-searches lowerBound then forward-scans startsWith; it is the ONLY binary-search surface and query.ts consumes it exclusively; rankMatches lowercases the fragment BEFORE the call (uppercase throws). Perf: gate a = rankMatches on 20k store, HOT_PREFIX 'co' ~150-candidate range, <1 ms p99 (test/bench/core.bench.ts:56-61); hard CI gate p99 < 3 ms over 1000 queries (test/perf-gates.test.ts:70-99) + gate a2 cold consolidation. The first-char bucket is ~n/26 (~770 keys at 20k) — the current fixture UNDERSTATES the new scan; re-base the bench fixture/prefix (or add a fuzzy-specific gate) before trusting <1 ms p99.\n2. INPUT: matchFragment from P1.M2.T1.S1 (anchor = first char).\n3. LOGIC: in rankMatches, scan entry becomes store.prefixRange(fragment[0].toLowerCase()) — identical lowerBound binary search, sorted-index entry point preserved; empty fragment keeps prefixRange(''). Store.ts itself needs NO change (verify; if a firstCharRange helper is cleaner, add it beside prefixRange with the same consolidation semantics). Keep the amortized INDEX_MERGE_BATCH=256 consolidation behavior. Re-base bench/gate fixtures to the ~770-key first-char range; confirm p99 < 1 ms budget and the < 3 ms CI gate; sanity-check the zero-fragment full-store sort (currently unmeasured — spec budget '20k-candidate anchored-fuzzy query … < 1 ms p99' covers the hot path; add a loose zero-fragment sanity bound if cheap).\n4. OUTPUT: scan-entry API consumed by rankMatches; perf gates green and now representative of fuzzy scans.\n5. DOCS: none.",
+                  "prd_selectors": [
+                    "h2.38",
+                    "h2.17",
+                    "h2.14/h3.1",
+                    "h2.29",
+                    "h2.58"
+                  ]
                 }
               ]
             },
@@ -192,9 +282,16 @@
                   "title": "Chain successor filter -> fuzzy membership gate (threshold 0, count ranking unchanged)",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T1.S1"],
-                  "prd_selectors": ["h2.49", "h2.43", "h2.28", "h2.55"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r3-query-fuzzy.md §5 + r4-widget-pi-api.md §3 — the armed-branch filter today is `store.topSuccessors(armed.word).filter((s) => s.next.startsWith(frag.toLowerCase())).slice(0, config.maxSuggestions)` at provider.ts:~516-519; topSuccessors returns successors already ordered by successor-index count and the provider does NOT re-sort (that is 'ranking within a chain stays successor-count-based'). The chain one-shot grant tracker (chainWordsSeen/chainLastArmedPrefix) is separate and untouched.\n2. INPUT: matchFragment from P1.M2.T1.S1; the armed chain state machine in src/pi/provider.ts.\n3. LOGIC: replace the startsWith filter with fuzzy membership via matchFragment(frag, s.next) — THRESHOLD STAYS 0 for the chain duration (membership gate only: any tier match passes; scores do not reorder — successor-count order preserved). Mock nothing (provider tests use the existing store fixtures in test/provider-match.test.ts / test/chain.test.ts). Re-point both suites to fuzzy membership cases (e.g. 'ze' arms 'zendesk' successor; 'zk' no longer matches; scattered successor membership case).\n4. OUTPUT: provider chain behavior aligned with the shared matcher; fallback display path otherwise byte-identical.\n5. DOCS: none."
+                  "dependencies": [
+                    "P1.M2.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r3-query-fuzzy.md §5 + r4-widget-pi-api.md §3 — the armed-branch filter today is `store.topSuccessors(armed.word).filter((s) => s.next.startsWith(frag.toLowerCase())).slice(0, config.maxSuggestions)` at provider.ts:~516-519; topSuccessors returns successors already ordered by successor-index count and the provider does NOT re-sort (that is 'ranking within a chain stays successor-count-based'). The chain one-shot grant tracker (chainWordsSeen/chainLastArmedPrefix) is separate and untouched.\n2. INPUT: matchFragment from P1.M2.T1.S1; the armed chain state machine in src/pi/provider.ts.\n3. LOGIC: replace the startsWith filter with fuzzy membership via matchFragment(frag, s.next) — THRESHOLD STAYS 0 for the chain duration (membership gate only: any tier match passes; scores do not reorder — successor-count order preserved). Mock nothing (provider tests use the existing store fixtures in test/provider-match.test.ts / test/chain.test.ts). Re-point both suites to fuzzy membership cases (e.g. 'ze' arms 'zendesk' successor; 'zk' no longer matches; scattered successor membership case).\n4. OUTPUT: provider chain behavior aligned with the shared matcher; fallback display path otherwise byte-identical.\n5. DOCS: none.",
+                  "prd_selectors": [
+                    "h2.49",
+                    "h2.43",
+                    "h2.28",
+                    "h2.55"
+                  ]
                 }
               ]
             }
@@ -220,9 +317,20 @@
                   "title": "session_start dual-path branch + widget-primary wiring (no provider registration)",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M2.T2.S1", "P1.M2.T1.S3"],
-                  "prd_selectors": ["h2.42", "h2.14/h3.2", "h2.15", "h2.43", "h2.13", "h2.2", "h2.46"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/003_bbac3b15e8d0/architecture/r4-widget-pi-api.md §1,§3 — pi 0.84.4 exposes ctx.ui.getEditorComponent(): EditorFactory|undefined and setEditorComponent(factory|undefined) (dist/core/extensions/types.d.ts:171,173); EditorFactory = (tui, theme, keybindings) => EditorComponent (:63). Current session_start order in src/pi/index.ts: (1) loadConfig; (2) store/chain/lazyDict/pipeline; (3) addAutocompleteProvider(displayProvider(startupGate(hapaxProvider))); (4) inputClock + getEditorComponent + wrapEditorFactory(enter-submit); (5) debug /acwords; (6) restore gating. BRANCH: read getEditorComponent() FIRST (before step 3) — factory exists => widget PRIMARY: skip addAutocompleteProvider entirely; wrap the factory with the widget+enter-submit composition. No factory => steps 3-4 VERBATIM (fallback byte-for-byte, forced single-item included; note: without a factory the enter-submit wrap cannot install either — that is today's tolerated state). The widget layer still receives store/config/sessionChain, the startup gate's restoreReady, and the hesitation/debounce timing (shared core per spec 07). TOCTOU with later extensions is accepted tolerance (same as today).\n2. INPUT: final query API (rankMatches w/ fuzzThreshold from P1.M2.T2.S1/P1.M2.T1.S3); ctx.ui extension context at session_start.\n3. LOGIC: new src/pi/widget.ts module skeleton + the branch in index.ts. Unit-test with a fake ctx.ui exposing configurable getEditorComponent/setEditorComponent (mock the pi session API; never a real TTY in vitest). Pin: widget path registers NO autocomplete provider; fallback path registers exactly today's stack (provider.test.ts reuse); both paths share the startup gate + timing config.\n4. OUTPUT: path-selection + widget lifecycle consumed by P1.M3.T1.S2 (render), P1.M3.T2.S1 (visibility), P1.M3.T3 (keys).\n5. DOCS: none — README dual-path architecture section is R5 (Mode B)."
+                  "dependencies": [
+                    "P1.M2.T2.S1",
+                    "P1.M2.T1.S3"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/003_bbac3b15e8d0/architecture/r4-widget-pi-api.md §1,§3 — pi 0.84.4 exposes ctx.ui.getEditorComponent(): EditorFactory|undefined and setEditorComponent(factory|undefined) (dist/core/extensions/types.d.ts:171,173); EditorFactory = (tui, theme, keybindings) => EditorComponent (:63). Current session_start order in src/pi/index.ts: (1) loadConfig; (2) store/chain/lazyDict/pipeline; (3) addAutocompleteProvider(displayProvider(startupGate(hapaxProvider))); (4) inputClock + getEditorComponent + wrapEditorFactory(enter-submit); (5) debug /acwords; (6) restore gating. BRANCH: read getEditorComponent() FIRST (before step 3) — factory exists => widget PRIMARY: skip addAutocompleteProvider entirely; wrap the factory with the widget+enter-submit composition. No factory => steps 3-4 VERBATIM (fallback byte-for-byte, forced single-item included; note: without a factory the enter-submit wrap cannot install either — that is today's tolerated state). The widget layer still receives store/config/sessionChain, the startup gate's restoreReady, and the hesitation/debounce timing (shared core per spec 07). TOCTOU with later extensions is accepted tolerance (same as today).\n2. INPUT: final query API (rankMatches w/ fuzzThreshold from P1.M2.T2.S1/P1.M2.T1.S3); ctx.ui extension context at session_start.\n3. LOGIC: new src/pi/widget.ts module skeleton + the branch in index.ts. Unit-test with a fake ctx.ui exposing configurable getEditorComponent/setEditorComponent (mock the pi session API; never a real TTY in vitest). Pin: widget path registers NO autocomplete provider; fallback path registers exactly today's stack (provider.test.ts reuse); both paths share the startup gate + timing config.\n4. OUTPUT: path-selection + widget lifecycle consumed by P1.M3.T1.S2 (render), P1.M3.T2.S1 (visibility), P1.M3.T3 (keys).\n5. DOCS: none — README dual-path architecture section is R5 (Mode B).",
+                  "prd_selectors": [
+                    "h2.42",
+                    "h2.14/h3.2",
+                    "h2.15",
+                    "h2.43",
+                    "h2.13",
+                    "h2.2",
+                    "h2.46"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -230,9 +338,16 @@
                   "title": "Widget line rendering: join, caps, overflow, highlight, zero-never",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T1.S1"],
-                  "prd_selectors": ["h2.42/h3.8", "h2.50", "h2.2", "h2.55"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r4-widget-pi-api.md §1-2 — rendering technique per border-status-editor.ts: override/compose render(width) on the inner editor's own lines (super.render(width) in the example; via the proxy get-trap, return an UNBOUND function composing inner.render(width) + the widget line — the proxy render override is novel vs the examples, flagged for live verification in P1.M3.T4.S1). render(width) is the ONLY width source — cache the last seen width; before first render the width is unknown (render nothing). Repaint on widget-state change needs tui.requestRender(); tui is protected on Editor — capture it inside the factory wrapper (the factory receives it), or rely on the next keystroke's natural render (100 ms swap debounce makes per-keystroke render sufficient — prefer this, fewer moving parts).\n2. INPUT: ordered RankedMatch[] from P1.M2.T2.S1 + visibility flag from P1.M3.T2.S1 (for this subtask an injected boolean suffices; T2.S1 wires the real machine) + config.maxSuggestions.\n3. LOGIC: one line DIRECTLY below the input editor's lines; items joined ' | ', rank order left->right, never wraps; cap = maxSuggestions AND terminal width (cached render width); overflow drops the lowest-ranked (rightmost) first; zero candidates -> the line NEVER renders (invariant 3); theme accent highlight on the leftmost item, reset on every set change; items are the candidate DISPLAY string ONLY — no 'Session xN', no descriptions, no chain marker. TDD (test/widget.test.ts): join format, cap arithmetic, rightmost-drop, zero-never, highlight-reset-on-set-change, display-only items.\n4. OUTPUT: render function consumed by the widget display path; P1.M3.T3 keys navigate this item list.\n5. DOCS: none."
+                  "dependencies": [
+                    "P1.M3.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r4-widget-pi-api.md §1-2 — rendering technique per border-status-editor.ts: override/compose render(width) on the inner editor's own lines (super.render(width) in the example; via the proxy get-trap, return an UNBOUND function composing inner.render(width) + the widget line — the proxy render override is novel vs the examples, flagged for live verification in P1.M3.T4.S1). render(width) is the ONLY width source — cache the last seen width; before first render the width is unknown (render nothing). Repaint on widget-state change needs tui.requestRender(); tui is protected on Editor — capture it inside the factory wrapper (the factory receives it), or rely on the next keystroke's natural render (100 ms swap debounce makes per-keystroke render sufficient — prefer this, fewer moving parts).\n2. INPUT: ordered RankedMatch[] from P1.M2.T2.S1 + visibility flag from P1.M3.T2.S1 (for this subtask an injected boolean suffices; T2.S1 wires the real machine) + config.maxSuggestions.\n3. LOGIC: one line DIRECTLY below the input editor's lines; items joined ' | ', rank order left->right, never wraps; cap = maxSuggestions AND terminal width (cached render width); overflow drops the lowest-ranked (rightmost) first; zero candidates -> the line NEVER renders (invariant 3); theme accent highlight on the leftmost item, reset on every set change; items are the candidate DISPLAY string ONLY — no 'Session xN', no descriptions, no chain marker. TDD (test/widget.test.ts): join format, cap arithmetic, rightmost-drop, zero-never, highlight-reset-on-set-change, display-only items.\n4. OUTPUT: render function consumed by the widget display path; P1.M3.T3 keys navigate this item list.\n5. DOCS: none.",
+                  "prd_selectors": [
+                    "h2.42/h3.8",
+                    "h2.50",
+                    "h2.2",
+                    "h2.55"
+                  ]
                 }
               ]
             },
@@ -249,9 +364,20 @@
                   "title": "Visibility machine: fragment extraction, hiding rules, timing carry-over, suppress state",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T1.S2"],
-                  "prd_selectors": ["h2.42/h3.10", "h2.42", "h2.44", "h2.45", "h2.46", "h2.46/h3.11", "h2.28", "h2.55"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r4-widget-pi-api.md §2,§5 — live text/caret per keystroke are available through the proxy: getLines(): string[], getCursor(): {line, col}, getText(); the input clock is the onKeystroke hook already ticking in the enter-submit guard (() => void, fires for EVERY input event); extractMatchState/classifyStockContext in provider.ts are PURE functions reusable synchronously per keystroke (that is exactly spec 07's 're-based' state machine: no pi-tui request cadence). Timing to carry over lives in createDisplayProvider's scheduler (debounceMs 100, firstPaintDelayMs/menuDelayMs hesitation, flicker hysteresis) and the startup gate (restoreReady) — re-home the logic for the widget path; the fallback path keeps its own copy untouched.\n2. INPUT: per-keystroke editor state via input clock; live query results (>=1 candidate above fuzzThreshold, P1.M2.T1.S3); config.menuDelayMs; restoreReady promise.\n3. LOGIC: state machine rules — path/slash/@ stock contexts: HIDDEN; live fragment (trigger char / word regex) + >=1 candidate above fuzzThreshold -> visible, subject to menuDelayMs + 100 ms swap debounce + flicker hysteresis; trailing space with no @// -> hidden; cursor move / Escape / boundary-Esc / disqualification -> hidden; startup gate applies identically. Explicit dismissal (Escape, boundary-Esc from P1.M3.T3.S1) suppresses the line until the next word start or trigger char; a disqualification close (candidates hit zero) does NOT suppress — expose a suppress-until-word-start flag the key handler sets. Mock timers (vi.useFakeTimers) + a fake keystroke stream; mock the query core with a stubbed rankMatches.\n4. OUTPUT: visibility state {visible, suppressUntilWordStart, currentSet} consumed by rendering (P1.M3.T1.S2) and key handling (P1.M3.T3.S1).\n5. DOCS: none."
+                  "dependencies": [
+                    "P1.M3.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r4-widget-pi-api.md §2,§5 — live text/caret per keystroke are available through the proxy: getLines(): string[], getCursor(): {line, col}, getText(); the input clock is the onKeystroke hook already ticking in the enter-submit guard (() => void, fires for EVERY input event); extractMatchState/classifyStockContext in provider.ts are PURE functions reusable synchronously per keystroke (that is exactly spec 07's 're-based' state machine: no pi-tui request cadence). Timing to carry over lives in createDisplayProvider's scheduler (debounceMs 100, firstPaintDelayMs/menuDelayMs hesitation, flicker hysteresis) and the startup gate (restoreReady) — re-home the logic for the widget path; the fallback path keeps its own copy untouched.\n2. INPUT: per-keystroke editor state via input clock; live query results (>=1 candidate above fuzzThreshold, P1.M2.T1.S3); config.menuDelayMs; restoreReady promise.\n3. LOGIC: state machine rules — path/slash/@ stock contexts: HIDDEN; live fragment (trigger char / word regex) + >=1 candidate above fuzzThreshold -> visible, subject to menuDelayMs + 100 ms swap debounce + flicker hysteresis; trailing space with no @// -> hidden; cursor move / Escape / boundary-Esc / disqualification -> hidden; startup gate applies identically. Explicit dismissal (Escape, boundary-Esc from P1.M3.T3.S1) suppresses the line until the next word start or trigger char; a disqualification close (candidates hit zero) does NOT suppress — expose a suppress-until-word-start flag the key handler sets. Mock timers (vi.useFakeTimers) + a fake keystroke stream; mock the query core with a stubbed rankMatches.\n4. OUTPUT: visibility state {visible, suppressUntilWordStart, currentSet} consumed by rendering (P1.M3.T1.S2) and key handling (P1.M3.T3.S1).\n5. DOCS: none.",
+                  "prd_selectors": [
+                    "h2.42/h3.10",
+                    "h2.42",
+                    "h2.44",
+                    "h2.45",
+                    "h2.46",
+                    "h2.46/h3.11",
+                    "h2.28",
+                    "h2.55"
+                  ]
                 }
               ]
             },
@@ -268,9 +394,17 @@
                   "title": "Arrow navigation, clamp, boundary-Esc, suppress rules",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T2.S1"],
-                  "prd_selectors": ["h2.42/h3.9", "h2.42", "h2.47", "h2.2", "h2.55"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r4-widget-pi-api.md §2,§5 — consume keys BEFORE the inner editor exactly like modal-editor.ts does in handleInput: branch, and only call super/inner for unhandled data; through the proxy the seam is the get-trap handleInput override (nested proxies are safe — neither layer mutates the inner instance; the v1 monkey-patch crash lesson is binding). Portable key matching: matchesKey from @earendil-works/pi-tui (index.d.ts:21) for arrow sequences; isSubmitKey already exists in editor.ts. SPEC WORDING (verbatim in r5-spec-readme-dod.md §7): boundary-Esc = '↑ or ← while the highlight is on the FIRST word acts as Escape: the line dismisses, the press is consumed (it does NOT also move the caret)… pressing ← twice mid-word goes back one character (first press dismisses, second moves the caret). → and ↓ at the LAST word clamp (consumed, no movement)'; 'Explicit dismissal (Escape, boundary-Esc) suppresses the line for the REST OF THE WORD… A disqualification close (candidates hit zero) does not suppress.'\n2. INPUT: visibility state + rendered item list + highlight index from P1.M3.T2.S1 / P1.M3.T1.S2.\n3. LOGIC: while the line is visible and consumed-before-inner: <- / ↑ move highlight left; -> / ↓ move right; ↑/← on the FIRST word = boundary-Esc (dismiss + consume the press — caret unmoved — + set suppress-until-word-start); -> / ↓ at the last word CLAMP (consumed, no movement); Escape dismisses (+suppress); every other key forwards verbatim (P1.M3.T3.S2 wires Tab/Enter). Mock the inner editor as a recording stub; pin that it is NEVER mutated (v1 regression pin) and that non-sanctioned keys never consume (invariant 1 amendment window = {arrows, Escape, Tab} while visible). TDD (test/widget.test.ts): all four arrows navigate; first-word boundary-Esc consumes + suppresses; disqualification close does NOT suppress; last-word clamp; forward-verbatim for everything else.\n4. OUTPUT: key handler wired into the double; highlight state consumed by P1.M3.T3.S2 (Tab inserts the highlighted word).\n5. DOCS: none."
+                  "dependencies": [
+                    "P1.M3.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r4-widget-pi-api.md §2,§5 — consume keys BEFORE the inner editor exactly like modal-editor.ts does in handleInput: branch, and only call super/inner for unhandled data; through the proxy the seam is the get-trap handleInput override (nested proxies are safe — neither layer mutates the inner instance; the v1 monkey-patch crash lesson is binding). Portable key matching: matchesKey from @earendil-works/pi-tui (index.d.ts:21) for arrow sequences; isSubmitKey already exists in editor.ts. SPEC WORDING (verbatim in r5-spec-readme-dod.md §7): boundary-Esc = '↑ or ← while the highlight is on the FIRST word acts as Escape: the line dismisses, the press is consumed (it does NOT also move the caret)… pressing ← twice mid-word goes back one character (first press dismisses, second moves the caret). → and ↓ at the LAST word clamp (consumed, no movement)'; 'Explicit dismissal (Escape, boundary-Esc) suppresses the line for the REST OF THE WORD… A disqualification close (candidates hit zero) does not suppress.'\n2. INPUT: visibility state + rendered item list + highlight index from P1.M3.T2.S1 / P1.M3.T1.S2.\n3. LOGIC: while the line is visible and consumed-before-inner: <- / ↑ move highlight left; -> / ↓ move right; ↑/← on the FIRST word = boundary-Esc (dismiss + consume the press — caret unmoved — + set suppress-until-word-start); -> / ↓ at the last word CLAMP (consumed, no movement); Escape dismisses (+suppress); every other key forwards verbatim (P1.M3.T3.S2 wires Tab/Enter). Mock the inner editor as a recording stub; pin that it is NEVER mutated (v1 regression pin) and that non-sanctioned keys never consume (invariant 1 amendment window = {arrows, Escape, Tab} while visible). TDD (test/widget.test.ts): all four arrows navigate; first-word boundary-Esc consumes + suppresses; disqualification close does NOT suppress; last-word clamp; forward-verbatim for everything else.\n4. OUTPUT: key handler wired into the double; highlight state consumed by P1.M3.T3.S2 (Tab inserts the highlighted word).\n5. DOCS: none.",
+                  "prd_selectors": [
+                    "h2.42/h3.9",
+                    "h2.42",
+                    "h2.47",
+                    "h2.2",
+                    "h2.55"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -278,9 +412,17 @@
                   "title": "Tab synchronous insert (applyCompletion semantics) + Enter dismiss-then-forward + never-mutate pin",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T3.S1"],
-                  "prd_selectors": ["h2.42/h3.9", "h2.46", "h2.48", "h2.47", "h2.55"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r4-widget-pi-api.md §2,§4 — no provider item exists on the widget path, so stock applyCompletion semantics are REIMPLEMENTED: replace the live word-regex span or '#fragment' in the input with the candidate's display casing, synchronously against the LIVE query (never debounce-gated). The enter-submit proxy's guard already demonstrates dismiss-then-forward: run the widget dismissal, then forward so the inner editor submits (isSubmitKey + isShowingAutocomplete/cancelAutocomplete pattern in editor.ts). Editor mutation is forbidden — all writes go through the inner editor's own public methods (e.g. setText-equivalents exposed on Editor; verify which public setters exist in editor.d.ts before choosing — this is flagged in the research as public-API surface).\n2. INPUT: highlight index + candidates from P1.M3.T3.S1; live fragment/span from the visibility machine (P1.M3.T2.S1); the word-fragment regex contract (provider.ts:105 pattern, trigger '#').\n3. LOGIC: Tab inserts the highlighted word's DISPLAY string synchronously, replacing the word-regex span or '#fragment' (caret lands after the insertion); Enter dismisses the line then forwards so the inner editor submits; everything else forwards verbatim (wired in S1); inner instance NEVER mutated — pin with the recording-stub test. Extend test/editor-enter.test.ts for the double (enter-submit behavior preserved under the widget layer; thenable guard; onKeystroke fires for every event; throwing hook never breaks input).\n4. OUTPUT: complete widget key path; end-to-end widget unit suite green (test/widget.test.ts + test/editor-enter.test.ts).\n5. DOCS: none."
+                  "dependencies": [
+                    "P1.M3.T3.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r4-widget-pi-api.md §2,§4 — no provider item exists on the widget path, so stock applyCompletion semantics are REIMPLEMENTED: replace the live word-regex span or '#fragment' in the input with the candidate's display casing, synchronously against the LIVE query (never debounce-gated). The enter-submit proxy's guard already demonstrates dismiss-then-forward: run the widget dismissal, then forward so the inner editor submits (isSubmitKey + isShowingAutocomplete/cancelAutocomplete pattern in editor.ts). Editor mutation is forbidden — all writes go through the inner editor's own public methods (e.g. setText-equivalents exposed on Editor; verify which public setters exist in editor.d.ts before choosing — this is flagged in the research as public-API surface).\n2. INPUT: highlight index + candidates from P1.M3.T3.S1; live fragment/span from the visibility machine (P1.M3.T2.S1); the word-fragment regex contract (provider.ts:105 pattern, trigger '#').\n3. LOGIC: Tab inserts the highlighted word's DISPLAY string synchronously, replacing the word-regex span or '#fragment' (caret lands after the insertion); Enter dismisses the line then forwards so the inner editor submits; everything else forwards verbatim (wired in S1); inner instance NEVER mutated — pin with the recording-stub test. Extend test/editor-enter.test.ts for the double (enter-submit behavior preserved under the widget layer; thenable guard; onKeystroke fires for every event; throwing hook never breaks input).\n4. OUTPUT: complete widget key path; end-to-end widget unit suite green (test/widget.test.ts + test/editor-enter.test.ts).\n5. DOCS: none.",
+                  "prd_selectors": [
+                    "h2.42/h3.9",
+                    "h2.46",
+                    "h2.48",
+                    "h2.47",
+                    "h2.55"
+                  ]
                 }
               ]
             },
@@ -297,9 +439,17 @@
                   "title": "tmux scripted widget verification + instrumentation removal + record",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M3.T3.S2"],
-                  "prd_selectors": ["h2.57", "h2.56", "h2.46/h3.13", "h2.2", "h2.63"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r5-spec-readme-dod.md §1-2 — spec 09 live verification technique is BINDING for M3 ('the deepest UI-layer change yet: live verification against the real extension stack (pi-vim + split-editor) is mandatory before acceptance'). Integration items verbatim: item 1 M3 clause — 'the offer is one line below the input — `Zendesk | …`; arrows move the highlight; ← twice mid-word dismisses then moves the caret — boundary-Esc'; item 2 capture window — 'While the result line is visible only arrows/Escape/Tab are consumed (boundary-Esc returns the rest)'; item 7 — '`sr` → `src/core/query.ts`, Tab inserts the whole path; an absolute path inserts with its leading `/`; once a `/` precedes the cursor, stock pi file completion owns the rest'. r4-widget-pi-api.md flags the proxy render override + repaint path as the specific novel risks to eyeball live.\n2. INPUT: complete widget path from P1.M3.T3.S2 (all suites green).\n3. LOGIC: `pi --no-session` in tmux; keys via `tmux send-keys` ONE CHARACTER AT A TIME with 0.08-0.12 s gaps (bursts cancel in-flight queries); state via `capture-pane`; sanctioned temporary instrumentation (debug logging) added then REMOVED before commit — verify the tree is clean afterwards. Verify: widget line renders below input with expected join/highlight; arrows navigate + clamp; boundary-Esc two-← behavior (dismiss, then caret moves); Tab inserts display casing sync; Enter dismisses then submits; fallback path still works (no factory case); stock path/slash/@ completion untouched (items 2/6); item 7 path completion; trigger-mode fragments containing '/' are disarmed by the stock gate (open question from R2 research). Record results (suite of captures + verdict) in the run report for P1.M4.T1.S2's DoD record.\n4. OUTPUT: recorded live-verification evidence consumed by P1.M4.T1.S2; no instrumentation left in the tree.\n5. DOCS: Mode B feeds — the verification record lands in docs/M1-DoD.md's M3 section via P1.M4.T1.S2; no doc edits in this subtask."
+                  "dependencies": [
+                    "P1.M3.T3.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r5-spec-readme-dod.md §1-2 — spec 09 live verification technique is BINDING for M3 ('the deepest UI-layer change yet: live verification against the real extension stack (pi-vim + split-editor) is mandatory before acceptance'). Integration items verbatim: item 1 M3 clause — 'the offer is one line below the input — `Zendesk | …`; arrows move the highlight; ← twice mid-word dismisses then moves the caret — boundary-Esc'; item 2 capture window — 'While the result line is visible only arrows/Escape/Tab are consumed (boundary-Esc returns the rest)'; item 7 — '`sr` → `src/core/query.ts`, Tab inserts the whole path; an absolute path inserts with its leading `/`; once a `/` precedes the cursor, stock pi file completion owns the rest'. r4-widget-pi-api.md flags the proxy render override + repaint path as the specific novel risks to eyeball live.\n2. INPUT: complete widget path from P1.M3.T3.S2 (all suites green).\n3. LOGIC: `pi --no-session` in tmux; keys via `tmux send-keys` ONE CHARACTER AT A TIME with 0.08-0.12 s gaps (bursts cancel in-flight queries); state via `capture-pane`; sanctioned temporary instrumentation (debug logging) added then REMOVED before commit — verify the tree is clean afterwards. Verify: widget line renders below input with expected join/highlight; arrows navigate + clamp; boundary-Esc two-← behavior (dismiss, then caret moves); Tab inserts display casing sync; Enter dismisses then submits; fallback path still works (no factory case); stock path/slash/@ completion untouched (items 2/6); item 7 path completion; trigger-mode fragments containing '/' are disarmed by the stock gate (open question from R2 research). Record results (suite of captures + verdict) in the run report for P1.M4.T1.S2's DoD record.\n4. OUTPUT: recorded live-verification evidence consumed by P1.M4.T1.S2; no instrumentation left in the tree.\n5. DOCS: Mode B feeds — the verification record lands in docs/M1-DoD.md's M3 section via P1.M4.T1.S2; no doc edits in this subtask.",
+                  "prd_selectors": [
+                    "h2.57",
+                    "h2.56",
+                    "h2.46/h3.13",
+                    "h2.2",
+                    "h2.63"
+                  ]
                 }
               ]
             }
@@ -325,9 +475,39 @@
                   "title": "README.md sweep — 12 drift items verified against shipped behavior",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T1.S3", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M1.T2.S3", "P1.M1.T2.S4", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T1.S3", "P1.M2.T2.S1", "P1.M2.T2.S2", "P1.M2.T3.S1", "P1.M3.T1.S1", "P1.M3.T1.S2", "P1.M3.T2.S1", "P1.M3.T3.S1", "P1.M3.T3.S2", "P1.M3.T4.S1"],
-                  "prd_selectors": ["h2.3", "h2.0", "h2.11", "h2.26", "h2.28", "h2.42", "h2.51", "h2.52", "h2.2"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/003_bbac3b15e8d0/architecture/r5-spec-readme-dod.md §4 — 12 README drift items with line refs: (1) :8 intro 'built-in autocomplete menu' -> dual-path wording; (2) :11 Status gains M3 line + DoD pointer; (3) :33 Word matching -> anchored-fuzzy wording; (4) :38 menu order 'shortest match first… never reshuffled by session stats' -> tier desc -> sessionCount desc -> shorter -> byte-lex (content-derived order RETIRED); (5) :42-46 'rarest ~10%' flat band -> R_eff length-conditioned curve, rejectCommonness = floor of the curve; (6) :51-53/:161-163 Enter/menu wording + sanctioned arrow/Escape/Tab capture window; (7) :55+ stock contexts untouched-by-construction on the widget path; (8) :165-196 architecture 'prefix search -> salience sort' -> anchored-fuzzy tiered query + dual-path display + editor proxy; (9) :229-252 invariants mirror SPEC.md verbatim incl. the 2026-10 amendment; (10) config table ~:354-369 add fuzzThreshold row (verbatim from spec/08, r5 §6) + reword rejectCommonness row (floor of R_eff, higher = looser, curve scales from it, calibrate-bands probe pointer); (11) :130-163 usage gains widget-mode note (one line below input, arrows, boundary-Esc); (12) :189 'prefix search -> salience sort' twice-stale. Spec/08 schema rows verbatim captured in r5 §6.\n2. INPUT: all shipped behavior from every implementing subtask (dependencies above).\n3. LOGIC: sweep README.md section by section against the 12 items; verify every remaining claim against shipped behavior and DELETE anything unimplemented; grep for stale phrases ('flat', 'prefix-only'/'prefix search', 'salience sort', 'vertical menu', 'shortest match first', 'content-derived') to confirm completeness. README stays explicitly non-authoritative vs spec (README:26-27) — mirror spec wording, do not invent.\n4. OUTPUT: README.md coherent with shipped M3 behavior; feeds P1.M4.T1.S2.\n5. DOCS: Mode B — this subtask IS the changeset-level README sweep."
+                  "dependencies": [
+                    "P1.M1.T1.S1",
+                    "P1.M1.T1.S2",
+                    "P1.M1.T1.S3",
+                    "P1.M1.T2.S1",
+                    "P1.M1.T2.S2",
+                    "P1.M1.T2.S3",
+                    "P1.M1.T2.S4",
+                    "P1.M2.T1.S1",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T1.S3",
+                    "P1.M2.T2.S1",
+                    "P1.M2.T2.S2",
+                    "P1.M2.T3.S1",
+                    "P1.M3.T1.S1",
+                    "P1.M3.T1.S2",
+                    "P1.M3.T2.S1",
+                    "P1.M3.T3.S1",
+                    "P1.M3.T3.S2",
+                    "P1.M3.T4.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/003_bbac3b15e8d0/architecture/r5-spec-readme-dod.md §4 — 12 README drift items with line refs: (1) :8 intro 'built-in autocomplete menu' -> dual-path wording; (2) :11 Status gains M3 line + DoD pointer; (3) :33 Word matching -> anchored-fuzzy wording; (4) :38 menu order 'shortest match first… never reshuffled by session stats' -> tier desc -> sessionCount desc -> shorter -> byte-lex (content-derived order RETIRED); (5) :42-46 'rarest ~10%' flat band -> R_eff length-conditioned curve, rejectCommonness = floor of the curve; (6) :51-53/:161-163 Enter/menu wording + sanctioned arrow/Escape/Tab capture window; (7) :55+ stock contexts untouched-by-construction on the widget path; (8) :165-196 architecture 'prefix search -> salience sort' -> anchored-fuzzy tiered query + dual-path display + editor proxy; (9) :229-252 invariants mirror SPEC.md verbatim incl. the 2026-10 amendment; (10) config table ~:354-369 add fuzzThreshold row (verbatim from spec/08, r5 §6) + reword rejectCommonness row (floor of R_eff, higher = looser, curve scales from it, calibrate-bands probe pointer); (11) :130-163 usage gains widget-mode note (one line below input, arrows, boundary-Esc); (12) :189 'prefix search -> salience sort' twice-stale. Spec/08 schema rows verbatim captured in r5 §6.\n2. INPUT: all shipped behavior from every implementing subtask (dependencies above).\n3. LOGIC: sweep README.md section by section against the 12 items; verify every remaining claim against shipped behavior and DELETE anything unimplemented; grep for stale phrases ('flat', 'prefix-only'/'prefix search', 'salience sort', 'vertical menu', 'shortest match first', 'content-derived') to confirm completeness. README stays explicitly non-authoritative vs spec (README:26-27) — mirror spec wording, do not invent.\n4. OUTPUT: README.md coherent with shipped M3 behavior; feeds P1.M4.T1.S2.\n5. DOCS: Mode B — this subtask IS the changeset-level README sweep.",
+                  "prd_selectors": [
+                    "h2.3",
+                    "h2.0",
+                    "h2.11",
+                    "h2.26",
+                    "h2.28",
+                    "h2.42",
+                    "h2.51",
+                    "h2.52",
+                    "h2.2"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -335,9 +515,38 @@
                   "title": "DoD re-verification + docs/M1-DoD.md M3 section append",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M4.T1.S1", "P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T1.S3", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M1.T2.S3", "P1.M1.T2.S4", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T1.S3", "P1.M2.T2.S1", "P1.M2.T2.S2", "P1.M2.T3.S1", "P1.M3.T1.S1", "P1.M3.T1.S2", "P1.M3.T2.S1", "P1.M3.T3.S1", "P1.M3.T3.S2", "P1.M3.T4.S1"],
-                  "prd_selectors": ["h2.58", "h2.56", "h2.57", "h2.60", "h2.61", "h2.63", "h2.17"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r5-spec-readme-dod.md §1-3,§5 — append pattern established by the M2 section at docs/M1-DoD.md:265: `## M3 Definition of Done — post-delta re-verification (<task id>, <date>)` with ### per M3 acceptance clause (widget visibility machine; key handling/boundary-Esc; insertion casing; highlight reset; editor-enter carry-over; startup-gate carry-over; integration item 1 M3 clause + item 2 capture window + item 7; live verification record), a `### Bench numbers (<date>, re-captured at <commit>)` block, triage log, files-changed table, reproduction commands, bolded Verdict line, suite counts. Perf gates (spec 09 table): 20k-candidate anchored-fuzzy query < 1 ms p99; dict load + 20k sweep < 60 ms; 800 KB ingest < 60 ms with yields every <= 64 KB; heap < 6 MB. Commands: npm run check / npm test / npm run bench; hard CI gate = test/perf-gates.test.ts (3x budget rule).\n2. INPUT: README sweep from P1.M4.T1.S1; live-verification record from P1.M3.T4.S1; the full implementing changeset (dependencies above).\n3. LOGIC: run and record the full gauntlet — npm run check clean; npm test green (report suite/test counts); npm run bench within budgets (re-capture the four gate numbers); integration items 1-7 walked (item 1 M3 clause, item 2 capture window, item 7 conversational path completion riding P1.M1.T2); live widget verification recorded (from P1.M3.T4.S1). Append the M3 section to docs/M1-DoD.md following the M2 pattern; M1/M2 sections untouched. Record any spec drift discovered during verification in the run report ONLY (spec is read-only this run — a later interactive session reconciles).\n4. OUTPUT: annotated DoD record; run report with drift notes (if any); delta complete.\n5. DOCS: Mode B — appends the M3 section to docs/M1-DoD.md (this is the changeset-level DoD record)."
+                  "dependencies": [
+                    "P1.M4.T1.S1",
+                    "P1.M1.T1.S1",
+                    "P1.M1.T1.S2",
+                    "P1.M1.T1.S3",
+                    "P1.M1.T2.S1",
+                    "P1.M1.T2.S2",
+                    "P1.M1.T2.S3",
+                    "P1.M1.T2.S4",
+                    "P1.M2.T1.S1",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T1.S3",
+                    "P1.M2.T2.S1",
+                    "P1.M2.T2.S2",
+                    "P1.M2.T3.S1",
+                    "P1.M3.T1.S1",
+                    "P1.M3.T1.S2",
+                    "P1.M3.T2.S1",
+                    "P1.M3.T3.S1",
+                    "P1.M3.T3.S2",
+                    "P1.M3.T4.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: r5-spec-readme-dod.md §1-3,§5 — append pattern established by the M2 section at docs/M1-DoD.md:265: `## M3 Definition of Done — post-delta re-verification (<task id>, <date>)` with ### per M3 acceptance clause (widget visibility machine; key handling/boundary-Esc; insertion casing; highlight reset; editor-enter carry-over; startup-gate carry-over; integration item 1 M3 clause + item 2 capture window + item 7; live verification record), a `### Bench numbers (<date>, re-captured at <commit>)` block, triage log, files-changed table, reproduction commands, bolded Verdict line, suite counts. Perf gates (spec 09 table): 20k-candidate anchored-fuzzy query < 1 ms p99; dict load + 20k sweep < 60 ms; 800 KB ingest < 60 ms with yields every <= 64 KB; heap < 6 MB. Commands: npm run check / npm test / npm run bench; hard CI gate = test/perf-gates.test.ts (3x budget rule).\n2. INPUT: README sweep from P1.M4.T1.S1; live-verification record from P1.M3.T4.S1; the full implementing changeset (dependencies above).\n3. LOGIC: run and record the full gauntlet — npm run check clean; npm test green (report suite/test counts); npm run bench within budgets (re-capture the four gate numbers); integration items 1-7 walked (item 1 M3 clause, item 2 capture window, item 7 conversational path completion riding P1.M1.T2); live widget verification recorded (from P1.M3.T4.S1). Append the M3 section to docs/M1-DoD.md following the M2 pattern; M1/M2 sections untouched. Record any spec drift discovered during verification in the run report ONLY (spec is read-only this run — a later interactive session reconciles).\n4. OUTPUT: annotated DoD record; run report with drift notes (if any); delta complete.\n5. DOCS: Mode B — appends the M3 section to docs/M1-DoD.md (this is the changeset-level DoD record).",
+                  "prd_selectors": [
+                    "h2.58",
+                    "h2.56",
+                    "h2.57",
+                    "h2.60",
+                    "h2.61",
+                    "h2.63",
+                    "h2.17"
+                  ]
                 }
               ]
             }
