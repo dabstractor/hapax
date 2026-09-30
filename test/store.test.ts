@@ -183,6 +183,46 @@ describe("upsert — present → merge (PRD §06 h2.36)", () => {
   });
 });
 
+describe("path display merge (rule 4d: key trimmed, display keeps edges)", () => {
+  // Rule 4d (spec/04:118-174): a path sighting's key is the trimmed
+  // lowercase form while display keeps the ORIGINAL edges — so the same
+  // path re-typed with a different edge style must still merge into ONE
+  // entry (the key space, not the display, decides identity), with the
+  // latest display winning (store.ts upsert: "most recent wins").
+  const KEY = "home/dustin/projects/hapax";
+
+  it("edge-variant sightings of one path merge to one entry; most recent display wins", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: KEY, display: `/${KEY}`, ordinal: 5 }));
+    s.upsert(sighting({ key: KEY, display: `${KEY}/`, ordinal: 9 }));
+    expect(s.size).toBe(1); // leading-/ and trailing-/ map to ONE key
+    const c = s.get(KEY)!;
+    expect(c.sessionCount).toBe(2);
+    expect(c.display).toBe(`${KEY}/`); // recency-wins, edges verbatim
+    expect(c.lastSeenOrdinal).toBe(9);
+    expect(c.firstSeenOrdinal).toBe(5); // merge semantics keep the origin
+  });
+
+  it("reverse order still hands display to the latest sighting (trailing-/ first)", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: KEY, display: `${KEY}/`, ordinal: 3 }));
+    s.upsert(sighting({ key: KEY, display: `/${KEY}`, ordinal: 4 }));
+    expect(s.size).toBe(1);
+    expect(s.get(KEY)!.display).toBe(`/${KEY}`);
+    expect(s.get(KEY)!.lastSeenOrdinal).toBe(4);
+  });
+
+  it("firstSeenOrdinal stays at the first sighting across edge variants", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: KEY, display: `/${KEY}`, ordinal: 2 }));
+    s.upsert(sighting({ key: KEY, display: KEY, ordinal: 6 }));
+    s.upsert(sighting({ key: KEY, display: `${KEY}/`, ordinal: 7 }));
+    const c = s.get(KEY)!;
+    expect(c.firstSeenOrdinal).toBe(2);
+    expect(c.sessionCount).toBe(3);
+  });
+});
+
 describe("get / size / entries (PRD §06)", () => {
   it("get() miss returns undefined; fresh size is 0", () => {
     const s = new CandidateStore();

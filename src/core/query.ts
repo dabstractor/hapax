@@ -3,8 +3,10 @@
  * store → query pipeline (PRD §04 h2.26 + §07 h2.44): synchronous
  * WORDS-ONLY query-time ranking. Prefix-search the store's prefix index,
  * rank by salience, return the top N as RankedMatch items — every item's
- * `display` is exactly one word (the one-word invariant: no multi-word
- * candidates, ever; the only successor behavior is provider-side
+ * `display` is exactly one word — one whitespace-free token (the
+ * one-word invariant: no multi-word candidates, ever; rule 4d path
+ * tokens qualify, their display carries edge characters but never
+ * whitespace; the only successor behavior is provider-side
  * chaining). Runs on EVERY keystroke (the provider, P1.M3.T3.S2, calls
  * this in getSuggestions) and must complete in < 1 ms on a
  * 20k-candidate store (PRD §02 h3.1) — pure computation, no
@@ -80,7 +82,9 @@ export function compareRankedMatches(a: RankedMatch, b: RankedMatch): number {
 /**
  * Rank the store's candidates whose lowercase key starts with `prefix`
  * into the top-N result (words-only — the one-word invariant of
- * PRD §04 h2.26 + §07 h2.44: every returned display is a single word).
+ * PRD §04 h2.26 + §07 h2.44: every returned display is a single word,
+ * i.e. one whitespace-free token; rule 4d path displays qualify —
+ * edges differ from the key, whitespace never appears).
  *
  * Accepts any prefix casing — it is lowercased BEFORE prefixRange, since
  * prefixRange deliberately throws RangeError on non-lowercase input
@@ -115,7 +119,7 @@ export function rankMatches(
     if (!c) continue;
     matches.push({
       key: c.key,
-      display: c.display, // insertion casing exactly as stored (h2.27)
+      display: c.display, // insertion form exactly as stored (h2.27; rule 4d edges ride along)
       description: `session x${c.sessionCount}`, // ASCII x per item contract
       salience: salience(c, ordinal), // exact unquantized value
     });

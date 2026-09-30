@@ -625,8 +625,8 @@ export function createHapaxProvider(
       // order:
       //   1. CHAIN_KEY_PREFIX + next — a chain successor was accepted;
       //      re-arm at it (armed(next)).
-      //   2. a single token — a whole-word candidate; arm its
-      //      lowercase form. This is also how trigger-mode completions
+      //   2. a single token — a whole-word candidate; arm the mapped
+      //      store key. This is also how trigger-mode completions
       //      arm: they are whole-word insertions (pinned by
       //      test/chain.test.ts case 11).
       //   Phrase keys no longer exist: rankMatches is words-only since
@@ -643,10 +643,15 @@ export function createHapaxProvider(
             chainWordsSeen = 0;
             chainLastArmedPrefix = null;
           } else {
-            // Whole-word candidate: word keys are single tokens. The
-            // successor index is lowercase (h2.27) — arm the lowercase
-            // form so topSuccessors() finds it. Fresh one-shot grant.
-            chain.arm(item.value.toLowerCase());
+            // Whole-word candidate: single whitespace-free tokens — words
+            // and rule-4d path tokens alike. Arm the MAPPED STORE KEY,
+            // never a lowercased display: a path display keeps its
+            // original edges ("/home/x", "home/x/") while the store key
+            // is the trimmed-lowercase form, so lowercasing the value
+            // would miss the successor index. liveKeyByValue is the
+            // value→key truth (h2.27; keys are stored lowercase). Fresh
+            // one-shot grant.
+            chain.arm(key);
             chainWordsSeen = 0;
             chainLastArmedPrefix = null;
           }

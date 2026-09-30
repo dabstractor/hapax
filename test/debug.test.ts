@@ -164,6 +164,22 @@ describe("acwords dump (PRD §08)", () => {
     expect(rows[0]).toContain("group 0 (rare)");
   });
 
+  it("renders path candidates with key != display exactly as stored (rule 4d)", () => {
+    const store = new CandidateStore();
+    const ord = store.nextOrdinal();
+    see(store, "home/dustin/projects/hapax", "/home/dustin/projects/hapax", {
+      ordinal: ord,
+    });
+    const rows = topRows(formatAcwordsDump(store, fakeStats));
+
+    expect(rows).toHaveLength(1);
+    // Display verbatim — the dump prints c.display and never re-derives
+    // it from the key (they differ BEYOND casing for rule-4d paths: the
+    // original leading edge is the insertion form, the key is trimmed).
+    expect(rows[0]).toContain("1. /home/dustin/projects/hapax  ×1");
+    expect(rows[0]).toContain("group 0 (rare)"); // format otherwise unchanged
+  });
+
   it("renders wordsSeen, admitted, and all six gate-rejection counts", () => {
     const store = new CandidateStore();
     see(store, "zendesk");

@@ -118,7 +118,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S3",
                   "title": "Store display flow + key!=display audit + bigram whole-token entry",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S2"

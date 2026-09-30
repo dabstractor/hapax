@@ -76,6 +76,75 @@ describe("recordBigramRuns — successor index", () => {
   });
 });
 
+describe("path tokens as whole-token run members (rule 4d)", () => {
+  // Rule 4d (spec/04:118-174, :157-158): a path is ONE whitespace-free
+  // token whose key is the trimmed lowercase form — it enters a run like
+  // any word key, so "edit src/core/query.ts" pairs edit → path (a
+  // legitimate successor pair per spec) and its '/' components never do.
+  it("an edit → path adjacency records one bigram and one successor (whole path = ONE key)", () => {
+    const s = new CandidateStore();
+    s.recordBigramRuns([["edit", "src/core/query.ts"]]);
+    expect(s.bigramSize).toBe(1); // "edit src/core/query.ts" — single-space join of two keys
+    expect(s.topSuccessors("edit")).toEqual([
+      { next: "src/core/query.ts", count: 1 },
+    ]);
+  });
+
+  it("path-internal components never pair — the path is one token, not a run", () => {
+    const s = new CandidateStore();
+    s.recordBigramRuns([["edit", "src/core/query.ts"]]);
+    // No "src core" / "core query" windows may materialize from the path:
+    // rule 4d absorbs the components into the single path token.
+    expect(s.topSuccessors("src")).toEqual([]);
+    expect(s.topSuccessors("core")).toEqual([]);
+    expect(s.topSuccessors("query.ts")).toEqual([]);
+    expect(s.bigramSize).toBe(1);
+  });
+
+  it("through the real ingest path, one-line single-space adjacency pairs edit → path", async () => {
+    const store = new CandidateStore();
+    // All-rare stub dict (mirrors the BUG-006 wiring): every word admits;
+    // the path passes the rule-4d shape gate (2 interior slashes, 17 chars).
+    const dictionary: Dictionary = {
+      lookup: () => null,
+      version: 1,
+      entryCount: 0,
+    };
+    const pipeline = new IngestPipeline({
+      store,
+      dictionary,
+      yieldFn: async () => {},
+      onAdmittedTokens: (runs) => store.recordBigramRuns(runs),
+    });
+    // ONE line — a \n finalizes the line and would break the run
+    // (ingest.ts line handling); single-space gap keeps strict adjacency.
+    await pipeline.processText("edit src/core/query.ts", false);
+    expect(store.topSuccessors("edit")).toEqual([
+      { next: "src/core/query.ts", count: 1 },
+    ]);
+  });
+
+  it("a comma gap breaks the adjacency — 'edit, path' forms no pair (spec 06 h3.6)", async () => {
+    const store = new CandidateStore();
+    const dictionary: Dictionary = {
+      lookup: () => null,
+      version: 1,
+      entryCount: 0,
+    };
+    const pipeline = new IngestPipeline({
+      store,
+      dictionary,
+      yieldFn: async () => {},
+      onAdmittedTokens: (runs) => store.recordBigramRuns(runs),
+    });
+    // WHITESPACE_GAP_RE is /^[ \t]+$/ — the ", " gap between the two
+    // tokens fails it, so splitRuns cuts the run before the path.
+    await pipeline.processText("edit, src/core/query.ts", false);
+    expect(store.topSuccessors("edit")).toEqual([]);
+    expect(store.bigramSize).toBe(0);
+  });
+});
+
 describe("bigram cap — 10,000 with batched lazy-heap eviction", () => {
   // 10,001 distinct bigrams, all count 1 at the same ordinal → the victim
   // order is pure byte-lex on the key: "w0 end" is the lexically lowest.
