@@ -18,7 +18,7 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Tier-0 anchorless pass in rankMatches",
-              "status": "Ready",
+              "status": "Complete",
               "description": "The core query-layer feature: anchorless contiguous-run matcher with zero-result precondition, fragment floor 3, score/threshold gating, tier-0 ranking slot below tier 1, the RankedMatch tier diagnostic (chain-arm suppression signal), and the < 3 ms p99 performance gate. Binding test pins per spec 09: esk→zendesk, query→src/core/query.ts (score 64), floor 3, non-empty anchored result byte-identical to pre-tier-0 output, 3>2>1>0, late-run gating at default 60.",
               "subtasks": [
                 {
@@ -44,7 +44,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "Perf-gate row: tier-0 full-store pass < 3 ms p99 (CI at 3×)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1"

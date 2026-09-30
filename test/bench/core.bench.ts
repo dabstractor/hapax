@@ -2,9 +2,10 @@
  * PRD §09 performance-gate micro-benchmarks (P1.M4.T1.S2) — REPORTING ONLY.
  *
  * `npm run bench` (vitest bench / tinybench) prints measured numbers for the
- * four §09 gates. Bench output alone CANNOT fail CI on a threshold — the
- * hard 3×-budget assertions live in `test/perf-gates.test.ts`, which
- * performs the same measurements as plain tests. Run both:
+ * four §09 gates plus the tier-0 fallback row (§09 h2.58). Bench output alone
+ * CANNOT fail CI on a threshold — the hard 3×-budget assertions live in
+ * `test/perf-gates.test.ts`, which performs the SAME measurements as plain
+ * tests. Run both:
  *
  *   npm run bench   → measured actuals for all four gates (this file)
  *   npm test        → hard bounds (> 3× budget fails) + logged actuals
@@ -35,7 +36,8 @@ const HOT_PREFIX = "p";
 let keepAlive = 0; // sink for gate-d cycle results (bench fns return void)
 
 console.log(
-  "[PRD §09 budgets] (a) query p99 <1ms  (b) dict load + 20k sweep <60ms  " +
+  "[PRD §09 budgets] (a) query p99 <1ms  (t0) tier-0 anchorless fallback p99 <3ms  " +
+    "(b) dict load + 20k sweep <60ms  " +
     "(c) 800KB ingest <60ms + yield ≤64KB  (d) steady-state heap delta <6MB " +
     "— CI hard-fails at 3× via test/perf-gates.test.ts",
 );
@@ -47,6 +49,25 @@ const dictPath = join(tmpDir, "synthetic-dict.bin");
 writeFileSync(dictPath, buffer);
 
 const gateAStore = makeStore(STORE_CAP, 42);
+
+// Gate t0 probe (spec §09 h2.58) — same deterministic discovery as
+// perf-gates.test.ts "gate t0" (seed-42 store → same fragment), so bench
+// and gate report on the identical fallback pass. REPORTING ONLY: the
+// tier===0 sanity asserts and the hard <9 ms p99 bound live in the gate.
+let t0Frag = "";
+{
+  const keys = gateAStore.sortedKeysSnapshot();
+  for (const k of keys) {
+    if (k.length < 8) continue;
+    const start = Math.floor(k.length * 0.25);
+    const cand = k.slice(start, start + 3);
+    if (cand.length < 3 || cand[0] === k[0]) continue;
+    const r = rankMatches(gateAStore, cand, { limit: 8 });
+    if (r.length === 0 || !r.every((m) => m.tier === 0)) continue;
+    t0Frag = cand;
+    break;
+  }
+}
 
 const gateCStore = makeStore(0, 43); // fresh store; text vocab stays < STORE_CAP
 const gateCText = makeSessionText(800_000, 7, words.slice(0, 4000));
@@ -65,6 +86,14 @@ describe("PRD §09 core gates — measured actuals (hard bounds: test/perf-gates
     "gate a: query — 20k-candidate store, first-char bucket 'p' (~913 range) + rank + top 8 [budget <1ms p99]",
     () => {
       rankMatches(gateAStore, HOT_PREFIX, { limit: 8 });
+    },
+    { warmupTime: 100, warmupIterations: 100, time: 1000, iterations: 1000 },
+  );
+
+  bench(
+    "gate t0: tier-0 anchorless fallback — full-store pass, probed fragment [budget <3ms p99]",
+    () => {
+      rankMatches(gateAStore, t0Frag, { limit: 8 });
     },
     { warmupTime: 100, warmupIterations: 100, time: 1000, iterations: 1000 },
   );

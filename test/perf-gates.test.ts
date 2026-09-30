@@ -10,6 +10,9 @@
  * to the console for the tuning protocol (§09 h2.52).
  *
  *   (a) 20k-candidate prefix query + rank + top 8   budget < 1 ms p99   → CI < 3 ms
+ *   (t0) tier-0 anchorless fallback full-store pass (fires only on empty
+ *       anchored result; also `#` loose-mode scans) — < 3 ms p99
+ *       → CI < 9 ms   (spec §09 h2.58; gate t0 below)
  *   (b) dict load + full 20k-word lookup sweep      budget < 60 ms      → CI < 180 ms
  *   (c) ingest 800 KB session text                  budget < 60 ms      → CI < 180 ms
  *       (+ yield-every-≤64KB contract via a counting yieldFn)
@@ -143,6 +146,82 @@ describe("perf gate a3 — zero-fragment full-store listing (loose sanity, not t
         `(measured floor 5.8–7.2ms p99; sanity only — §09 budget covers the anchored hot path)`,
     );
     expect(p99).toBeLessThan(25);
+  });
+});
+
+// ── Gate t0 — tier-0 anchorless fallback full-store pass (§09 h2.58) ────────
+
+// spec §09 h2.58 gate row: "Tier-0 anchorless fallback full-store pass
+// (fires only on empty anchored result; also `#` loose-mode scans) —
+// < 3 ms p99" → CI < 9 ms. The tier-0 fallback (spec §04 h2.28) fires only
+// when the anchored scan returns EMPTY, so the common anchored keystroke
+// never pays it; this gate measures the pass's honest full cost — full
+// 20k-key indexOf scan + threshold gate + sort of the rescued subset +
+// top-8 slice — over the same 20k store as gate a. Spec-measured
+// 1.1–2.6 ms at the 20k cap (synthetic) ≈ 3.5× headroom under the 9 ms CI
+// bound; a flake means a real regression or a probe that stopped firing
+// (check the logged `rescued=` — investigate first, never loosen the
+// bound; gate a3's documented rule). The probe fragment is DISCOVERED at
+// setup, not hardcoded: after fixture drift a hardcoded fragment could
+// silently stop firing the fallback, making the gate measure the ANCHORED
+// path (~1 ms) and pass vacuously — the sanity asserts below turn that
+// into a loud failure instead (gate a's `range > 500` discipline).
+describe("perf gate t0 — tier-0 anchorless fallback full-store pass (§09 h2.58)", () => {
+  it("p99 of 1000 fallback queries over the 20k store stays under 9 ms (3× the 3 ms budget)", () => {
+    // PROBE (setup cost, not measured): find a ≥3-char fragment such that
+    // (1) the anchored scan returns ZERO — provable via S1's public
+    // diagnostic: a non-empty result whose every item has tier === 0 —
+    // and (2) at least one key contains the fragment (the scan has work).
+    // Candidates come from an early run of each key (runStart/len ≈ 0.25
+    // — the default 60 threshold gates runs starting past ~62% of the
+    // key) whose first char differs from the key's (anchored miss on this
+    // key). Deterministic under seed 42; the O(n) `some` paranoia check
+    // is capped at ~200 examined keys — a hit converges in a handful.
+    const keys = gateAStore.sortedKeysSnapshot();
+    expect(gateAStore.size).toBe(STORE_CAP);
+    let frag = "";
+    let rescued = 0;
+    let examined = 0;
+    for (const k of keys) {
+      if (examined >= 200) break;
+      if (k.length < 8) continue;
+      examined++;
+      const start = Math.floor(k.length * 0.25);
+      const cand = k.slice(start, start + 3);
+      if (cand.length < 3 || cand[0] === k[0]) continue;
+      const r = rankMatches(gateAStore, cand, { limit: 8 });
+      if (r.length === 0) continue; // threshold-gated — try the next key
+      if (!r.every((m) => m.tier === 0)) continue; // anchored results present
+      if (!keys.some((k2) => k2.includes(cand))) continue; // paranoia
+      frag = cand;
+      rescued = r.length;
+      break;
+    }
+    expect(frag).not.toBe(""); // the gate's honesty — fallback demonstrably fires
+    expect(rescued).toBeGreaterThan(0);
+
+    for (let i = 0; i < 100; i++) {
+      rankMatches(gateAStore, frag, { limit: 8 }); // warmup (JIT)
+    }
+    const dts: number[] = [];
+    for (let i = 0; i < 1000; i++) {
+      const t = performance.now();
+      rankMatches(gateAStore, frag, { limit: 8 });
+      dts.push(performance.now() - t);
+    }
+    dts.sort((a, b) => a - b);
+    // p99 = 990th of 1000 sorted samples (⌈0.99·N⌉, 1-indexed).
+    const p99 = dts[Math.ceil(0.99 * dts.length) - 1];
+    const median = dts[Math.floor(dts.length / 2)];
+    const max = dts[dts.length - 1];
+    // rescued=N (result length) makes the measured sort cost auditable —
+    // P1.M2.T1.S2 copies the actuals into the M1-DoD budget table.
+    console.log(
+      `[gate t0] store=${gateAStore.size} frag='${frag}' rescued=${rescued} ` +
+        `p99=${p99.toFixed(3)}ms median=${median.toFixed(3)}ms max=${max.toFixed(3)}ms ` +
+        `(budget <3ms, CI bound <9ms; spec §09 h2.58)`,
+    );
+    expect(p99).toBeLessThan(9);
   });
 });
 
