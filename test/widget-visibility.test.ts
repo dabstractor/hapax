@@ -488,3 +488,93 @@ describe("visibility machine — query seam receives (fragment, mode) (plan 004)
     ]);
   });
 });
+
+// ── painted() — the arming classification seam (BUG-001, plan 004) ──────────
+
+/** rm() with a tier — match-path records carry the public diagnostic
+ *  (plan 004's omit-contract: listings omit, matches populate). */
+const rmt = (display: string, tier: 0 | 1 | 2 | 3): RankedMatch => ({
+  ...rm(display),
+  tier,
+});
+
+describe("visibility machine — painted() accessor (BUG-001 arming seam)", () => {
+  it("painted() mirrors currentSet 1:1 after a paint (length + order)", async () => {
+    const { machine, editor } = await build({
+      query: () => [rmt("Zendesk", 3), rmt("Zendkrypto", 2)],
+    });
+    editor.set("zend", 4);
+    machine.onInput();
+    const st = machine.getState();
+    const painted = machine.painted();
+    expect(painted.length).toBe(st.currentSet.length);
+    for (let i = 0; i < painted.length; i++) {
+      expect(painted[i]!.display).toBe(st.currentSet[i]!.display);
+    }
+    expect(painted.map((m) => m.key)).toEqual(["zendesk", "zendkrypto"]);
+  });
+
+  it("painted() carries key and tier — the arming prerequisites (incl. the tier-0 never-arm signal)", async () => {
+    const { machine, editor } = await build({
+      query: canned({
+        zend: [rmt("Zendesk", 3)],
+        unb: [rmt("unbundler", 0)], // anchorless ambient record
+      }),
+    });
+    editor.set("zend", 4);
+    machine.onInput();
+    let [m] = machine.painted();
+    expect(m!.key).toBe("zendesk");
+    expect(m!.tier).toBe(3);
+    await vi.advanceTimersByTime(150); // past the swap window → immediate paint
+    editor.set("unb", 3);
+    machine.onInput();
+    [m] = machine.painted();
+    expect(m!.key).toBe("unbundler");
+    expect(m!.tier).toBe(0); // S2 reads tier === 0 → never arm
+  });
+
+  it("painted() is empty whenever the line is hidden (lifetime parity with currentSet)", async () => {
+    const { machine, editor } = await build({
+      query: () => [rmt("Zendesk", 3)],
+    });
+    editor.set("zend", 4);
+    machine.onInput();
+    expect(machine.painted()).toHaveLength(1);
+    // Stock-context hide (R1) clears BOTH — stock hides stamp no close,
+    // so the following paint re-arms the seam without reopen ceremony.
+    editor.set("/cmd", 4);
+    machine.onInput();
+    expect(machine.painted()).toEqual([]);
+    expect(machine.getState().currentSet).toEqual([]);
+    // Paint again, then explicit dismissal (Escape) clears BOTH too.
+    editor.set("zend", 4);
+    machine.onInput();
+    expect(machine.painted()).toHaveLength(1);
+    machine.onDismissed(true);
+    expect(machine.painted()).toEqual([]);
+    expect(machine.getState().currentSet).toEqual([]);
+  });
+
+  it("swap-debounce promotion updates painted() too — paint is the single write site", async () => {
+    const { machine, editor } = await build({
+      query: canned({
+        zend: [rmt("Zendesk", 3)],
+        zendk: [rmt("Zendesk", 3), rmt("Zendkrypto", 2)],
+      }),
+    });
+    editor.set("zend", 4);
+    machine.onInput();
+    expect(machine.painted().map((m) => m.key)).toEqual(["zendesk"]);
+    await vi.advanceTimersByTime(1); // narrowing keystroke inside the window
+    editor.set("zendk", 5);
+    machine.onInput(); // old set held, swap parked — painted() unchanged
+    expect(machine.painted().map((m) => m.key)).toEqual(["zendesk"]);
+    await vi.advanceTimersByTime(100); // the parked swap promotes THROUGH paint()
+    expect(machine.painted().map((m) => m.key)).toEqual([
+      "zendesk",
+      "zendkrypto",
+    ]);
+    expect(machine.painted()[1]!.tier).toBe(2);
+  });
+});

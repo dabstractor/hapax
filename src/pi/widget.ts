@@ -370,6 +370,18 @@ export interface VisibilityMachine {
   onDismissed(explicit: boolean): void;
   /** Current snapshot (for render glue / tests). */
   getState(): VisibilityState;
+  /** The currently painted match records (the machine's own
+   *  RankedMatch list, verbatim — not reshaped), aligned 1:1 with
+   *  VisibilityState.currentSet in ORDER and LIFETIME: populated on
+   *  paint() (the single write site — swap-debounce promotions route
+   *  through it), cleared on hide() (closeWith delegates there).
+   *  The Tab-insert arming seam (BUG-001 fix, P1.M1.T1.S2): the
+   *  accepted item's key (the store key for chain.arm) and tier
+   *  (tier-0 anchorless matches never arm — spec §04) are read here,
+   *  mirroring the provider path's applyCompletion classification.
+   *  Chain-offer shims (P1.M1.T2.S1) paint through the same site and
+   *  surface here automatically. */
+  painted(): readonly RankedMatch[];
   /** Release the machine's timers (pending swap, gate deadline) — a
    *  lifecycle courtesy for teardown; not required for correctness
    *  (timers are self-invalidating). */
@@ -453,6 +465,10 @@ export function createVisibilityMachine(
   let visible = false;
   let suppressed = false;
   let currentSet: readonly { display: string }[] = [];
+  // The painted RECORDS behind currentSet (BUG-001 arming seam): same
+  // lifetime, same order — both derive from paint()'s one `items`
+  // argument, so the pair cannot drift. Cleared only in hide().
+  let paintedSet: readonly RankedMatch[] = [];
 
   // Rule 0 — input clock: EVERY onInput tick records (gap math needs
   // consecutive-tick deltas even for hide/delegate/stock ticks).
@@ -503,6 +519,7 @@ export function createVisibilityMachine(
   const hide = (): void => {
     visible = false;
     currentSet = [];
+    paintedSet = []; // lifetime parity: empty exactly when currentSet is
     displayedSig = null;
     pendingSet = null;
     clearSwapTimer();
@@ -527,6 +544,7 @@ export function createVisibilityMachine(
     pendingSet = null;
     visible = true;
     currentSet = items.map((m) => ({ display: m.display }));
+    paintedSet = items; // arming seam: same order as currentSet by construction
     displayedSig = sig;
     lastPaintAt = now;
     closeAt = null;
@@ -722,6 +740,8 @@ export function createVisibilityMachine(
     },
 
     getState: state,
+
+    painted: () => paintedSet,
 
     dispose(): void {
       clearSwapTimer();
