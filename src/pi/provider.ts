@@ -465,6 +465,7 @@ export function createHapaxProvider(
               display: successorDisplay(s),
               description: "chain",
               salience: -s.count, // higher count → stronger, count-desc order
+              sessionCount: s.count, // RankedMatch key-2 field (§04 h2.29); publishChain's order is already count-desc
             })),
             prefix,
             ts: Date.now(),
@@ -603,9 +604,10 @@ export function createHapaxProvider(
       // top-ranked item — lastLive/liveKeyByValue above keep the FULL set
       // (S3's display layer composes and debounces against it; a narrowed
       // cache would fight the hysteresis on the next un-forced keystroke).
-      // items[0] is rankMatches' top (salience desc → shorter →
-      // lexicographic) — never re-sorted. The prefix is unchanged: pi-tui
-      // splices prefix.length characters before the cursor verbatim.
+      // items[0] is rankMatches' top (tier desc → sessionCount desc →
+      // shorter → lexicographic) — never re-sorted. The prefix is
+      // unchanged: pi-tui splices prefix.length characters before the
+      // cursor verbatim.
       const items = matches.map((m) => ({
         value: m.display,
         label: m.display,

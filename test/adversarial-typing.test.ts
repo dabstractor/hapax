@@ -384,14 +384,14 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     // 'z' — auto-open contract (effective threshold 1): the word-start
     // request already publishes the live set.
     expect((await type(wrapper, "z"))!.items.map((i) => i.value)).toEqual([
+      "Zendesk", // count-desc top (h2.29: zendesk ×3 > zephra ×1, tier-3 tie)
       "zephra",
-      "Zendesk",
     ]);
     expect(base.__hapaxLive()).not.toBeNull();
 
     // 'e' — first qualifying keystroke paints {Zendesk, zephra} @"ze".
     const ze = await type(wrapper, "ze");
-    expect(ze!.items.map((i) => i.value)).toEqual(["zephra", "Zendesk"]);
+    expect(ze!.items.map((i) => i.value)).toEqual(["Zendesk", "zephra"]); // count order
     expect(
       prefixIsAnchorSafe("ze", 2, ze!.prefix),
       "'ze' response prefix must be the buffer's exact suffix",
@@ -423,7 +423,7 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     const wrapper = createDisplayProvider(base);
 
     const ze = await type(wrapper, "ze"); // paints {Zendesk, zephra} @"ze" at t=0
-    expect(ze!.items.map((i) => i.value)).toEqual(["zephra", "Zendesk"]);
+    expect(ze!.items.map((i) => i.value)).toEqual(["Zendesk", "zephra"]); // count order
 
     vi.advanceTimersByTime(50);
     const zep = await type(wrapper, "zep"); // immediate paint @"zep" (anchor moved)

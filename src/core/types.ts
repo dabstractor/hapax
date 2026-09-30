@@ -166,4 +166,12 @@ export interface RankedMatch {
   display: string;
   description: string;
   salience: number;
+  /** Session occurrences of this candidate, copied from the store entry
+   *  (spec §04 h2.29, 2026-10 owner rule): menu-order key 2 WITHIN a tier
+   *  — among equally strict matches the more conversation-relevant word
+   *  (higher sessionCount) goes leftmost. Unlike salience (which never
+   *  orders — membership/eviction only), this raw count DOES order, but
+   *  a count difference can never cross a tier boundary. Agrees with
+   *  description ("session x" + sessionCount). */
+  sessionCount: number;
 }

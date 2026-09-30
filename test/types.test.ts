@@ -18,7 +18,7 @@ describe('core type contracts', () => {
     expect(gate.reason satisfies GateRejectReason | undefined).toBe('secret');
 
     const match: RankedMatch = { key: 'nrel', display: 'NREL',
-      description: 'session ×1', salience: 4.3 };
+      description: 'session ×1', salience: 4.3, sessionCount: 1 };
     expect(match.key).toBe('nrel');
 
     const stats: IngestStats = {

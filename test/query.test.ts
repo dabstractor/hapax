@@ -1,15 +1,17 @@
 /**
  * PRD §04 query-ranking suite (P1.M2.T5.S1): the rankMatches contract —
  * case-insensitive prefix matching with stored display casing (h2.27),
- * the PRD §09 order (salience desc → shorter key → byte-lex) verified
- * with deliberate ties, the default limit 8 plus explicit/defensive
- * limits, the description "session x<count>" item contract, empty
- * results, recency re-ranking after the ordinal advances, an informal
- * perf sanity (20k store; formal gate is P1.M4.T1.S2), and the R1
+ * the 2026-10 menu order (spec §04 h2.29: tier desc → sessionCount desc
+ * within tier → shorter key → byte-lex; zero-fragment listings order by
+ * sessionCount desc → shorter → byte-lex with no tiers) verified with
+ * deliberate ties at the rankMatches AND comparator levels, the default
+ * limit 8 plus explicit/defensive limits, the description "session
+ * x<count>" item contract, empty results, count-vs-recency interplay, an
+ * informal perf sanity (20k store; formal gate is P1.M4.T1.S2), and the R1
  * ONE-WORD INVARIANT (PRD §07 h2.44): every returned display is a single
  * word, proven end-to-end through the REAL ingest pipeline (rankMatches
- * is words-only — `{ limit }` is its entire option surface; the former
- * caller-side filter seam was removed with the multi-word layer).
+ * is words-only; the former caller-side filter seam was removed with the
+ * multi-word layer).
  *
  * Stores are built by upserting fabricated Sightings — the store IS the
  * input fixture (same style as store.test.ts); keys are arbitrary
@@ -51,7 +53,7 @@ import {
   TIER3_SCORE,
 } from "../src/core/query.js";
 import { IngestPipeline } from "../src/pi/ingest.js";
-import type { Sighting } from "../src/core/types.js";
+import type { RankedMatch, Sighting } from "../src/core/types.js";
 import { buildDictBinary, writeDictFile } from "./helpers/dict-writer.js";
 import { assertWordsOnly } from "./helpers/query-invariants.js";
 
@@ -80,23 +82,33 @@ const put = (
   }
 };
 
-/** Oracle: expected key order per the CONTENT-DERIVED menu order
- *  (shorter key → byte-lex) — the same math rankMatches must apply,
- *  applied independently here. Salience is NOT a sort key. */
+/** Oracle: expected key order per the 2026-10 menu order (spec §04
+ *  h2.29) — tier desc → sessionCount desc within tier → shorter key →
+ *  byte-lex — the same math rankMatches must apply, computed here from
+ *  matchFragment + store entries, deliberately independent of
+ *  compareRankedMatches. Non-empty prefixes: every startsWith key is an
+ *  exact prefix (tier 3, mirroring today's prefix scan); zero-fragment
+ *  has no tiers (matchFragment(""), is null → uniform tier 0). The
+ *  composite salience is NOT a sort key. */
 const expectedOrder = (s: CandidateStore, prefix: string): string[] =>
   s
     .entries()
     .filter((c) => c.key.startsWith(prefix))
+    .map((c) => ({ tier: matchFragment(prefix, c.key)?.tier ?? 0, c }))
     .sort((a, b) =>
-      a.key.length !== b.key.length
-        ? a.key.length - b.key.length
-        : a.key < b.key
-          ? -1
-          : a.key > b.key
-            ? 1
-            : 0,
+      a.tier !== b.tier
+        ? b.tier - a.tier
+        : a.c.sessionCount !== b.c.sessionCount
+          ? b.c.sessionCount - a.c.sessionCount
+          : a.c.key.length !== b.c.key.length
+            ? a.c.key.length - b.c.key.length
+            : a.c.key < b.c.key
+              ? -1
+              : a.c.key > b.c.key
+                ? 1
+                : 0,
     )
-    .map((c) => c.key);
+    .map((r) => r.c.key);
 
 describe("rankMatches — empty results (PRD §04)", () => {
   it("empty store → []", () => {
@@ -165,7 +177,7 @@ describe("rankMatches — result shape (work-item contract)", () => {
     expect(Number.isInteger(m.salience)).toBe(false); // exact float, not rounded
   });
 
-  it("every result carries exactly the four RankedMatch fields", () => {
+  it("every result carries exactly the five RankedMatch fields", () => {
     const s = new CandidateStore();
     put(s, "alpha");
     put(s, "alpine", 2);
@@ -175,69 +187,88 @@ describe("rankMatches — result shape (work-item contract)", () => {
         "display",
         "key",
         "salience",
+        "sessionCount",
       ]);
+    }
+  });
+
+  it("sessionCount field agrees with the store entry and the description", () => {
+    const s = new CandidateStore();
+    put(s, "hapax", 3);
+    put(s, "alpine", 2);
+    for (const m of rankMatches(s, "")) {
+      expect(m.sessionCount).toBe(s.get(m.key)!.sessionCount); // copied, not derived
+      expect(m.description).toBe(`session x${m.sessionCount}`); // ASCII-x contract
     }
   });
 });
 
-describe("rankMatches — ordering (content-derived: shorter key → byte-lex)", () => {
-  it("length is the ONLY primary key: salience stats never reorder", () => {
+describe("rankMatches — ordering (spec §04 h2.29: tier → count → shorter → lex)", () => {
+  it("same-tier counts reorder: higher sessionCount leftmost", () => {
     const s = new CandidateStore();
-    put(s, "zaghigh", 3); // most salient by count — still sorts by text
+    put(s, "zaghigh", 3); // all tier-3 exact prefixes — raw count orders
     put(s, "zaglow", 1);
     put(s, "zagmid", 2);
     expect(rankMatches(s, "zag").map((m) => m.key)).toEqual([
-      "zaglow", // len 6, byte l
-      "zagmid", // len 6, byte m
-      "zaghigh", // len 7 — longest despite top salience
+      "zaghigh", // count 3
+      "zagmid", // count 2
+      "zaglow", // count 1
     ]);
   });
 
-  it("userTyped/sticky flags never reorder either — equal length → byte-lex", () => {
+  it("userTyped/sticky flags never reorder — equal count → shorter, then byte-lex", () => {
     const s = new CandidateStore();
     s.upsert(sighting({ key: "zagtyped", display: "zagtyped", fromUser: true }));
     s.upsert(sighting({ key: "zagplain", display: "zagplain" }));
+    // Both count 1, both length 8 → the comparator's keys 3–4 decide.
     expect(rankMatches(s, "zag").map((m) => m.key)).toEqual([
       "zagplain",
       "zagtyped",
     ]);
   });
 
-  it("shorter key first: 'fix' before 'fixpoint'", () => {
+  it("equal count → shorter key first: 'fix' before 'fixpoint'", () => {
     const s = new CandidateStore();
     put(s, "fixpoint"); // upserted first on purpose — order must not care
-    put(s, "fix", 1, 1, { rankGroup: 0 }); // rarest + highest salience — still just shorter
+    put(s, "fix", 1, 1, { rankGroup: 0 }); // rarest + highest salience — but count ties, so length wins
     expect(rankMatches(s, "fi").map((m) => m.key)).toEqual(["fix", "fixpoint"]);
   });
 
-  it("equal-length tie → byte-lex: 'cod' before 'cow'", () => {
+  it("equal length + UNEQUAL count → count first; byte-lex only breaks equal-count ties", () => {
     const s = new CandidateStore();
     put(s, "cow", 9);
-    put(s, "cod", 1); // reverse insertion + far lower salience — byte order still wins
+    put(s, "cod", 1); // retired order had cod first (byte-lex at equal length); counts now decide
+    expect(rankMatches(s, "co").map((m) => m.key)).toEqual(["cow", "cod"]);
+  });
+
+  it("equal length + equal count → byte-lex: 'cod' before 'cow'", () => {
+    const s = new CandidateStore();
+    put(s, "cow", 9);
+    put(s, "cod", 9); // SAME count — only now does byte-lex decide
     expect(rankMatches(s, "co").map((m) => m.key)).toEqual(["cod", "cow"]);
   });
 
-  it("hand-computed mixed board sorts purely by (length, bytes)", () => {
+  it("hand-computed zero-fragment board sorts by count, then length/bytes", () => {
     const s = new CandidateStore();
-    put(s, "abstract"); // len 8
-    put(s, "abort"); // len 5
-    put(s, "zzqv", 1, 1, { rankGroup: 0 }); // len 4 — most salient, sorts 3rd
-    s.upsert(sighting({ key: "meridian", display: "meridian", fromUser: true })); // len 8
-    put(s, "verdant", 8); // len 7 — top salience, sorts mid-list
-    put(s, "cod"); // len 3
-    put(s, "cow"); // len 3
+    put(s, "abstract"); // 1
+    put(s, "abort"); // 1
+    put(s, "zzqv", 1, 1, { rankGroup: 0 }); // 1
+    s.upsert(sighting({ key: "meridian", display: "meridian", fromUser: true })); // 1
+    put(s, "verdant", 8); // 8 — the only counted word
+    put(s, "cod"); // 1
+    put(s, "cow"); // 1
     expect(rankMatches(s, "").map((m) => m.key)).toEqual([
-      "cod", // 3: c-o-d
-      "cow", // 3: c-o-w
-      "zzqv", // 4
-      "abort", // 5
-      "verdant", // 7
-      "abstract", // 8: a-b…
-      "meridian", // 8: m-e…
+      "verdant", // count 8 — counts order before any length/lex tie
+      "cod", // count 1 → shorter first: len 3
+      "cow", // len 3, byte-lex after cod
+      "zzqv", // len 4
+      "abort", // len 5
+      "abstract", // len 8, byte a-b
+      "meridian", // len 8, byte m-e
     ]);
   });
 
-  it("matches the compareCandidates oracle across several prefixes", () => {
+  it("matches the expectedOrder oracle across several prefixes", () => {
     const s = new CandidateStore();
     put(s, "abort");
     put(s, "abstract", 2);
@@ -251,12 +282,84 @@ describe("rankMatches — ordering (content-derived: shorter key → byte-lex)",
   });
 });
 
+describe("compareRankedMatches — 4-key order (spec §04 h2.29, comparator level)", () => {
+  /** Direct comparator fixture — tiers are not observable through
+   *  rankMatches under today's prefix scan (every scanned candidate is an
+   *  exact prefix), so the tier key is pinned here, where tiers exist. */
+  const rec = (tier: number, key: string, sessionCount: number) => ({
+    tier,
+    m: {
+      key,
+      display: key,
+      description: `session x${sessionCount}`,
+      salience: 0,
+      sessionCount,
+    },
+  });
+
+  it("THE headline rule: a 1-count exact prefix outranks a 40-count scattered match", () => {
+    const exact = rec(3, "z", 1);
+    const scattered = rec(1, "handleResponseProxy", 40);
+    expect(compareRankedMatches(exact, scattered)).toBeLessThan(0);
+    expect(compareRankedMatches(scattered, exact)).toBeGreaterThan(0);
+  });
+
+  it("counts reorder ONLY same-tier neighbors — a tier boundary is never crossed", () => {
+    // 40× the count cannot cross tier 3 → tier 2…
+    const t3 = rec(3, "zzexact", 1);
+    const t2 = rec(2, "zztail", 40);
+    expect(compareRankedMatches(t3, t2)).toBeLessThan(0);
+    expect(compareRankedMatches(t2, t3)).toBeGreaterThan(0);
+    // …but the same gap INSIDE one tier reorders (both directions).
+    const lo = rec(2, "aalo", 1);
+    const hi = rec(2, "bbhi", 40);
+    expect(compareRankedMatches(hi, lo)).toBeLessThan(0);
+    expect(compareRankedMatches(lo, hi)).toBeGreaterThan(0);
+  });
+
+  it("ties: shorter key, then byte-lex — a valid total order", () => {
+    expect(compareRankedMatches(rec(3, "cod", 2), rec(3, "codfish", 2))).toBeLessThan(0);
+    expect(compareRankedMatches(rec(3, "cod", 2), rec(3, "cow", 2))).toBeLessThan(0);
+    expect(compareRankedMatches(rec(3, "cow", 2), rec(3, "cod", 2))).toBeGreaterThan(0);
+    const same = rec(2, "same", 5);
+    expect(compareRankedMatches(same, { ...same })).toBe(0); // total: identical records tie
+  });
+
+  it("zero-fragment records (uniform tier 0) order by count → shorter → lex", () => {
+    expect(compareRankedMatches(rec(0, "zzlongestkey", 9), rec(0, "a", 1))).toBeLessThan(0);
+    expect(compareRankedMatches(rec(0, "a", 1), rec(0, "bb", 1))).toBeLessThan(0);
+    expect(compareRankedMatches(rec(0, "bb", 1), rec(0, "a", 1))).toBeGreaterThan(0);
+  });
+});
+
+describe("rankMatches — zero-fragment listing ('#' alone: no tiers)", () => {
+  it("orders by sessionCount desc — a count beats a shorter key", () => {
+    const s = new CandidateStore();
+    put(s, "zz", 1); // shortest possible — length would win under the retired order
+    put(s, "zzzzzzzzzz", 9); // long, but 9× the count
+    // '#' alone: no matchFragment call, no tiers — count desc, then length.
+    expect(rankMatches(s, "").map((m) => m.key)).toEqual(["zzzzzzzzzz", "zz"]);
+    // Same store, 1-char fragment: both tier-3 exact prefixes — the SAME
+    // order. Pinned side by side to show the zero-fragment path and the
+    // tiered path agree on counts within a tier.
+    expect(rankMatches(s, "z").map((m) => m.key)).toEqual(["zzzzzzzzzz", "zz"]);
+  });
+
+  it("ties: shorter key, then byte-lex", () => {
+    const s = new CandidateStore();
+    put(s, "cod", 2);
+    put(s, "cow", 2);
+    put(s, "codd", 2);
+    expect(rankMatches(s, "").map((m) => m.key)).toEqual(["cod", "cow", "codd"]);
+  });
+});
+
 describe("rankMatches — limits (PRD §04 h2.26: top 8)", () => {
   it("exports DEFAULT_LIMIT = 8", () => {
     expect(DEFAULT_LIMIT).toBe(8);
   });
 
-  it("15 same-prefix matches → exactly 8 results, the top-scoring ones", () => {
+  it("15 same-prefix matches → exactly 8 results, the highest-count ones", () => {
     const s = new CandidateStore();
     for (let i = 0; i < 15; i++) put(s, `lm${String(i).padStart(2, "0")}`, 15 - i);
     const out = rankMatches(s, "lm");
@@ -270,7 +373,7 @@ describe("rankMatches — limits (PRD §04 h2.26: top 8)", () => {
       "lm05",
       "lm06",
       "lm07",
-    ]); // counts 15…8, the top half
+    ]); // counts 15…8 — already the count-desc order (key 2 within tier 3)
     expect(out[0]!.description).toBe("session x15");
   });
 
@@ -298,16 +401,21 @@ describe("rankMatches — limits (PRD §04 h2.26: top 8)", () => {
   });
 });
 
-describe("rankMatches — ordinal interplay (salience carried, never sorted)", () => {
-  it("after nextOrdinal advances + a fresh sighting, menu order is UNCHANGED (content-derived)", () => {
+describe("rankMatches — ordinal interplay (salience carried; counts, not recency, order)", () => {
+  it("a fresh sighting reorders only through sessionCount — recency alone never does", () => {
     const s = new CandidateStore();
     put(s, "oldnews", 3, 1);
     put(s, "fresh", 1, 1);
-    expect(rankMatches(s, "").map((m) => m.key)).toEqual(["fresh", "oldnews"]);
+    // Count order: oldnews(3) > fresh(1).
+    expect(rankMatches(s, "").map((m) => m.key)).toEqual(["oldnews", "fresh"]);
     for (let i = 0; i < 80; i++) s.nextOrdinal(); // now = 81
     s.upsert(sighting({ key: "fresh", display: "fresh", ordinal: 81 }));
-    // Recency/counts no longer reorder the menu: stable text order.
-    expect(rankMatches(s, "").map((m) => m.key)).toEqual(["fresh", "oldnews"]);
+    // The fresh sighting raises fresh's count 1 → 2 — still below oldnews'
+    // 3, so the menu is unchanged. The ordinal/recency advance itself is
+    // invisible to the order; only the count component moved.
+    expect(rankMatches(s, "").map((m) => m.key)).toEqual(["oldnews", "fresh"]);
+    // Sanity: the count really moved (the assertion above is not vacuous).
+    expect(s.get("fresh")!.sessionCount).toBe(2);
   });
 
   it("salience in results uses the NEW currentOrdinal after the advance", () => {
@@ -449,11 +557,15 @@ describe("rankMatches — plural pruning (2026-09 owner rule)", () => {
     expect(rankMatches(s, "clas").map((m) => m.key)).toEqual(["class", "classes"]);
   });
 
-  it("pruning runs BEFORE the limit slice — a pruned plural frees its slot", () => {
+  it("pruning runs BEFORE the limit slice — a pruned plural frees its slot under count order", () => {
     const s = new CandidateStore();
+    put(s, "plugins", 9); // highest count — pre-slice it owns slot 1…
+    put(s, "plugin", 1); // len 6
     put(s, "plugged", 1); // len 7
-    put(s, "plugin", 1); // len 6 — pairs with plugins
-    put(s, "plugins", 1); // len 7
+    // Pre-slice order (§04 h2.29): plugins(9), then the count-1 pair by
+    // length: plugin(6), plugged(7). Pruning drops plugins AFTER the sort,
+    // and its freed slot goes to plugged — the pruned plural never
+    // consumes a slot under the new order either.
     expect(rankMatches(s, "plug", { limit: 2 }).map((m) => m.key)).toEqual([
       "plugin",
       "plugged", // plugins was pruned; its slot went to the next candidate
@@ -779,7 +891,9 @@ describe("admission threshold — fuzzThreshold gating (PRD §04 h2.28, plan 003
   it("zero-fragment listing bypasses the gate entirely (full listing, unchanged)", () => {
     const s = seed();
     // '#' alone: no anchor → no tiers → NO gate. Even extreme thresholds
-    // list every candidate in the (unchanged, content-derived) order.
+    // list every candidate in the zero-fragment order (sessionCount desc →
+    // shorter → byte-lex): zendesk(2) first, then the count-1 pair by
+    // length.
     const all = rankMatches(s, "", { fuzzThreshold: 100 });
     expect(all.map((m) => m.key)).toEqual([
       "zendesk",

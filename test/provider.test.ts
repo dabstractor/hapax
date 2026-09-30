@@ -402,8 +402,9 @@ describe("never-hijack acceptance (PRD §07)", () => {
 });
 
 describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", () => {
-  /** Fresh ze-fixture: Zendesk ×3 out-saliences zephyr ×1 → forced top is
-   *  "Zendesk" (same fixture as provider-live.test.ts). */
+  /** Fresh ze-fixture: Zendesk ×3 out-COUNTS zephyr ×1 → forced top is
+   *  "Zendesk" (same fixture as provider-live.test.ts; §04 h2.29 count
+   *  order within the tier-3 tie). */
   const zeStore = (): CandidateStore => {
     const s = new CandidateStore();
     put(s, "zendesk", 3, 9, { display: "Zendesk" });
@@ -427,7 +428,7 @@ describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", 
 
     expect(current.getSuggestions).not.toHaveBeenCalled(); // hapax answered
     expect(result?.items).toHaveLength(1);
-    expect(result?.items[0].value).toBe("zephyr");
+    expect(result?.items[0].value).toBe("Zendesk"); // count-desc top (h2.29)
     expect(result?.prefix).toBe("ze");
   });
 
@@ -488,7 +489,7 @@ describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", 
       force: false,
     });
 
-    expect(result?.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
+    expect(result?.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]); // count-desc (h2.29)
   });
 });
 // ── stock-context delegation (BUG-001) ──────────────────────────────────────

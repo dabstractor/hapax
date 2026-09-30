@@ -13,15 +13,25 @@
  * allocation-heavy work: one prefixRange call, one key slice, one get
  * per candidate, one sort of the (typically small) range.
  *
- * MENU ORDER (2026-09 redesign, drift from PRD §04 h2.26 recorded
- * here): compareRankedMatches is now CONTENT-DERIVED ONLY — shorter
- * key first, then byte-lex on the lowercase key. Salience is NOT a
- * sort key anymore: it decides MEMBERSHIP (admission bands) and
- * eviction, never position — a menu whose order depends on recency/
- * frequency reshuffles between keystrokes and sessions, defeating the
- * muscle memory completion exists to build. Ordering is pure text so
- * the same fragment always yields the same list: predictable, stable
- * while narrowing, and identical to editor/shell convention.
+ * MENU ORDER (2026-10 owner rule, spec §04 h2.29 — supersedes the
+ * retired 2026-09 content-derived order, kept as history below):
+ * compareRankedMatches is a 4-KEY TOTAL ORDER — tier desc (matchFragment's
+ * strictness class: exact prefix > contiguous tail > scattered) →
+ * sessionCount desc WITHIN a tier → shorter key → byte-lex. Among equally
+ * strict matches the more conversation-relevant word (higher raw
+ * sessionCount) belongs leftmost. The composite salience score still
+ * NEVER sorts: it decides MEMBERSHIP (the fuzzThreshold admission gate
+ * here, the admission bands in score.ts) and eviction; only its raw
+ * sessionCount component orders, and only among same-tier neighbors — a
+ * count difference can never cross a tier boundary. Two candidates swap
+ * positions ONLY when one's sessionCount strictly passes the other's
+ * within the same tier (owner-accepted churn; tiers and keys 3–4 stay
+ * content-derived, so narrowing keeps its shape). The zero-fragment
+ * listing ("#" alone) has no tiers — order is sessionCount desc →
+ * shorter → byte-lex. History: 2026-09 ordered purely by content
+ * (shorter key → byte-lex, counts invisible) so menus were keystroke-
+ * stable but conversation-blind; h2.29 trades that for relevance within
+ * the strictness tiers.
  * An empty result tells the provider to delegate (never an empty menu) —
  * this function just returns [].
  *
@@ -110,11 +120,11 @@ export interface RankOptions {
 }
 
 /** Fuzzy match result (PRD §04 h2.28): `tier` is the strictness class
- *  (3 = exact prefix, 2 = contiguous tail, 1 = scattered subsequence);
- *  `score` is the admission score 0–100 — threshold-gated before ranking
- *  (the discard lives in rankMatches, P1.M2.T1.S2), NEVER order-
- *  determining: menu position stays content-derived
- *  (compareRankedMatches). */
+ *  (3 = exact prefix, 2 = contiguous tail, 1 = scattered subsequence) —
+ *  also compareRankedMatches' ORDER key 1; `score` is the admission
+ *  score 0–100 — threshold-gated before ranking (the discard lives in
+ *  rankMatches, P1.M2.T1.S2) and NEVER order-determining: only the tier
+ *  (and within it the raw sessionCount) sorts the menu. */
 export interface MatchResult {
   tier: 1 | 2 | 3;
   score: number;
@@ -248,16 +258,56 @@ export function matchFragment(f: string, c: string): MatchResult | null {
   };
 }
 
-/** Total order over the result list — CONTENT-DERIVED (2026-09
- * redesign): shorter key first, then byte-lex. Deliberately ignores
- * salience (see module doc: salience governs membership/eviction only,
- * never menu position). Exported for tests; rankMatches is the
- * production caller. */
-export function compareRankedMatches(a: RankedMatch, b: RankedMatch): number {
-  if (a.key.length !== b.key.length) return a.key.length - b.key.length;
+/** Internal sort record: the RankedMatch plus its matchFragment tier, so
+ *  the comparator can apply key 1 (strictness). Tier is deliberately NOT
+ *  on RankedMatch — the widget/provider never consume it — so rankMatches
+ *  strips the record down to the 5-field public contract before
+ *  returning. Exported for the comparator's contract and its tests
+ *  (tiers are not observable through rankMatches under today's
+ *  prefix scan; they become load-bearing when P1.M2.T2.S2 generalizes
+ *  the scan to the first-char bucket). Zero-fragment listings carry a
+ *  uniform tier 0, making key 1 a no-op there by construction. */
+export interface RankedSortRecord {
+  tier: number;
+  m: RankedMatch;
+}
+
+/** Total order over the result list — the 2026-10 owner rule (spec
+ *  §04 h2.29), a 4-key total order:
+ *
+ *  1. tier desc — matchFragment strictness: exact prefix (3) >
+ *     contiguous tail (2) > scattered (1). Strictness ALWAYS wins: no
+ *     sessionCount difference crosses a tier boundary (the 1-count
+ *     exact-prefix word outranks the 40-count scattered one).
+ *  2. sessionCount desc WITHIN a tier — the more conversation-relevant
+ *     word leftmost. RAW store counts only: the composite salience
+ *     score still never sorts (membership/eviction only, see module
+ *     doc); its sessionCount component is this key.
+ *  3. shorter key first.
+ *  4. byte-lex on the lowercase key (keys are ASCII, so UTF-16 code-unit
+ *     comparison equals byte order; locale-independent).
+ *
+ *  STABILITY CLAIM: two candidates swap ONLY when one's sessionCount
+ *  strictly passes the other's within the same tier — same-tier churn is
+ *  the owner-accepted cost; keys 1/3/4 are content-derived, so the menu
+ *  stays stable while narrowing. Zero-fragment records share tier 0, so
+ *  keys 2–4 order them (sessionCount desc → shorter → byte-lex).
+ *  Retired history: the 2026-09 order was length → byte-lex with counts
+ *  invisible. Exported for tests; rankMatches is the production caller. */
+export function compareRankedMatches(
+  a: RankedSortRecord,
+  b: RankedSortRecord,
+): number {
+  if (a.tier !== b.tier) return b.tier - a.tier; // key 1: strictness desc
+  const ca = a.m.sessionCount;
+  const cb = b.m.sessionCount;
+  if (ca !== cb) return cb - ca; // key 2: raw session count desc (within tier)
+  if (a.m.key.length !== b.m.key.length) {
+    return a.m.key.length - b.m.key.length; // key 3: shorter key
+  }
   // Byte order (keys are ASCII, so UTF-16 code-unit comparison equals
   // byte order; locale-independent). The menu never shows a visible tie.
-  return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  return a.m.key < b.m.key ? -1 : a.m.key > b.m.key ? 1 : 0;
 }
 
 /**
@@ -282,10 +332,14 @@ export function compareRankedMatches(a: RankedMatch, b: RankedMatch): number {
  * Accepts any prefix casing — it is lowercased BEFORE prefixRange, since
  * prefixRange deliberately throws RangeError on non-lowercase input
  * (caller-bug guard in store.ts). Returns at most `opts.limit` (default
- * 8) results in compareRankedMatches order (content-derived: shorter
- * key → byte-lex; salience never sorts — see module doc). Word `description` is `"session
+ * 8) results in compareRankedMatches order (spec §04 h2.29: tier desc →
+ * sessionCount desc within tier → shorter key → byte-lex; the composite
+ * salience score never sorts — only its raw sessionCount component
+ * does, within tiers; zero-fragment listings have no tiers and order by
+ * sessionCount desc → shorter → byte-lex). Word `description` is `"session
  * x" + sessionCount` (ASCII x per the work-item contract, e.g. "session
- * x12"). `salience` is the exact unquantized value.
+ * x12"). `salience` is the exact unquantized value; `sessionCount` is
+ * copied from the store entry and agrees with the description.
  *
  * @param store the session candidate store (accepted, never constructed)
  * @param prefix the user's fragment so far, any casing
@@ -307,35 +361,48 @@ export function rankMatches(
   const keys = store.sortedKeysSnapshot().slice(start, end);
   const ordinal = store.currentOrdinal();
   const threshold = opts.fuzzThreshold ?? DEFAULT_FUZZ_THRESHOLD;
-  const matches: RankedMatch[] = [];
+  // Tier-carrying sort records (RankedSortRecord): the comparator needs
+  // each match's strictness class; the public RankedMatch must not carry
+  // it — records are stripped to `m` after the sort. Zero-fragment
+  // records share tier 0 (no tiers on the "#"-alone listing), making the
+  // comparator's key 1 a no-op there by construction.
+  const recs: RankedSortRecord[] = [];
   for (const k of keys) {
+    let tier = 0; // zero-fragment: tier-agnostic records (keys 2–4 order)
     // §04 h2.28 admission gate (P1.M2.T1.S2): discard below-threshold
     // matches BEFORE ranking — inside the loop, before the push, so they
-    // never enter `matches` and never render. Zero-fragment skips the
+    // never enter the result and never render. Zero-fragment skips the
     // gate (matchFragment("") is null by contract; gating on it would
     // empty the '#'-alone listing). The comparison is STRICT: a score
     // exactly at the threshold survives.
     if (lower !== "") {
       const m = matchFragment(lower, k);
       if (m === null || m.score < threshold) continue;
+      tier = m.tier;
     }
     const c = store.get(k); // undefined if evicted since the rebuild — skip
     if (!c) continue;
-    matches.push({
-      key: c.key,
-      display: c.display, // insertion form exactly as stored (h2.27; rule 4d edges ride along)
-      description: `session x${c.sessionCount}`, // ASCII x per item contract
-      salience: salience(c, ordinal), // exact unquantized value
+    recs.push({
+      tier,
+      m: {
+        key: c.key,
+        display: c.display, // insertion form exactly as stored (h2.27; rule 4d edges ride along)
+        description: `session x${c.sessionCount}`, // ASCII x per item contract
+        salience: salience(c, ordinal), // exact unquantized value
+        sessionCount: c.sessionCount, // order key 2 within a tier (§04 h2.29)
+      },
     });
   }
 
   // Sort of the (typically small) set: O(r log r), well under the <1 ms
-  // keystroke gate at realistic sizes. Content-derived order (module
-  // doc): shorter key → byte-lex — salience is carried per item for
-  // diagnostics/eviction parity but NEVER sorts the menu. If the
-  // P1.M4.T1.S2 bench pass ever shows huge hot ranges, a partial top-N
-  // selection is the documented fallback — keep it simple until measured.
-  matches.sort(compareRankedMatches);
+  // keystroke gate at realistic sizes. §04 h2.29 order (module doc):
+  // tier desc → sessionCount desc within tier → shorter → byte-lex; the
+  // salience value is carried per item for diagnostics/eviction parity
+  // but NEVER sorts the menu. If the P1.M4.T1.S2 bench pass ever shows
+  // huge hot ranges, a partial top-N selection is the documented
+  // fallback — keep it simple until measured.
+  recs.sort(compareRankedMatches);
+  const matches = recs.map((r) => r.m); // strip the internal tier before return
 
   // PLURAL PRUNING (2026-09 owner rule, spec 04): when a result set
   // contains both a key and that key + "s", the plural is redundant
