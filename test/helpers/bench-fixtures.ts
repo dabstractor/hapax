@@ -11,7 +11,9 @@
  *                                   distinct synthetic keys (deterministic
  *                                   mulberry32 PRNG, interleaved ordinals,
  *                                   mixed rankGroup/fromUser/properName,
- *                                   ~150-candidate "co"/"pr" hot ranges).
+ *                                   first-char buckets of ~730–910 keys
+ *                                   (measured 891 for 'c' / 913 for 'p' at
+ *                                   cap 20k — the T2.S2 gates query these).
  *   - makeSyntheticDict(n, seed)  → { buffer, words } via buildDictBinary
  *                                   (the P1.M1.T2.S2 fixture writer — its
  *                                   output round-trips the real loader),
@@ -51,11 +53,15 @@ const letter = (rng: () => number): string =>
 
 /**
  * One synthetic store key. ~0.75% of keys land on each measured hot
- * prefix ("co", "pr") → ~150-candidate ranges at cap 20k (the PRD's
- * "realistic hot range 20–200"); the rest scatter across the 2-char
- * prefix space (676 slots ⇒ ~29 candidates each), so no other range
- * dominates the query bench. The base-36 index tag guarantees uniqueness
- * (no accidental key merges shrinking the store below cap).
+ * prefix ("co", "pr") → ~150-candidate fragment ranges at cap 20k; the
+ * rest scatter across the 2-char prefix space (676 slots ⇒ ~29
+ * candidates each). At the FIRST-CHAR level — what the T2.S2 fuzzy scan
+ * actually enters (§06 h2.38) — this yields near-uniform buckets of
+ * ~n/26 ≈ 770: measured 726–913 at cap 20k (seed 42), with 'p' (913)
+ * and 'c' (891) the hottest since the co/pr bonuses stack onto them —
+ * so gate a's sanity asserts a real bucket, never a sliver. The base-36
+ * index tag guarantees uniqueness (no accidental key merges shrinking
+ * the store below cap).
  */
 function storeWord(rng: () => number, i: number): string {
   const r = rng();

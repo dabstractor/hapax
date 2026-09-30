@@ -448,7 +448,10 @@ export class CandidateStore {
    *  successor arithmetic for clarity and 0x7A→0x7B rollover immunity).
    *  Empty store or no match → [n, n]; "" → [0, n] (end == length is
    *  valid). This is the ONLY binary-search surface over the store —
-   *  query.ts (P1.M2.T5.S1) consumes it exclusively. */
+   *  query.ts (P1.M2.T5.S1) consumes it exclusively. Since P1.M2.T2.S2
+   *  query.ts enters at the fragment's FIRST CHAR (the anchored-fuzzy
+   *  anchor, §06 h2.38), so query ranges are first-char buckets
+   *  (~n/26 ≈ 730–910 keys at cap 20k), not fragment-scoped spans. */
   prefixRange(prefix: string): [number, number] {
     if (prefix !== prefix.toLowerCase()) {
       throw new RangeError(`prefixRange: prefix must be lowercase, got "${prefix}"`);

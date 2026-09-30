@@ -43,7 +43,13 @@ import {
 
 /** Gate b/c/d share one synthetic dictionary file (built once, in tmp). */
 const DICT_WORDS = 20_000;
-const HOT_PREFIX = "co"; // ~150-candidate range at cap (see bench-fixtures)
+// T2.S2: queries enter at the FIRST-CHAR bucket (the anchored-fuzzy
+// anchor, §06 h2.38). 'p' is the fixture's hottest bucket — measured 913
+// keys at cap 20k (seed 42; ~n/26 ≈ 770 rationale, uniform chars 726–800,
+// 'c' = 891 — see bench-fixtures storeWord). Single-char fragment ⇒ every
+// bucket key matches tier 3, so the gate measures the widest honest
+// scan + rank + sort the keystroke path can see.
+const HOT_PREFIX = "p";
 
 let tmpDir = "";
 let dictPath = "";
@@ -67,13 +73,17 @@ afterAll(() => {
 
 const gateAStore = makeStore(STORE_CAP); // fill cost is setup, not measured
 
-describe("perf gate a — 20k-candidate prefix query + rank + top 8", () => {
-  it("p99 of 1000 queries over a ~150-candidate hot range stays under 3 ms (3× the 1 ms budget)", () => {
-    // Sanity: the hot prefix must actually match a realistic range —
-    // a degenerate range would make the measurement dishonestly cheap.
+describe("perf gate a — 20k-candidate fuzzy query (first-char bucket) + rank + top 8", () => {
+  it("p99 of 1000 queries over the ~910-key 'p' first-char bucket stays under 3 ms (3× the 1 ms budget)", () => {
+    // Sanity: the query enters at the FIRST-CHAR bucket (T2.S2 anchored-
+    // fuzzy scan, §06 h2.38) — assert a non-degenerate bucket, not a
+    // sliver: measured 913 keys for 'p' at cap 20k (seed 42; ~n/26 ≈ 770
+    // rationale). Floor 500 ≈ ⅔ of measured — far above realistic fixture
+    // drift, far below any bucket that would make the gate dishonest.
     const [start, end] = gateAStore.prefixRange(HOT_PREFIX);
     const range = end - start;
     expect(gateAStore.size).toBe(STORE_CAP);
+    expect(range).toBeGreaterThan(500);
 
     for (let i = 0; i < 100; i++) {
       rankMatches(gateAStore, HOT_PREFIX, { limit: 8 }); // warmup (JIT, index)
@@ -95,8 +105,44 @@ describe("perf gate a — 20k-candidate prefix query + rank + top 8", () => {
         `p99=${p99.toFixed(3)}ms median=${median.toFixed(3)}ms max=${max.toFixed(3)}ms ` +
         `(budget <1ms, CI bound <3ms)`,
     );
-    expect(range).toBeGreaterThan(0);
+    expect(range).toBeGreaterThan(500);
     expect(p99).toBeLessThan(3);
+  });
+});
+
+// ── Gate a3 — zero-fragment ('#'-alone) listing: LOOSE sanity, NOT a gate ───
+
+// The '#' alone listing scans the FULL store (prefixRange("") → [0, n]) with
+// the matchFragment gate skipped, then sorts EVERY candidate (T2.S2's
+// comparator) before the top-8 slice — at cap 20k that is a ~20k-record
+// sort per query. The §02 h3.1 <1 ms budget covers the ANCHORED keystroke
+// path (gate a), not this menu-open listing; this bound is a TRIPWIRE:
+// measured p99 7.2 ms / median 5.8 ms / max 10.0 ms over 200 queries at
+// cap 20k (this machine) — ~6–10× budget, in the PRP sketch's 10×-budget
+// spirit, but a 10 ms CI assertion would flake on slower hardware (gate
+// c's calibration lesson), so the bound is 25 ms. A blowup past it means
+// the full-store sort regressed pathologically — the documented fallback
+// (bounded top-N selection, query.ts module doc) should then be discussed,
+// never silently loosened further.
+describe("perf gate a3 — zero-fragment full-store listing (loose sanity, not the §09 gate)", () => {
+  it("p99 of 200 full-store '#' listings stays under 25 ms (tripwire; actuals logged)", () => {
+    const dts: number[] = [];
+    // 200 samples, not 50: p99 over 50 IS the max (ceil(0.99·50) = 50) —
+    // maximally flaky; 200 gives a real 99th percentile for ~1.6 s wall.
+    for (let i = 0; i < 200; i++) {
+      const t = performance.now();
+      rankMatches(gateAStore, "", { limit: 8 });
+      dts.push(performance.now() - t);
+    }
+    dts.sort((a, b) => a - b);
+    const p99 = dts[Math.ceil(0.99 * dts.length) - 1];
+    const median = dts[Math.floor(dts.length / 2)];
+    console.log(
+      `[gate a3] zero-fragment full-store listing p99=${p99.toFixed(3)}ms ` +
+        `median=${median.toFixed(3)}ms max=${dts[dts.length - 1]!.toFixed(3)}ms ` +
+        `(measured floor 5.8–7.2ms p99; sanity only — §09 budget covers the anchored hot path)`,
+    );
+    expect(p99).toBeLessThan(25);
   });
 });
 
@@ -113,21 +159,33 @@ describe("perf gate a — 20k-candidate prefix query + rank + top 8", () => {
 // cold first query stays under the 3× CI bound.
 describe("perf gate a2 — cold first query on a fresh 20k store (no warmup)", () => {
   it("the very first rankMatches after a 20k fill stays under 3 ms (3× the 1 ms budget)", () => {
+    // T2.S2 RE-BASE NOTE: the cold query now ranks a full first-char
+    // bucket (~913 keys vs the old ~150 'co' range), roughly doubling the
+    // typical cold cost (median ~1.1 ms, typical max ~1.9 ms — measured).
+    // N grew 40 → 120 for a statistical reason: ceil(0.99·40) = 40, so
+    // the old "p99" was literally the MAX sample, and a sporadic
+    // scheduler/GC spike (5.6 ms observed once) failed the gate while the
+    // median sat at 1 ms. At N=120 p99 excludes the 2 worst samples —
+    // noise-tolerant, while the regression this gate polices (the old
+    // whole-array re-sort: ~5 ms on EVERY cold query, deterministic) is
+    // ≥ 99 of 120 samples and still trips it by 2.7×.
     const cold: number[] = [];
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 120; i++) {
       const s = makeStore(STORE_CAP); // fill cost is setup, not measured
       const t = performance.now();
       rankMatches(s, HOT_PREFIX, { limit: 8 }); // COLD: no warmup query first
       cold.push(performance.now() - t);
     }
     cold.sort((a, b) => a - b);
-    // p99 = ⌈0.99·N⌉-th of N sorted samples (1-indexed).
+    // p99 = ⌈0.99·N⌉-th of N sorted samples (1-indexed) = the 119th of
+    // 120 — a real percentile, no longer the max.
     const p99 = cold[Math.ceil(0.99 * cold.length) - 1]!;
     const median = cold[Math.floor(cold.length / 2)]!;
     console.log(
       `[gate a2] COLD first-query p99=${p99.toFixed(3)}ms median=${median.toFixed(3)}ms ` +
         `max=${cold[cold.length - 1]!.toFixed(3)}ms over ${cold.length} fresh 20k stores ` +
-        `(budget <1ms, CI bound <3ms; pre-fix cold p99 measured 1.4–3.3ms)`,
+        `(budget <1ms, CI bound <3ms; pre-fix cold p99 measured 1.4–3.3ms; ` +
+        `post-T2.S2 typical max ~1.9ms, sporadic spikes tolerated by the N=120 percentile)`,
     );
     expect(p99).toBeLessThan(3);
   });

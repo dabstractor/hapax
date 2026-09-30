@@ -86,15 +86,25 @@ const put = (
  *  h2.29) — tier desc → sessionCount desc within tier → shorter key →
  *  byte-lex — the same math rankMatches must apply, computed here from
  *  matchFragment + store entries, deliberately independent of
- *  compareRankedMatches. Non-empty prefixes: every startsWith key is an
- *  exact prefix (tier 3, mirroring today's prefix scan); zero-fragment
- *  has no tiers (matchFragment(""), is null → uniform tier 0). The
- *  composite salience is NOT a sort key. */
-const expectedOrder = (s: CandidateStore, prefix: string): string[] =>
-  s
+ *  compareRankedMatches. Membership mirrors the T2.S2 first-char-bucket
+ *  scan: non-empty fragments consider every key sharing the fragment's
+ *  first char that survives matchFragment at the default fuzzThreshold
+ *  (tiers 3/2/1); zero-fragment lists everything (no tiers —
+ *  matchFragment("") is null → uniform tier 0). The composite salience
+ *  is NOT a sort key. */
+const expectedOrder = (s: CandidateStore, prefix: string): string[] => {
+  const lower = prefix.toLowerCase();
+  const bucket = lower === "" ? "" : lower[0];
+  return s
     .entries()
-    .filter((c) => c.key.startsWith(prefix))
-    .map((c) => ({ tier: matchFragment(prefix, c.key)?.tier ?? 0, c }))
+    .filter((c) => c.key.startsWith(bucket))
+    .flatMap((c) => {
+      if (lower === "") return [{ tier: 0, c }];
+      const m = matchFragment(prefix, c.key);
+      return m !== null && m.score >= DEFAULT_FUZZ_THRESHOLD
+        ? [{ tier: m.tier, c }]
+        : [];
+    })
     .sort((a, b) =>
       a.tier !== b.tier
         ? b.tier - a.tier
@@ -109,6 +119,7 @@ const expectedOrder = (s: CandidateStore, prefix: string): string[] =>
                 : 0,
     )
     .map((r) => r.c.key);
+};
 
 describe("rankMatches — empty results (PRD §04)", () => {
   it("empty store → []", () => {
@@ -283,9 +294,11 @@ describe("rankMatches — ordering (spec §04 h2.29: tier → count → shorter 
 });
 
 describe("compareRankedMatches — 4-key order (spec §04 h2.29, comparator level)", () => {
-  /** Direct comparator fixture — tiers are not observable through
-   *  rankMatches under today's prefix scan (every scanned candidate is an
-   *  exact prefix), so the tier key is pinned here, where tiers exist. */
+  /** Direct comparator fixture — tier-1 stays invisible through
+   *  rankMatches at the default threshold (T1 max 50 < 60), so
+   *  cross-tier order is pinned here, where tiers exist; tier-2 IS
+   *  observable since T2.S2's bucket scan, but a count can never cross
+   *  a tier boundary either way (pinned again below at this level). */
   const rec = (tier: number, key: string, sessionCount: number) => ({
     tier,
     m: {
@@ -501,10 +514,13 @@ describe("rankMatches — one-word invariant (PRD §07 h2.44, R1)", () => {
 describe("rankMatches — perf sanity (PRD §02 h3.1: < 1 ms per keystroke)", () => {
   it("20k-entry store: 1000 queries complete in < 1000 ms total", () => {
     const s = new CandidateStore();
-    // Distribute keys over 26 first letters so the queried prefix range
-    // is realistic (~770 keys — a mid-typing keystroke), not whole-store.
+    // Distribute keys over 26 FIRST letters so the queried bucket (the
+    // T2.S2 scan entry) is realistic (~770 keys — a mid-typing
+    // keystroke), not whole-store. The fixed second char 'z' makes every
+    // qa…–qz… key an exact "qz" prefix inside its own bucket.
     const key = (i: number): string =>
-      "q" + "abcdefghijklmnopqrstuvwxyz".charAt(i % 26) +
+      "abcdefghijklmnopqrstuvwxyz".charAt(i % 26) +
+      "z" +
       String(i).padStart(5, "0");
     for (let i = 0; i < 20_000; i++) {
       s.upsert(
@@ -738,18 +754,14 @@ describe("matchFragment — anchored fuzzy (PRD §04 h2.28, plan 003)", () => {
 
 // ── Admission threshold — fuzzThreshold gating (PRD §04 h2.28, plan 003 S2) ──
 //
-// SCAN-SEQUENCING NOTE: today's rankMatches scans the store with
-// prefixRange(fragment) — every scanned key is therefore an exact prefix
-// (tier 3, score 100), and the §04 h2.28 gate can only bite for
-// thresholds > 100 (exercised below to pin the comparison direction and
-// the absent = DEFAULT_FUZZ_THRESHOLD semantics through the public seam).
-// Tiers 2/1 become reachable through rankMatches when P1.M2.T2.S2
-// generalizes the scan to the first-char bucket (r3 doc §8); the gate
-// itself — its placement inside the candidate loop (BEFORE the push, so
-// discarded candidates are never ranked), its strict score < threshold
-// comparison, and its default — are landed HERE and pinned at the
-// matcher/constants level, so T2.S2's activation is a one-line scan
-// change with its evidence already in place.
+// SCAN-SEQUENCING NOTE (updated by T2.S2): rankMatches now scans the
+// FIRST-CHAR bucket, so the gate is load-bearing at the default — tier-2
+// tail matches (≤ 85) admit above it, tier-1 scattered matches (≤ 50)
+// stay invisible at 60. The historical pins below (thresholds 150/100)
+// still hold: they prove the comparison direction and the absent =
+// DEFAULT_FUZZ_THRESHOLD semantics through the public seam, and the
+// tier-2/1 boundary cases pinned at the matcher level are now reachable
+// end-to-end (see the first-char-bucket-scan describe).
 
 describe("admission threshold — fuzzThreshold gating (PRD §04 h2.28, plan 003 S2)", () => {
   /** Keys with known matcher traces: zendesk (tier-2 probe 'zsk' → 62),
@@ -905,5 +917,53 @@ describe("admission threshold — fuzzThreshold gating (PRD §04 h2.28, plan 003
       "z_lwlock",
       "handleresponseproxy",
     ]);
+  });
+});
+
+// ── First-char-bucket scan (P1.M2.T2.S2, §06 h2.38) ─────────────────────
+
+describe("rankMatches — first-char-bucket scan (P1.M2.T2.S2)", () => {
+  it("tier-2 tail matches in the same bucket now surface (invisible pre-T2.S2)", () => {
+    const s = new CandidateStore();
+    put(s, "zsketch", 1);
+    put(s, "zendesk", 2);
+    // 'zsk' IS an exact prefix of zsketch (tier 3); it never prefix-
+    // matches zendesk, but it IS a tier-2 contiguous-tail match inside
+    // it (score 62 ≥ default 60) — under the old fragment-scoped range
+    // the scan never saw it. Tier 3 outranks tier 2 even at 1 vs 2
+    // counts (§04 h2.29 key 1 is strictness; counts never cross tiers).
+    expect(rankMatches(s, "zsk").map((m) => m.key)).toEqual([
+      "zsketch",
+      "zendesk",
+    ]);
+  });
+
+  it("tier-1 scattered matches stay invisible at the default, admit under a lowered threshold", () => {
+    const s = new CandidateStore();
+    put(s, "handleresponseproxy", 3);
+    // The 'h' bucket IS scanned since T2.S2; the tier-1 score (43) is
+    // what keeps it out at the default 60 — the gate, not the range.
+    expect(rankMatches(s, "hrp")).toEqual([]);
+    expect(
+      rankMatches(s, "hrp", { fuzzThreshold: 0 }).map((m) => m.key),
+    ).toEqual(["handleresponseproxy"]);
+  });
+
+  it("anchor holds: different-first-char keys are never scanned, never match", () => {
+    const s = new CandidateStore();
+    put(s, "zendesk", 4);
+    put(s, "pzendesk", 9); // 9× the count — irrelevant: never in the 'z' bucket
+    // 'zp' matches nothing: zendesk has no 'p' after the anchor, and
+    // pzendesk lives in the 'p' bucket — the scan never leaves 'z'.
+    expect(rankMatches(s, "zp", { fuzzThreshold: 0 })).toEqual([]);
+  });
+
+  it('empty fragment keeps the full-store listing through prefixRange("")', () => {
+    const s = new CandidateStore();
+    put(s, "alpha", 2);
+    put(s, "beta", 1);
+    // bucket "" → [0, n]: both keys, zero-fragment order (count desc →
+    // shorter → lex), gate bypassed.
+    expect(rankMatches(s, "").map((m) => m.key)).toEqual(["alpha", "beta"]);
   });
 });

@@ -28,7 +28,10 @@ import {
   makeSyntheticDict,
 } from "../helpers/bench-fixtures.js";
 
-const HOT_PREFIX = "co"; // ~150-candidate hot range at cap 20k
+// T2.S2: queries enter at the FIRST-CHAR bucket (the anchored-fuzzy
+// anchor). 'p' is the fixture's hottest bucket — measured 913 keys at cap
+// 20k (seed 42; see bench-fixtures storeWord for the distribution).
+const HOT_PREFIX = "p";
 let keepAlive = 0; // sink for gate-d cycle results (bench fns return void)
 
 console.log(
@@ -59,7 +62,7 @@ afterAll(() => {
 
 describe("PRD §09 core gates — measured actuals (hard bounds: test/perf-gates.test.ts)", () => {
   bench(
-    "gate a: query — 20k-candidate store, prefix 'co' (~150 range) + rank + top 8 [budget <1ms p99]",
+    "gate a: query — 20k-candidate store, first-char bucket 'p' (~913 range) + rank + top 8 [budget <1ms p99]",
     () => {
       rankMatches(gateAStore, HOT_PREFIX, { limit: 8 });
     },

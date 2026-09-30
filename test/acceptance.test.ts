@@ -533,9 +533,19 @@ describe("acceptance item 5 — fake API keys are never suggested (large-100k.js
         expect(cores.some((core) => m.key.includes(core) || m.display.includes(core))).toBe(false);
       }
     }
-    // And the exact probe labels from expected.md: all empty.
+    // And the exact probe labels from expected.md: nothing KEY-DERIVED
+    // ever surfaces. (T2.S2 re-base: these fragments scan their FULL
+    // first-char bucket now, so unrelated same-bucket words legitimately
+    // fuzzy-match — "sk" tier-2-matches "socket*" (s…k…, score ≈76) —
+    // that is §04 h2.28's anchored-fuzzy feature working as designed,
+    // not a leak; the acceptance guarantee is the absence of key bytes.)
     for (const prefix of ["sk", "gh", "sk-4f9", "ghp_9f8"]) {
-      expect(rankMatches(store, prefix), `prefix "${prefix}"`).toEqual([]);
+      for (const m of rankMatches(store, prefix)) {
+        expect(
+          cores.some((core) => m.key.includes(core) || m.display.includes(core)),
+          `prefix "${prefix}" leaked key-derived candidate ${m.key}`,
+        ).toBe(false);
+      }
     }
     // Direct store check: the keys themselves were never stored.
     expect(store.get(FAKE_SK.toLowerCase())).toBeUndefined();

@@ -10,8 +10,9 @@
  * chaining). Runs on EVERY keystroke (the provider, P1.M3.T3.S2, calls
  * this in getSuggestions) and must complete in < 1 ms on a
  * 20k-candidate store (PRD §02 h3.1) — pure computation, no
- * allocation-heavy work: one prefixRange call, one key slice, one get
- * per candidate, one sort of the (typically small) range.
+ * allocation-heavy work: one prefixRange call (the first-char bucket,
+ * measured p99 0.4 ms over ~900 keys at cap), one key slice, one get
+ * per candidate, one sort of the matches.
  *
  * MENU ORDER (2026-10 owner rule, spec §04 h2.29 — supersedes the
  * retired 2026-09 content-derived order, kept as history below):
@@ -141,7 +142,8 @@ const clampScore = (n: number): number => (n < 0 ? 0 : n > 100 ? 100 : n);
  * only match mode). Consumed by rankMatches' admission gate since
  * P1.M2.T1.S2: a candidate whose score is below the active fuzzThreshold
  * is discarded inside rankMatches' candidate loop, before ranking. The
- * scan itself is generalized to the first-char bucket by P1.M2.T2.S2.
+ * scan itself IS the first-char bucket: rankMatches enters the store's
+ * sorted index at the fragment's first char (P1.M2.T2.S2).
  *
  * Rules:
  *  - ANCHOR: the fragment's first char must equal the candidate's first
@@ -311,8 +313,10 @@ export function compareRankedMatches(
 }
 
 /**
- * Rank the store's candidates whose lowercase key starts with `prefix`
- * into the top-N result (words-only — the one-word invariant of
+ * Rank the store's candidates anchored-matching `prefix` (§04 h2.28:
+ * exact prefix, contiguous tail, or — below the fuzzThreshold —
+ * scattered subsequence; all share the fragment's first char) into the
+ * top-N result (words-only — the one-word invariant of
  * PRD §04 h2.26 + §07 h2.44: every returned display is a single word,
  * i.e. one whitespace-free token; rule 4d path displays qualify —
  * edges differ from the key, whitespace never appears).
@@ -323,11 +327,12 @@ export function compareRankedMatches(
  * `matches` — below-threshold matches are discarded inside the
  * candidate loop, never ranked, never rendered. Zero-fragment ("",
  * the `#`-alone listing) bypasses the gate entirely: no anchor → no
- * tiers → every candidate flows to the ranking path. Under today's
- * prefix-scan (prefixRange(fragment)) every scanned key is an exact
- * prefix — tier 3, score TIER3_SCORE — so the gate only bites for
- * thresholds > 100; it becomes load-bearing for tiers 2/1 when
- * P1.M2.T2.S2 generalizes the scan to the first-char bucket.
+ * tiers → every candidate flows to the ranking path. Under the
+ * first-char-bucket scan (below) the gate is LOAD-BEARING at the
+ * default threshold: tier-2 tail matches (≤ TIER2_BASE_SCORE) admit
+ * while above it, and every tier-1 scattered match (max
+ * TIER1_BASE_SCORE = 50 < 60) stays invisible unless the threshold is
+ * lowered.
  *
  * Accepts any prefix casing — it is lowercased BEFORE prefixRange, since
  * prefixRange deliberately throws RangeError on non-lowercase input
@@ -354,10 +359,19 @@ export function rankMatches(
   const limit = opts.limit ?? DEFAULT_LIMIT;
   if (limit <= 0) return []; // defensive: nothing can be returned
   const lower = prefix.toLowerCase(); // BEFORE prefixRange — it throws on uppercase
+  // Anchored-fuzzy scan entry (§04 h2.28 / §06 h2.38, P1.M2.T2.S2): the
+  // fragment's first char is matchFragment's exact ANCHOR, so the scan
+  // enters the sorted index at the FIRST-CHAR bucket — the full fragment
+  // no longer restricts the range, because tier-2 (contiguous tail) and
+  // tier-1 (scattered) matches live anywhere in the bucket. Membership
+  // is decided solely by matchFragment + fuzzThreshold in the loop below,
+  // which already runs for every scanned key. The empty fragment keeps
+  // the full-store listing: prefixRange("") → [0, n].
+  const bucket = lower === "" ? "" : lower[0];
   // Ordering invariant (module doc): prefixRange rebuilds a dirty index,
   // so only a snapshot taken AFTER this call is guaranteed to agree with
   // get() — S3 eviction may have removed keys since the last rebuild.
-  const [start, end] = store.prefixRange(lower);
+  const [start, end] = store.prefixRange(bucket);
   const keys = store.sortedKeysSnapshot().slice(start, end);
   const ordinal = store.currentOrdinal();
   const threshold = opts.fuzzThreshold ?? DEFAULT_FUZZ_THRESHOLD;

@@ -227,7 +227,7 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "Ranking rewrite + store scan entry generalization",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Retire the content-derived order: compareRankedMatches becomes tier desc -> sessionCount desc -> shorter key -> byte-lex; RankedMatch gains sessionCount; zero-fragment listing; plural pruning stays before the limit slice. Generalize prefixRange usage to a first-char range with perf gates re-based.",
               "subtasks": [
                 {
@@ -253,7 +253,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S2",
                   "title": "prefixRange -> first-char range + perf gate re-basing (p99 hold)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1"
