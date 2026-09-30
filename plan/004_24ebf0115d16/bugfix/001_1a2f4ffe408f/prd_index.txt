@@ -1,0 +1,13 @@
+h1.0 Bug Fix Requirements
+ h2.0 Overview
+ h2.1 Critical Issues (Must Fix)
+ h2.2 Major Issues (Should Fix)
+  h3.0 Issue 1: M2 chained completion (zero-typed-char successor offers) is entirely non-functional on the widget PRIMARY display path
+ h2.3 Minor Issues (Nice to Fix)
+  h3.1 Issue 1: Tokenizer emits OVERLAPPING tokens when a technical literal's trailing '_' trim straddles a base token — duplicate menu candidates
+  h3.2 Issue 2: Widget suppression keyed by numeric fragment START leaks across messages — first word of the next message silently loses its completion line
+  h3.3 Issue 3: 64KB chunk-boundary token shredding: a word straddling a slice edge is split, storing junk fragments and losing the real token
+ h2.4 Testing Summary
+ h2.5 Recommendations
+---
+para:17 list:3
