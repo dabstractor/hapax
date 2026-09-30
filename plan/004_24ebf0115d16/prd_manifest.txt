@@ -1,0 +1,10 @@
+b8a95cb3b6d7 spec/SPEC.md
+4b2d3667c718 spec/01-goals-and-scope.md
+21c9cfbede56 spec/02-architecture.md
+d07e673970cd spec/03-dictionary-format-and-build.md
+68a61bf0702f spec/04-tokenization-and-scoring.md
+c64c4d54fe46 spec/05-ingestion-pipeline.md
+5d734f6c9425 spec/06-candidate-store.md
+80fae9dc78d5 spec/07-completion-ui.md
+c85ad5c97279 spec/08-configuration.md
+04a7cb39d701 spec/09-testing-and-acceptance.md

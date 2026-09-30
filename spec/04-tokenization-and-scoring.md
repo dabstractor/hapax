@@ -394,7 +394,7 @@ salience(c) =
 - Weights are baked constants. **Not configurable.** Tuning happens in the
   codebase via 09's protocol, not at user runtime.
 
-## Query matching (anchored fuzzy; 2026-10 owner rule)
+## Query matching (anchored fuzzy + anchorless tier-0; 2026-10 owner rules)
 
 The plain prefix match is RETIRED. The typed fragment `f` (from word
 matching or after the trigger char, 07) matches candidate key `c` (both
@@ -443,12 +443,68 @@ calibration starting points (09 tuning protocol), not gospel; the tier
 BOUNDARIES (what is a prefix / contiguous tail / scattered match) are
 semantics, never tunable.
 
+**Tier 0 — anchorless contiguous run (2026-10 owner rule; status:
+adopted ahead of implementation — code lands with this spec).** When
+the ANCHORED scan (tiers 1–3, threshold-gated) returns ZERO results —
+and only then — one anchorless pass runs over the full store: the
+fragment appears as ONE contiguous run, EITHER placement — anywhere
+in the key, or at the first position (the owner's either/or; position
+0 is tier 3's territory whenever anchored results exist, so the
+anywhere arm is the operative one). Fragment floor **3 chars**;
+anchors, subsequence logic, and boundaries do not apply. Admission
+score:
+
+    tier 0: 85 − 40 · (runStart / len(c))   → ~45–85
+
+threshold-gated exactly like the other tiers (a run starting in the
+front ~62% of the key passes 60; late runs gate). Tier 0 sorts BELOW
+tier 1 — the strictness order extends to 3 > 2 > 1 > 0.
+
+Measured record (2026-10, rare-tail corpus — the class that actually
+admits; collisions counted only on fragments whose ANCHORED result is
+empty, the only case where the fallback fires): the fallback can
+never enrich a menu that would already open — it only rescues menus
+that would not appear. Cost: ~5% of common 3-char words rising to
+~20% at 7 chars summon a one-shot menu that narrows away as typing
+continues; the collisions are overwhelmingly morphological cousins
+(`said`→`unsaid`, `heard`→`unheard`, `people`→`townspeople`),
+accepted by the owner. Wins: mid-word recall no anchored rule can
+serve (`esk`→`zendesk`, `tok`→`session_token`) and, in particular,
+path-filename entry (`query`→`src/core/query.ts`, score 64) — rule-4d
+path tokens are opaque to subword splitting, so nothing else serves
+this. This AMENDS integration item 2 (09): "no menu for common
+words" now reads "no menu for common words WITH ANCHORED MATCHES; the
+zero-result fallback may surface contiguous-run cousins."
+
+**Performance.** The anchorless pass scans the full store (there is
+no first-char bucket to enter — measured 1.1–2.6 ms per query at the
+20k cap, synthetic). The < 1 ms keystroke budget keeps applying to
+the ANCHORED scan (unchanged, bucket-only); the tier-0 pass carries
+its own budget — < 3 ms p99, CI gate at 3×, mirroring the existing
+gate structure — and fires only on the empty-anchored path, so the
+common case never pays it.
+
+**Trigger-char mode (`#`) loosening (2026-10 owner rule).** Under the
+trigger char the gates relax — `#` is hapax's explicit "search the
+session vocabulary" gesture, and the picker precedent (fzf, command
+palettes) puts promiscuous matching behind an explicit invocation,
+never in the ambient word-start path: (a) tier-0 anchorless runs are
+ALWAYS consulted — no zero-anchored-result precondition (`#query` →
+`src/core/query.ts` works directly); (b) scattered tier-1 matches are
+VISIBLE — the `#` mode's default threshold is **45** (vs ambient 60;
+45 sits under tier-1's max of 50, so only the strongest scattered
+matches admit — `#cfg` → `config_manager_service`). An explicitly set
+`fuzzThreshold` (08) overrides BOTH mode defaults. Successor
+chaining stays ANCHORED everywhere: chain arming and the chain gate
+consult tiers 1–3 only — tier-0 matches never arm or extend a chain.
+
 ## Query ranking (final result order)
 
 **2026-10 owner rule — frequency tie-breaking (settled).** Order is:
 
 1. **Strictness tier descending** (3 exact prefix > 2 contiguous tail
-   > 1 scattered). A 1-occurrence exact-prefix word outranks a
+   > 1 scattered > 0 anchorless run — 04 Query matching). A
+   1-occurrence exact-prefix word outranks a
    40-occurrence scattered match — strictness always wins first.
 2. **Within a tier: `sessionCount` descending** — conversation
    frequency breaks ties among equally strict matches (the owner's

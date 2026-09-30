@@ -204,6 +204,17 @@ Case-insensitive **anchored fuzzy** match (04 — first char exact,
 subsequence after, threshold-gated, tier-ranked); insertion uses
 candidate display casing.
 
+**Match gates per mode (2026-10 owner rules; 04).** Word matching is
+anchored-only PLUS the zero-result tier-0 fallback: one anchorless
+contiguous-run pass (fragment ≥ 3, score 85 − 40·runStart/len,
+threshold-gated) when — and only when — the anchored scan returns
+nothing. Trigger-char matching is the loose mode: tier-0 runs always
+consulted (no zero-result precondition; `#query` →
+`src/core/query.ts`) and scattered tier-1 visible (`#` default
+threshold 45 vs ambient 60; an explicit `fuzzThreshold` overrides
+both modes). Successor chaining stays anchored everywhere — tier-0
+matches never arm or extend a chain.
+
 ## Debounce, flicker, and the Tab contract
 
 Four interacting rules, implemented in the provider:

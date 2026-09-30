@@ -66,10 +66,20 @@
   render; `fuzzThreshold: 100` = exact-prefix-only mode; score
   arithmetic per 04's formula for each tier.
 - Ranking: tier descending always (a 1-count exact-prefix word
-  outranks a 40-count scattered match); sessionCount descending within
+  outranks a 40-count scattered match, which outranks any tier-0
+  anchorless run); sessionCount descending within
   a tier (counts reorder ONLY same-tier neighbors); shorter key, then
   byte-lex, as final ties; zero-fragment (`#` alone) = sessionCount
   desc then ties; plural pruning still runs before the limit slice.
+- Tier-0 anchorless fallback (2026-10): the contiguous run matches
+  ANYWHERE in the key (`esk` → `zendesk`, `query` →
+  `src/core/query.ts`); fragment floor 3; score 85 − 40·runStart/len
+  (position-gated at the default 60); fires ONLY when the anchored
+  scan returns zero — a non-empty anchored result is byte-identical
+  to pre-tier-0 output; `#` mode consults tier-0 unconditionally AND
+  surfaces scattered tier-1 at its 45 default (`#cfg` → `config`);
+  an explicit fuzzThreshold overrides both mode defaults; successor
+  chains arm/extend on anchored tiers only.
 
 **store.test.ts**
 - Upsert merge semantics (count, ordinals, sticky flags, rankGroup min).
@@ -143,8 +153,12 @@
    (M3 widget: the offer is one line below the input — `Zendesk | …`;
    arrows move the highlight; ← twice mid-word dismisses then moves
    the caret — boundary-Esc.)
-2. **No-hijack:** type ordinary prose continuously; keystrokes land verbatim,
-   no menu for common words, Tab with no selection = literal tab. While
+2. **No-hijack (amended 2026-10):** type ordinary prose continuously;
+   keystrokes land verbatim, no menu for common words WITH ANCHORED
+   MATCHES — the zero-result tier-0 fallback MAY surface one-shot
+   contiguous-run cousin menus (said→unsaid class, ~5–20% by length,
+   narrowing away as typing continues; 04); Tab with no selection =
+   literal tab. While
    the result line is visible only arrows/Escape/Tab are consumed
    (boundary-Esc returns the rest).
 3. **Restore:** `/resume` a 100k+ token session; store rebuilt in background
@@ -192,6 +206,7 @@ by unit tests alone:
 | Gate | Limit |
 |---|---|
 | 20k-candidate anchored-fuzzy query (first-char bucket + tiers + frequency sort + top 8) | < 1 ms p99 |
+| Tier-0 anchorless fallback full-store pass (fires only on empty anchored result; also `#` loose-mode scans) | < 3 ms p99 |
 | Dictionary load + full lookup sweep of 20k words | < 60 ms |
 | Ingest 800 KB synthetic session text | < 60 ms, yields every ≤ 64 KB |
 | Steady-state heap delta (dict + store) | < 6 MB |

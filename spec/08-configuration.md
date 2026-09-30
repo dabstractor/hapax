@@ -35,10 +35,14 @@ defaults, continue running. Missing files are normal.
                               // prints q + verdict (lowercase and
                               // Capitalized). Default: the baked constant
                               // in src/core/score.ts.
-  "fuzzThreshold": 60,      // 0–100: minimum anchored-fuzzy match score
-                              // (04) for a candidate to enter a result set.
-                              // Higher = stricter; 100 = exact-prefix-only
-                              // mode. Default is the calibration starting
+  "fuzzThreshold": 60,      // 0–100: minimum fuzzy match score (04) for a
+                              // candidate to enter a result set. Higher =
+                              // stricter; 100 = exact-prefix-only mode.
+                              // Per-mode defaults (2026-10): 60 ambient
+                              // (word matching), 45 under the trigger
+                              // char (scattered tier-1 visible there);
+                              // an explicitly set value overrides BOTH.
+                              // Default is the calibration starting
                               // point (09 tuning protocol), imported from
                               // the baked constant in the query module
                               // automatically — same pattern as
