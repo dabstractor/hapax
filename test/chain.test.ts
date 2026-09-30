@@ -1160,3 +1160,55 @@ describe("editor-sim integration — trigger consumption & one-word invariant (B
     expect(chain.state()).toEqual({ word: "alphaone" });
   });
 });
+
+describe("chain arming × match tier (plan 004: tier-0 never arms)", () => {
+  // Arm-suppression contract: the accepted item is looked up in lastLive's
+  // ≤ 8 records (liveKeyByValue carries only display→key — tier is not
+  // there). Strict `tier === 0` suppresses; chain shims and '#'-alone
+  // listing records OMIT tier, so they keep arming; a stale/null live set
+  // fails open. Trigger-mode menus are loose since plan 004, so a mid-key
+  // fragment reaches these states through the REAL provider path.
+  it("tier-0 (anchorless) acceptance never arms the chain", async () => {
+    const current = makeCurrent();
+    const store = seedStore();
+    const { chain, inner } = makeStack(store, current);
+
+    // '#eta' → trigger mode → loose 45: 'eta' sits mid-key in "beta" (and
+    // "theta") — tier-0 records, no anchored match (anchor 'e' leads no
+    // seed word). Count tie → shorter key first: beta tops the menu.
+    const menu = await suggest(inner, ["#eta"], 0, 4);
+    expect(menu?.items.map((i) => i.value)).toEqual(["beta", "theta"]);
+    expect(menu?.items.every((i) => i.description === "chain")).toBe(false);
+
+    inner.applyCompletion(["#eta"], 0, 4, item("beta"), "#eta");
+    expect(chain.state()).toBeNull(); // tier-0: NEVER arms (spec §04)
+  });
+
+  it("tier-2 (contiguous-tail) acceptance arms", async () => {
+    const current = makeCurrent();
+    const store = seedStore();
+    const { chain, inner } = makeStack(store, current);
+
+    // '#bta': anchor 'b', tail "ta" contiguous at index 2 of "beta" →
+    // tier 2, score 75 ≥ 45 → anchored menu (the armed-style accept).
+    const menu = await suggest(inner, ["#bta"], 0, 4);
+    expect(menu?.items.map((i) => i.value)).toEqual(["beta"]);
+
+    inner.applyCompletion(["#bta"], 0, 4, item("beta"), "#bta");
+    expect(chain.state()).toEqual({ word: "beta" }); // tier 2 arms
+  });
+
+  it("'#'-alone listing acceptance arms (listing records omit tier)", async () => {
+    const current = makeCurrent();
+    const store = seedStore();
+    const { chain, inner } = makeStack(store, current);
+
+    // Bare '#' → zero-fragment listing: every record omits `tier`, so the
+    // strict === 0 suppression cannot see them — arming is preserved.
+    const menu = await suggest(inner, ["#"], 0, 1);
+    expect(menu?.items.map((i) => i.value)).toContain("alpha");
+
+    inner.applyCompletion(["#"], 0, 1, item("alpha"), "#");
+    expect(chain.state()).toEqual({ word: "alpha" });
+  });
+});

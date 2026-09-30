@@ -1104,3 +1104,104 @@ describe("rankMatches — first-char-bucket scan (P1.M2.T2.S2)", () => {
     expect(rankMatches(s, "").map((m) => m.key)).toEqual(["alpha", "beta"]);
   });
 });
+
+describe("rankMatches — loose mode (trigger loosening, spec §04 h2.28, plan 004)", () => {
+  // Plan-004 erratum vs the task PRP's '#cfg' example, pinned deliberately:
+  // tier-1 scores are 50 − 5·gapRuns − gapChars with ≥ 1 gap run of ≥ 1
+  // char, so the tier-1 MAXIMUM is 44 — matchFragment("cfg",
+  // "config_manager_service") measures exactly 44 < TRIGGER_FUZZ_THRESHOLD
+  // (45). A tier-1 record can therefore never admit at the trigger
+  // threshold; the mode-differentiation vector below uses a tier-2 match
+  // scoring 58 (∈ [45, 60)) instead, and this block pins the 44 reality so
+  // the ceiling is visible, not accidental.
+
+  /** Shared store: anchored tier-3 words + a rule-4d path key whose only
+   *  match path is tier-0 ('query' sits mid-key), plus the PRP's config/
+   *  service word and the tier-2 differentiation vector. */
+  const looseStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    put(s, "queryplan");
+    put(s, "queue", 2);
+    s.upsert(
+      sighting({ key: "src/core/query.ts", display: "src/core/query.ts" }),
+    );
+    s.upsert(
+      sighting({
+        key: "config_manager_service",
+        display: "config_manager_service",
+      }),
+    );
+    s.upsert(sighting({ key: "azzzzzzde", display: "azzzzzzde" }));
+    return s;
+  };
+
+  it("'#query' loose: the tier-0 path key rides WITH non-empty anchored results", () => {
+    const s = looseStore();
+    const loose = rankMatches(s, "query", { loose: true, fuzzThreshold: 45 });
+    expect(loose.map((m) => [m.key, m.tier])).toEqual([
+      ["queryplan", 3],
+      ["src/core/query.ts", 0],
+    ]);
+    // Ambient (no loose): anchored set alone — the latent tier-0 match
+    // never merges (the zero-result precondition is kept for ambient).
+    expect(rankMatches(s, "query").map((m) => m.key)).toEqual(["queryplan"]);
+  });
+
+  it("mode threshold split: a tier-2 scoring 58 admits loose-at-45, gates ambient-at-60", () => {
+    const s = looseStore();
+    // "ade" in "azzzzzzde": anchor 'a', tail "de" contiguous at index 7 →
+    // tier 2, score = round(85 − 40·6/9) = 58 ∈ [45, 60).
+    expect(matchFragment("ade", "azzzzzzde")).toEqual({ tier: 2, score: 58 });
+    expect(
+      rankMatches(s, "ade", { loose: true, fuzzThreshold: 45 }).map((m) => m.key),
+    ).toEqual(["azzzzzzde"]);
+    expect(rankMatches(s, "ade")).toEqual([]); // ambient 60 gates it
+    // Loose is NOT a threshold discount: at 60 the record gates even loose.
+    expect(rankMatches(s, "ade", { loose: true, fuzzThreshold: 60 })).toEqual([]);
+  });
+
+  it("'#cfg' erratum pin: tier-1 maxes at 44 — config_manager_service never admits at 45", () => {
+    const s = looseStore();
+    expect(matchFragment("cfg", "config_manager_service")).toEqual({
+      tier: 1,
+      score: 44,
+    });
+    expect(rankMatches(s, "cfg", { loose: true, fuzzThreshold: 45 })).toEqual([]);
+    // The machinery works — the threshold sits above tier-1's ceiling:
+    expect(
+      rankMatches(s, "cfg", { loose: true, fuzzThreshold: 40 }).map((m) => m.key),
+    ).toEqual(["config_manager_service"]);
+  });
+
+  it("dedup: a key matching anchored AND anchorless appears once — anchored wins", () => {
+    const s = looseStore();
+    const out = rankMatches(s, "que", { loose: true, fuzzThreshold: 45 });
+    // "queue" is anchored tier-3 AND indexOf("que") === 0 — exactly one
+    // record, carrying the anchored tier:
+    expect(out.filter((m) => m.key === "queue")).toHaveLength(1);
+    expect(out.map((m) => [m.key, m.tier])).toEqual([
+      ["queue", 3],
+      ["queryplan", 3],
+      ["src/core/query.ts", 0],
+    ]);
+  });
+
+  it("fragment floor holds under loose: a 2-char fragment runs no tier-0", () => {
+    const s = looseStore();
+    const out = rankMatches(s, "qu", { loose: true, fuzzThreshold: 45 });
+    expect(out.map((m) => m.key)).toEqual(["queue", "queryplan"]); // anchored only
+    expect(out.every((m) => m.tier !== 0)).toBe(true);
+  });
+
+  it("explicit fuzzThreshold overrides the trigger default under loose", () => {
+    const s = looseStore();
+    // 80 > 64: the tier-0 path key gates out; the tier-3 anchor survives —
+    // loose widens WHICH passes run, never the admission gate itself.
+    expect(
+      rankMatches(s, "query", { loose: true, fuzzThreshold: 80 }).map((m) => [
+        m.key,
+        m.tier,
+      ]),
+    ).toEqual([["queryplan", 3]]);
+  });
+});

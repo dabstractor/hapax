@@ -130,9 +130,12 @@ export const TIER0_SKIP_FACTOR = 40 as const;
 export const DEFAULT_FUZZ_THRESHOLD = 60 as const;
 
 /** Default fuzzThreshold under the trigger char (PRD §04 trigger
- *  loosening, §08 h2.52): 45 sits under tier-1's max score of 50, so the
- *  strongest scattered matches (≤1 gap run, ≤5 gap chars) admit only in
- *  `#` mode. Calibration starting point (§09 tuning protocol), exactly
+ *  loosening, §08 h2.52): 45 sits under tier-2's floor — the weakest
+ *  tier-2 (tail skipped the whole key) still outscores it — while tier-1
+ *  can NEVER admit here: its score is 50 − 5·gapRuns − gapChars with ≥ 1
+ *  gap run of ≥ 1 char, so its effective maximum is 44 < 45 (pinned by
+ *  test/query.test.ts's loose-mode erratum block). Calibration starting
+ *  point (§09 tuning protocol), exactly
  *  like DEFAULT_FUZZ_THRESHOLD (60) for ambient matching. An explicitly
  *  set config fuzzThreshold overrides BOTH mode defaults — resolution
  *  lives in config.ts's resolveFuzzThreshold (the single shared
@@ -151,6 +154,12 @@ export interface RankOptions {
  *  exact-prefix-only. Not clamped here — the config layer
    *  (P1.M2.T1.S3) owns validation; this seam trusts its caller. */
   fuzzThreshold?: number;
+  /** Tier-0 anchorless pass runs UNCONDITIONALLY (spec §04 trigger
+   *  loosening — no zero-anchored-result precondition; fragment floor 3
+   *  still applies; threshold-gated as usual). Records are deduped
+   *  against anchored admissions — the anchored record wins ('queue'
+   *  under '#que' is tier-3 AND indexOf=0; one record only). */
+  loose?: boolean;
 }
 
 /** Fuzzy match result (PRD §04 h2.28): `tier` is the strictness class
@@ -399,10 +408,13 @@ export function compareRankedMatches(
  * plural pruning and the limit slice apply; they carry public
  * `tier: 0` (the anchorless diagnostic — listing items omit tier, so
  * the signal is unambiguous for the T2 chain-arm suppression).
- * AMBIENT-ONLY: the fallback is skipped whenever the anchored scan
- * admitted anything — it can never merge into (or enrich) an anchored
- * menu. The always-consulted (loose) variant is P1.M1.T2.S2, not this
- * module today.
+ * Fire condition: AMBIENT-ONLY by default — the pass is skipped whenever
+ * the anchored scan admitted anything, so it can never merge into (or
+ * enrich) an anchored menu (the spec's never-hijack isolation). With
+ * `opts.loose` (trigger loosening, plan 004: '#' is the explicit
+ * search-the-vocabulary gesture) it runs UNCONDITIONALLY and its records
+ * are deduped against the anchored ones — the anchored record wins; the
+ * fragment floor and the threshold gate apply identically in both modes.
  *
  * @param store the session candidate store (accepted, never constructed)
  * @param prefix the user's fragment so far, any casing
@@ -476,19 +488,32 @@ export function rankMatches(
     });
   }
 
-  // TIER-0 AMBIENT FALLBACK (spec §04 h2.28): only when the anchored
-  // scan admitted NOTHING and the fragment is ≥ 3 chars — it can rescue
-  // a menu that would not otherwise open, never enrich one that would
-  // (isolation is the spec's never-hijack property, not an
-  // optimization). Full-store pass: prefixRange("") FIRST (ordering
-  // invariant — it consolidates a dirty index), THEN a FRESH snapshot
-  // (never reuse the bucket-sliced `keys`). Plain indexOf: a runStart
-  // of 0 implies an anchored tier-3 match, which would have made recs
-  // non-empty — so every admitted run here is genuinely mid-key.
-  if (lower !== "" && recs.length === 0 && lower.length >= 3) {
+  // TIER-0 ANCHORLESS PASS (spec §04 h2.28): ambient mode runs it only
+  // when the anchored scan admitted NOTHING (it can rescue a menu that
+  // would not otherwise open, never enrich one — the isolation is the
+  // spec's never-hijack property); `opts.loose` (trigger loosening, plan
+  // 004) runs it UNCONDITIONALLY so anchorless matches ride WITH anchored
+  // results. Fragment floor ≥ 3 in both modes — shorter fragments would
+  // flood. Full-store pass: prefixRange("") FIRST (ordering invariant —
+  // it consolidates a dirty index), THEN a FRESH snapshot (never reuse
+  // the bucket-sliced `keys`). Plain indexOf: a runStart of 0 implies an
+  // anchored tier-3 match, which would have made recs non-empty — so
+  // every ambient run here is genuinely mid-key.
+  const runTier0 =
+    lower !== "" &&
+    lower.length >= 3 &&
+    (opts.loose === true || recs.length === 0);
+  if (runTier0) {
+    // Dedup against anchored admissions — the anchored record wins. The
+    // skip is UNCONDITIONAL (vacuous in ambient mode, where the pass only
+    // runs on empty recs) so ONE code path serves both modes: a key that
+    // already anchored ("queue" under "que" is tier 3 AND indexOf 0)
+    // never duplicates as tier 0.
+    const anchored = new Set(recs.map((r) => r.m.key));
     const [fStart, fEnd] = store.prefixRange("");
     const allKeys = store.sortedKeysSnapshot().slice(fStart, fEnd);
     for (const k of allKeys) {
+      if (anchored.has(k)) continue; // anchored record wins (dedup)
       const runStart = k.indexOf(lower);
       if (runStart === -1) continue;
       const score = clampScore(

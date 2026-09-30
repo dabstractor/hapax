@@ -92,7 +92,7 @@ import { matchesKey } from "@earendil-works/pi-tui";
 import { rankMatches } from "../core/query.js";
 import type { CandidateStore } from "../core/store.js";
 import type { RankedMatch } from "../core/types.js";
-import type { HapaxConfig } from "./config.js";
+import { resolveFuzzThreshold, type HapaxConfig } from "./config.js";
 import {
   createEnterSubmitEditor,
   isSubmitKey,
@@ -334,11 +334,16 @@ export interface VisibilityMachineDeps {
    *  as the fallback's createStartupGate); a settled promise is a
    *  pass-through (fresh sessions). */
   restoreReady: Promise<void>;
-  /** Test seam: the query core entry point. Default:
-   *  rankMatches(store, fragment, { limit: maxSuggestions,
-   *  fuzzThreshold }) — the threshold discard already happens inside,
-   *  so "≥ 1 candidate above fuzzThreshold" === non-empty result. */
-  query?: (fragment: string) => RankedMatch[];
+  /** Test seam: the query core entry point, threaded with the match
+   *  mode. Default: rankMatches(store, fragment, { limit:
+   *  maxSuggestions, fuzzThreshold: resolveFuzzThreshold(config, mode),
+   *  loose: mode === "trigger" }) — the SAME per-mode resolution as the
+   *  provider call site (spec §04 h2.28, plan 004): trigger 45 + the
+   *  loose tier-0 pass, ambient 60 with the zero-result precondition;
+   *  an explicit fuzzThreshold setting overrides both. The threshold
+   *  discard happens inside, so "≥ 1 candidate above fuzzThreshold" ===
+   *  non-empty result. */
+  query?: (fragment: string, mode: "trigger" | "ambient") => RankedMatch[];
   /** Called after every paint() — INCLUDING swap-timer promotions — so
    *  the wiring can push the fresh snapshot and request a repaint even
    *  when no keystroke tick follows (W1 fix, P1.M3.T4.S1: a parked swap
@@ -433,10 +438,15 @@ export function createVisibilityMachine(
   const menuDelayMs = deps.config.menuDelayMs ?? 0;
   const query =
     deps.query ??
-    ((fragment: string): RankedMatch[] =>
+    ((fragment: string, mode: "trigger" | "ambient"): RankedMatch[] =>
       rankMatches(deps.store, fragment, {
         limit: deps.config.maxSuggestions,
-        fuzzThreshold: deps.config.fuzzThreshold,
+        // Per-mode fuzz resolution — the SAME helper as the provider call
+        // site (spec §04 h2.28, plan 004): trigger 45 + the loose tier-0
+        // pass, ambient 60 with the zero-result precondition; an explicit
+        // fuzzThreshold setting overrides both mode defaults.
+        fuzzThreshold: resolveFuzzThreshold(deps.config, mode),
+        loose: mode === "trigger",
       }));
 
   // Visibility snapshot (what render/key-handling see).
@@ -602,7 +612,10 @@ export function createVisibilityMachine(
       return state();
     }
 
-    const matches = query(match.fragment);
+    const matches = query(
+      match.fragment,
+      match.mode === "trigger" ? "trigger" : "ambient",
+    );
     if (matches.length === 0) {
       // R4 — disqualification close: clears the set, NEVER suppresses
       // (the next qualifying keystroke reopens).
@@ -817,6 +830,13 @@ export function decideWidgetKey(
  * visual, then machine.onDismissed(true) (the ONLY suppression seam;
  * never onDismissed(false) from the key layer). The consumed key never
  * delegates, so requestRender is asked for defensively — best-effort.
+ *
+ * CHAIN ARMS: NEVER (plan 004). The widget path does not arm the
+ * Tab-chain machine — chain.arm exists ONLY in the provider's
+ * applyCompletion (provider.ts). WidgetLayerOptions.chain is held for
+ * index.ts's reset wiring and is read by NO widget code; this insertion
+ * site deliberately does not consult it (pinned by test/widget.test.ts's
+ * no-arm case). Do not wire arming here.
  *
  * Failure model (editor.ts's): fully defensive, worst case inert — ANY
  * missing member, out-of-range cursor, or throw returns false and the

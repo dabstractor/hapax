@@ -377,3 +377,25 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     expectSingleWordItems(offer?.items ?? []);
   });
 });
+describe("chain arming × match tier (plan 004: tier-0 never arms)", () => {
+  it("tier-0 acceptance on the replayed store never arms ('#eph' → Zephyr)", async () => {
+    const entries = parseSessionFixture(`${FIXTURES}/zephyr-chain.jsonl`);
+    const { store, pipeline } = makeChainPipeline(true);
+    const current = editingCurrent();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(store, cfg(), current, chain);
+
+    await replayChain(pipeline, entries);
+
+    // '#eph' → trigger mode → loose 45: 'eph' sits mid-key in "zephra"
+    // (runStart 1 → tier-0 score ≈ 78); no replayed word starts with 'e'
+    // (the stored word is Zephra — 'zephyr' was admitted then evicted from
+    // the word store; only its successor-index entries survive).
+    const menu = await suggest(provider, ["#eph"], 0, 4);
+    const zephra = menu?.items.find((i) => i.value === "Zephra");
+    expect(zephra).toBeDefined();
+
+    provider.applyCompletion(["#eph"], 0, 4, zephra!, "#eph");
+    expect(chain.state()).toBeNull(); // tier-0: NEVER arms (spec §04)
+  });
+});

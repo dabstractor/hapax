@@ -167,7 +167,15 @@ describe("fuzzThreshold config reaches the provider's query (plan 003 P1.M2.T1.S
     const current = makeCurrent({
       getSuggestions: vi.fn(async () => PATH_SENTINEL),
     });
-    const provider = createHapaxProvider(store, cfg({ fuzzThreshold: 100 }), current);
+    // plan 004: the provider resolves per mode via resolveFuzzThreshold —
+    // an EXPLICIT setting is expressed by fuzzThresholdSet (loadConfig
+    // sets it; config.test.ts pins the resolution table), so the raw
+    // 100 without the flag would now mean "unset → mode defaults".
+    const provider = createHapaxProvider(
+      store,
+      cfg({ fuzzThreshold: 100, fuzzThresholdSet: true }),
+      current,
+    );
 
     // Exact-prefix probe at the knob's prefix-only setting: renders.
     const hit = await suggest(provider, ["zen"], 0, 3);

@@ -10,10 +10,12 @@
  * purity tests at the bottom pin that contract for S3/S4.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { CandidateStore } from "../src/core/store.js";
+import type { Sighting } from "../src/core/types.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
-import { classifyStockContext, extractMatchState } from "../src/pi/provider.js";
+import { createHapaxProvider, classifyStockContext, extractMatchState } from "../src/pi/provider.js";
 
 /** Fresh config per call — never mutate DEFAULT_CONFIG. */
 const cfg = (over: Partial<HapaxConfig> = {}): HapaxConfig => ({
@@ -453,5 +455,84 @@ describe("path fragments never reach hapax matching (rule 4d order pins)", () =>
       prefix: "co",
     });
     expect(classifyStockContext(["edit sr.co"], 0, 10)).toBe(null);
+  });
+});
+// ── provider rankMatches call site — per-mode fuzz resolution (plan 004) ───
+// extractMatchState already returns the mode union; the provider's query
+// must resolve the fuzz threshold per mode (resolveFuzzThreshold: trigger
+// 45 / ambient 60, an explicit fuzzThreshold setting overriding both) and
+// pass `loose` under trigger mode so the tier-0 anchorless pass runs even
+// over non-empty anchored results. Real provider + real store; only
+// `current` is mocked (chain.test.ts conventions).
+describe("provider getSuggestions — mode-aware loose wiring (plan 004)", () => {
+  const sighting = (over: Partial<Sighting> = {}): Sighting => ({
+    key: "queryplan",
+    display: "queryplan",
+    ordinal: 1,
+    fromUser: false,
+    properName: false,
+    rankGroup: 2,
+    isSubword: false,
+    ...over,
+  });
+
+  /** Store where "query" anchors "queryplan" (tier 3) and lives mid-key in
+   *  the rule-4d path "src/core/query.ts" (reachable ONLY via tier 0). */
+  const seeded = (): CandidateStore => {
+    const s = new CandidateStore();
+    s.upsert(sighting());
+    s.upsert(
+      sighting({ key: "src/core/query.ts", display: "src/core/query.ts" }),
+    );
+    return s;
+  };
+
+  const mockCurrent = () => ({
+    getSuggestions: vi.fn(async () => null),
+    applyCompletion: vi.fn(
+      (lines: string[], cursorLine: number, cursorCol: number) => ({
+        lines,
+        cursorLine,
+        cursorCol,
+      }),
+    ),
+  });
+
+  it("trigger mode runs the loose tier-0 pass: '#query' surfaces the path key", async () => {
+    const provider = createHapaxProvider(seeded(), cfg(), mockCurrent() as never);
+    const menu = await provider.getSuggestions(["#query"], 0, 6, {
+      signal: new AbortController().signal,
+    });
+    expect(menu?.items.map((i) => i.value)).toEqual([
+      "queryplan",
+      "src/core/query.ts",
+    ]);
+  });
+
+  it("ambient mode keeps the strict gate + zero-result precondition", async () => {
+    const provider = createHapaxProvider(seeded(), cfg(), mockCurrent() as never);
+    const menu = await provider.getSuggestions(["query"], 0, 5, {
+      signal: new AbortController().signal,
+    });
+    expect(menu?.items.map((i) => i.value)).toEqual(["queryplan"]);
+  });
+
+  it("an explicit fuzzThreshold overrides BOTH mode defaults", async () => {
+    const provider = createHapaxProvider(
+      seeded(),
+      cfg({ fuzzThreshold: 80, fuzzThresholdSet: true }),
+      mockCurrent() as never,
+    );
+    // Trigger at 80: the 64-score tier-0 path item gates out; the tier-3
+    // anchor (100) survives — the override beats the 45 trigger default.
+    const trigger = await provider.getSuggestions(["#query"], 0, 6, {
+      signal: new AbortController().signal,
+    });
+    expect(trigger?.items.map((i) => i.value)).toEqual(["queryplan"]);
+    // Ambient at 80: same strict set as the 60 default for this store.
+    const ambient = await provider.getSuggestions(["query"], 0, 5, {
+      signal: new AbortController().signal,
+    });
+    expect(ambient?.items.map((i) => i.value)).toEqual(["queryplan"]);
   });
 });

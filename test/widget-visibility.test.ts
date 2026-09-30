@@ -18,7 +18,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RankedMatch } from "../src/core/types.js";
+import { CandidateStore } from "../src/core/store.js";
+import type { RankedMatch, Sighting } from "../src/core/types.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
 import {
@@ -72,13 +73,14 @@ function fakeEditor() {
 async function build(
   over: {
     config?: Partial<HapaxConfig>;
-    query?: (fragment: string) => RankedMatch[];
+    query?: (fragment: string, mode: "trigger" | "ambient") => RankedMatch[];
+    store?: CandidateStore;
     restoreReady?: Promise<void>;
   } = {},
 ): Promise<{ machine: VisibilityMachine; editor: ReturnType<typeof fakeEditor> }> {
   const editor = fakeEditor();
   const deps: VisibilityMachineDeps = {
-    store: {} as never, // never hit — query is always stubbed
+    store: over.store ?? ({} as never), // never hit — query is always stubbed (unless a store is injected for default-closure tests)
     config: cfg(over.config),
     getEditorState: () => ({
       lines: editor.lines,
@@ -427,5 +429,62 @@ describe("visibility machine — spec §07 h3.10", () => {
     // Both the fresh-reopen window AND the fast gap apply: the reopen
     // window wins (active editing) → immediate paint, no 200 ms hold.
     expect(machine.onInput()).toMatchObject({ visible: true });
+  });
+});
+
+// ── plan 004 — query seam mode threading ────────────────────────────────────
+describe("visibility machine — query seam receives (fragment, mode) (plan 004)", () => {
+  it("trigger keystrokes drive trigger-mode queries; word typing drives ambient", async () => {
+    const query = vi.fn((f: string, _mode: "trigger" | "ambient"): RankedMatch[] =>
+      f === "cfg" ? [rm("config")] : f === "query" ? [rm("src/core/query.ts")] : [],
+    );
+    const { machine, editor } = await build({ query });
+
+    editor.set("#cfg", 4);
+    machine.onInput();
+    expect(query).toHaveBeenLastCalledWith("cfg", "trigger");
+
+    editor.set("cfg", 3);
+    machine.onInput();
+    expect(query).toHaveBeenLastCalledWith("cfg", "ambient");
+
+    editor.set("#query", 6);
+    machine.onInput();
+    expect(query).toHaveBeenLastCalledWith("query", "trigger");
+  });
+
+  it("default query closure resolves per mode: trigger is loose (tier-0 visible), ambient is not", async () => {
+    // REAL store + the DEFAULT closure (no query stub): 'query' anchors
+    // "queryplan" (tier 3); the rule-4d path key is reachable only via the
+    // loose tier-0 pass — visible under the trigger tick, never ambient.
+    const sighting = (key: string, display = key): Sighting => ({
+      key,
+      display,
+      ordinal: 1,
+      fromUser: false,
+      properName: false,
+      rankGroup: 2,
+      isSubword: false,
+    });
+    const store = new CandidateStore();
+    store.upsert(sighting("queryplan"));
+    store.upsert(sighting("src/core/query.ts"));
+
+    const { machine, editor } = await build({ store });
+
+    editor.set("query", 5);
+    const ambient = machine.onInput();
+    expect(ambient.currentSet.map((i) => i.display)).toEqual(["queryplan"]);
+
+    // Past the 100 ms swap window: the trigger tick's DIFFERENT set paints
+    // immediately instead of being parked as a pending swap.
+    await vi.advanceTimersByTimeAsync(100);
+
+    editor.set("#query", 6);
+    const trigger = machine.onInput();
+    expect(trigger.currentSet.map((i) => i.display)).toEqual([
+      "queryplan",
+      "src/core/query.ts",
+    ]);
   });
 });

@@ -47,7 +47,7 @@ import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-
 import { matchFragment, rankMatches } from "../core/query.js";
 import type { CandidateStore } from "../core/store.js";
 import type { RankedMatch, Successor } from "../core/types.js";
-import type { HapaxConfig } from "./config.js";
+import { resolveFuzzThreshold, type HapaxConfig } from "./config.js";
 
 /**
  * How hapax should respond at a cursor position. `fragment` is the
@@ -596,11 +596,18 @@ export function createHapaxProvider(
       }
       // 3. Synchronous store query — PRD §07 rule 1: zero awaits, zero
       // I/O before this point; the menu data exists when we return.
-      // fuzzThreshold (PRD §08 h2.52, plan 003 S3): the config knob flows
-      // into the admission gate — clamped to 0–100 by the config layer.
+      // Per-mode fuzz resolution (spec §04 h2.28, plan 004): trigger mode
+      // is hapax's explicit search-the-vocabulary gesture — looser
+      // threshold (TRIGGER_FUZZ_THRESHOLD 45) AND the anchorless tier-0
+      // pass consulted even over non-empty anchored results; ambient word
+      // typing keeps the strict 60 default with the fallback only as a
+      // zero-rescue. An explicit fuzzThreshold setting overrides BOTH
+      // mode defaults (resolveFuzzThreshold; pinned by config.test.ts).
+      const mode = state.mode === "trigger" ? "trigger" : "ambient";
       const matches = rankMatches(store, state.fragment, {
         limit: config.maxSuggestions,
-        fuzzThreshold: config.fuzzThreshold,
+        fuzzThreshold: resolveFuzzThreshold(config, mode),
+        loose: state.mode === "trigger",
       });
       if (matches.length === 0) {
         // Zero candidates never render a menu: drop the live cache so
@@ -671,9 +678,24 @@ export function createHapaxProvider(
             // would miss the successor index. liveKeyByValue is the
             // value→key truth (h2.27; keys are stored lowercase). Fresh
             // one-shot grant.
-            chain.arm(key);
-            chainWordsSeen = 0;
-            chainLastArmedPrefix = null;
+            //
+            // TIER-0 SUPPRESSION (spec §04, plan 004): anchorless matches
+            // never arm a chain. liveKeyByValue carries only display→key —
+            // the tier is not there — so look the accepted item up in
+            // lastLive's ≤ 8 records by display. Strict `tier === 0`:
+            // chain-shim entries (publishChain) and '#'-alone listing
+            // records OMIT the field, so they keep arming; `tier <= 0` or
+            // falsy checks would break chaining. Not found (stale/null
+            // live set) → arm as before — fail-open; suppression only on
+            // a KNOWN tier 0.
+            const rec = lastLive?.matches.find((m) => m.display === item.value);
+            if (rec?.tier === 0) {
+              // tier-0 anchorless: never arms (spec §04).
+            } else {
+              chain.arm(key);
+              chainWordsSeen = 0;
+              chainLastArmedPrefix = null;
+            }
           }
         }
         // Not in the map (path completion / stale value) → never arms.

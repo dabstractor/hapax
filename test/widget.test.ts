@@ -1049,3 +1049,29 @@ describe("decideWidgetKey — pure decision table (no editor access)", () => {
     expect(decideWidgetKey(RIGHT, true, 1, 0)).toEqual({ action: "clamp" });
   });
 });
+
+describe("widget Tab acceptance NEVER arms a chain (plan 004 pin)", () => {
+  // The widget path is arm-free BY DESIGN: chain.arm exists only in the
+  // provider's applyCompletion (src/pi/provider.ts). WidgetLayerOptions.chain
+  // is held for index.ts's reset wiring and is NEVER read by widget code —
+  // this pin proves the non-wiring through a real Tab acceptance with a
+  // spied machine in place.
+  it("a consumed Tab acceptance with WidgetLayerOptions.chain present never calls chain.arm", () => {
+    const chain: ChainMachine = {
+      state: vi.fn(() => null),
+      arm: vi.fn(),
+      reset: vi.fn(),
+    };
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 }, { chain });
+    h.show(["Zendesk"]); // highlightIndex 0
+
+    h.press("\t"); // consumed Tab acceptance
+
+    // The acceptance LANDED (the edit is real) — and the machine was never
+    // touched:
+    expect(h.buf.lines).toEqual(["Zendesk"]);
+    expect(h.state.hidden).toBe(true);
+    expect(chain.arm).not.toHaveBeenCalled();
+    expect(chain.state()).toBeNull();
+  });
+});
