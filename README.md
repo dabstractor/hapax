@@ -5,19 +5,21 @@ coding agent, named for the [*hapax legomenon*](https://en.wikipedia.org/wiki/Ha
 a word that occurs only once in a corpus, which is exactly what it harvests.
 hapax watches user prompts and final agent output as they enter the context
 window, extracts uncommon words, identifiers, and proper names, and offers
-them as Tab completions in the prompt input via pi's built-in autocomplete
-menu.
+them as Tab completions while you type. When pi exposes an editor factory,
+hapax renders its own one-line result widget below the input (the primary
+path); where no editor factory exists, hapax falls back to pi's built-in
+vertical autocomplete menu (spec 07).
 
-**Status: M2 (v2) — complete, verified 2026-09-07; P1 stabilization sweep
-(adversarial-probe regression fixes) verified 2026-09-07; documentation
-swept to the successor-chaining design (R6) 2026-09-08 and to the
-bugfix-001 fixes (stock-context delegation, proper-noun relief, secret
-hardening, Unicode boundaries, bigram-cap drain) 2026-09-08.** The M1
-definition-of-done gauntlet — every gate, command, and measured number — is
-recorded in [`docs/M1-DoD.md`](docs/M1-DoD.md), together with its "M2
-Definition of Done" post-delta re-verification (zero-typed-char chain
-offers, one-word-per-Tab invariant, `before_agent_start` reset); the
-scripted zero-typing chain proof is the item-7 section of
+**Status: M3 (v3) — complete, live-verified 2026-09-08** (one-line widget
+primary display, anchored-fuzzy matching with tier/frequency ranking,
+length-conditioned R_eff admission; widget live-verified against the real
+pi + split-editor stack per spec 09). The M1 definition-of-done gauntlet —
+every gate, command, and measured number — is recorded in
+[`docs/M1-DoD.md`](docs/M1-DoD.md), together with its M2 post-delta
+re-verification (zero-typed-char chain offers, one-word-per-Tab invariant,
+`before_agent_start` reset) and the bugfix-001 re-verification; the M3 DoD
+append lands with the DoD re-verification sweep. The scripted zero-typing
+chain proof is the item-7 section of
 [`test/fixtures/sessions/RESULTS.md`](test/fixtures/sessions/RESULTS.md)
 ("Item 7 — chained completion, zero typed characters — VERDICT: PASS").
 
@@ -31,40 +33,61 @@ keep it current; this README is a summary).
   looks up from the first character after `#`; a bare `#` lists the
   session's top candidates (`src/pi/provider.ts`).
 - **Word matching from the 1st typed character**, anywhere a word
-  starts — no position gating, no special mode. The menu opens
-  automatically while typing (identifier chars are registered as
-  autocomplete triggers; `config.threshold` is retained but inert —
-  pi-tui only requests at word starts) (`src/pi/provider.ts`).
-- **Predictable, content-derived menu order** — shortest match first,
-  then lexicographic; never reshuffled by session stats. Salience
-  (recency, repetition, sticky user-typed, rarity) governs store
-  retention/eviction only (`src/core/score.ts`, `src/core/query.ts`).
-- **English words barely admit (2026-09 retighten)** — hapax completes
-  identifiers, commit-hash-shaped tokens, and jargon: the
-  dictionary-ABSENT class. Attested English rejects unless it sits in
-  the rarest ~10% of the corpus (`provider`, `null`, `node` reject;
-  `handoff` stays). The `rejectCommonness` knob
-  (`~/.pi/agent/hapax.json` / `.pi/hapax.json`) tunes the band without a
-  code edit; probe words with `node tools/calibrate-bands.mjs
-  <words...>`. The conjugation guard additionally rejects inflections
-  of attested stems (`deleted`, `lists`, `uploads`).
-- **Enter always submits** — while a hapax word menu is open, Enter
-  dismisses the menu and submits the prompt (Tab is the accept key).
-  Composes with pi-vim/split-editor via a non-mutating forwarding
-  proxy (`src/pi/editor.ts`).
-- **Stock contexts are never preempted** — slash-command lines (`/re`),
-  `@` mentions, and fragments inside quoted paths delegate verbatim to
-  pi's own completion (`classifyStockContext` in `src/pi/provider.ts`,
-  priority slash → mention → quoted-path → path): hapax answers nothing
-  there, and Tab in those contexts behaves exactly as stock pi — it
-  never opens the hapax menu (`test/provider-match.test.ts`).
+  starts — no position gating, no special mode. Matching is
+  anchored-fuzzy (2026-10): the fragment's first character must equal the
+  candidate's first character (the anchor), the rest matches as a
+  subsequence — `zsk` finds `zendesk`. Matches come in three strictness
+  tiers (exact prefix > contiguous tail > scattered), and a candidate
+  enters the result set only above the `fuzzThreshold` score (0–100;
+  100 = exact-prefix-only). The store's first-character index stays the
+  scan entry, preserving the < 1 ms query budget (`src/core/query.ts`,
+  spec 04).
+- **Predictable tiered menu order** — results order by match-strictness
+  tier, then in-session frequency (sessionCount) within a tier, then
+  shorter key, then byte-lexicographic (a 4-key comparator; spec 09,
+  `src/core/query.ts`). The pure content-derived order (shortest match
+  first, lexicographic) is RETIRED (2026-10 decision log). A bare-trigger
+  listing has no tiers — frequency order. Session salience (recency,
+  repetition, sticky user-typed, rarity) governs store
+  retention/eviction only (`src/core/score.ts`).
+- **English words barely admit — and admission is length-conditioned
+  (2026-10 R_eff curve)** — hapax completes identifiers, commit-hash-shaped
+  tokens, and jargon: the dictionary-ABSENT class. Attested English
+  rejects when its frequency quantile `q` meets the length-conditioned
+  reject curve R_eff: flat through 8 chars at the `rejectCommonness`
+  floor, a sqrt ramp across 9–19 chars, admit-all at ≥ 20 — so short
+  common words (`context`, `data`, `code`, `provider`) reject while
+  longer attested words slip in as they grow (`handoff`, q = 10, stays).
+  A prose-only session ingests to an empty store — ordinary prose never
+  opens a menu (`test/shipped-dict.test.ts`, 2026-10 pin). The
+  `rejectCommonness` knob is the FLOOR of that curve — higher = looser,
+  the whole curve scales from it (`~/.pi/agent/hapax.json` /
+  `.pi/hapax.json`); probe any word with `node tools/calibrate-bands.mjs
+  <words...>` (prints q + verdict). The conjugation guard additionally
+  rejects inflections of attested stems (`deleted`, `lists`, `uploads`),
+  with stem comparisons riding the same curve.
+- **Enter always submits — on both display paths** — while a hapax result
+  is showing, Enter dismisses it and submits the prompt (Tab is the
+  accept key); on the widget path the dismiss-then-forward runs through
+  the editor proxy, so pi-vim/split-editor keep working
+  (`src/pi/editor.ts`, `src/pi/widget.ts`).
+- **Stock contexts are never preempted — by construction on the widget
+  path.** When the widget composition is active, hapax registers no
+  autocomplete provider at all, so pi's own path/slash/`@` completion is
+  untouched by construction. On the fallback path, slash-command lines
+  (`/re`), `@` mentions, and fragments inside quoted paths are classified
+  and delegated verbatim to pi's own completion
+  (`classifyStockContext` in `src/pi/provider.ts`, priority slash →
+  mention → quoted-path → path): hapax answers nothing there, and Tab in
+  those contexts behaves exactly as stock pi — it never opens the hapax
+  menu (`test/provider-match.test.ts`).
 - **Proper-noun relief — retired (2026-09)** — the relief that admitted
   capitalized attested words (`National`-class) is retired-in-place
-  (ceiling == reject band): a live audit showed it admitting ~483
-  capitalized common words (`echo`, `windows`, `failed`). Mechanism and
-  calibration history live in `src/core/score.ts`; named-entity
-  completion, if wanted back, is an allowlist design question
-  (spec 04).
+  (ceiling == reject band); the 2026-10 R_eff curve subsumes it. A live
+  audit showed the old band admitting ~483 capitalized common words
+  (`echo`, `windows`, `failed`). Mechanism and calibration history live
+  in `src/core/score.ts`; named-entity completion, if wanted back, is an
+  allowlist design question (spec 04).
 - **Session salience retention** — recency, repetition, and a sticky
   user-typed feed the eviction score that decides which candidates
   stay in the bounded store (`src/core/score.ts`).
@@ -103,10 +126,11 @@ keep it current; this README is a summary).
   `Acme` → `Zephyr` → `Noria` → `Inverter` walks with nothing
   typed between accepts. Inserted chain words use the candidate's display
   casing (most-recent-casing-wins), exactly like word completions. Typed characters filter the live successor list
-  normally. Chaining resets on `before_agent_start` (each new user turn)
-  and on disqualifying input — including the trigger char, which resets
-  the chain to idle and honors trigger mode with the `#frag` prefix —
-  and arms normally in resumed sessions —
+  normally (fuzzy matches admitted into chains, gated by the same
+  `fuzzThreshold`). Chaining resets on `before_agent_start` (each new user
+  turn) and on disqualifying input — including the trigger char, which
+  resets the chain to idle and honors trigger mode with the `#frag`
+  prefix — and arms normally in resumed sessions —
   chain-after-restore probe in `test/adversarial-typing.test.ts` (machine:
   `test/chain.test.ts`; gating: `test/chaining-gating.test.ts`; index:
   `test/successors.test.ts`).
@@ -133,15 +157,26 @@ hapax learns the session's vocabulary in the background while you work.
 Session mentions `Zendesk` and `lwlock`. Later:
 
 ```text
-type  ze        → menu offers Zendesk → Tab inserts "Zendesk" (cased)
-type  #l        → menu offers lwlock  → Tab inserts it
+type  ze        → offers Zendesk → Tab inserts "Zendesk" (cased)
+type  #l        → offers lwlock  → Tab inserts it
 ```
+
+**Widget mode** (the primary display whenever pi exposes an editor
+factory): results render as one line below the input — words joined with
+`" | "`, no descriptions. While the line is visible the four arrow keys
+navigate the highlight, ↑/← on the first word act as Escape
+(boundary-Esc: the line dismisses and every key returns to you; a second
+← then moves the caret normally), →/↓ clamp at the last word, Escape
+dismisses (suppressing the line for the rest of that word), Tab inserts
+the highlighted word, and Enter always submits. Where no editor factory
+exists, the same results appear in pi's vertical autocomplete menu
+instead (the fallback path).
 
 Chaining is the only multi-word mechanism — and every insertion is exactly
 one word. Discuss the Acme Zephyr Noria Inverter product line, then:
 
 ```text
-type  acme    → menu offers Acme → Tab inserts "Acme"
+type  acme    → offers Acme → Tab inserts "Acme"
               → successor already the top result, ZERO typing
               → Tab inserts "Zephyr" → Tab → "Noria" → Tab → "Inverter"
 ```
@@ -157,10 +192,10 @@ above is reachable after a history replay (regression-pinned in
 `test/adversarial-typing.test.ts`).
 
 Ordinary prose: typing is identical to stock pi — no key is captured, no
-menu appears for common words, and Tab with no selection inserts a literal
-Tab. Stock contexts are never preempted: slash-command lines (`/re`),
-`@` mentions, and fragments inside quoted paths complete exactly as they
-do in stock pi. The menu is strictly take-it-or-leave.
+result line appears for common words, and Tab with no selection inserts a
+literal Tab. Stock contexts are never preempted: slash-command lines
+(`/re`), `@` mentions, and fragments inside quoted paths complete exactly
+as they do in stock pi. The result line is strictly take-it-or-leave.
 
 ## Architecture
 
@@ -170,15 +205,21 @@ Two layers:
   binary loader), `segment` (word segmentation + camelCase/snake_case
   splitting; word-boundary guards step by full code points — a non-ASCII,
   including astral-plane, letter adjacent to an ASCII run disqualifies
-  the run), `shapeGate` (noise/secret rejection), `score` (admission +
-  salience), `store` (per-session word candidates, 20k cap, plus the
-  top-3 successor index fed by strict-adjacency bigrams captured from raw
-  text at ingest — the 10,000-key bigram cap drains to ≤ cap within the
-  same ingest call), `query` (prefix search + ranking). No
-  pi imports.
-- `src/pi/` — the pi adapter: `index` (extension factory + lifecycle),
-  `ingest` (message handling), `provider` (autocomplete integration),
-  `config`, `debug` (`/acwords`), `paths` (jiti-safe dictionary path).
+  the run; slash-joined path runs are whole tokens per rule 4d),
+  `shapeGate` (noise/secret rejection), `score` (length-conditioned R_eff
+  admission + salience), `store` (per-session word candidates, 20k cap,
+  plus the top-3 successor index fed by strict-adjacency bigrams captured
+  from raw text at ingest — the 10,000-key bigram cap drains to ≤ cap
+  within the same ingest call), `query` (anchored-fuzzy matching +
+  tier/frequency ranking). No pi imports.
+- `src/pi/` — the pi adapter: `index` (extension factory + lifecycle +
+  the dual-path display decision), `ingest` (message handling),
+  `widget` (the primary one-line result display: visibility machine +
+  key capture), `editor` (non-mutating forwarding proxy: Tab completes /
+  Enter submits carry-over, composes with pi-vim/split-editor),
+  `provider` (the fallback-path autocomplete integration, registered
+  only when no editor factory exists), `config`, `debug` (`/acwords`),
+  `paths` (jiti-safe dictionary path).
 
 Three paths connect them:
 
@@ -186,34 +227,41 @@ Three paths connect them:
   events feed a pipeline with a 300 ms trailing debounce and chunked
   processing (≤ 64 KB slices, event-loop yield between slices).
 - **Query** (synchronous, every keystroke): match-state extraction →
-  prefix search → salience sort, with zero awaits; Tab always resolves
-  the live result.
-- **Popup** (display only): a 100 ms paint debounce with flicker
-  hysteresis — the menu never flickers and never appears with zero
-  candidates.
+  anchored-fuzzy tiered query (first-char bucket scan) → frequency
+  ranking, with zero awaits; Tab always resolves the live result.
+- **Display** (dual-path, decided at session start): when an editor
+  factory exists, the widget composition renders the one-line result
+  line below the input — its own visibility machine (never with zero
+  candidates), key capture, and repaint-on-swap; otherwise the fallback
+  popup path uses a 100 ms paint debounce with flicker hysteresis via
+  the stacked autocomplete provider. Either way the menu/result line
+  never flickers and never appears with zero candidates.
 
 ```
    user prompt ─┐                       keystroke
  agent output ──┤                           │
                 ▼                           ▼
       ┌──────────────────┐        ┌───────────────────┐
-      │   src/pi/ingest  │        │  src/pi/provider  │
-      │  message_end     │        │  sync query       │
-      │  300 ms debounce │        │  100 ms paint     │
-      │  ≤64 KB chunks   │        │  hysteresis       │
-      └────────┬─────────┘        └─────────┬─────────┘
-               ▼                            │
-      ┌─────────────────────────────────────┴───┐
-      │                 src/core                │
-      │ segment → shapeGate → dictionary →      │
-      │   score → store (cap 20,000) → query    │
-      └─────────────────────────────────────────┘
+      │   src/pi/ingest  │        │ src/pi/widget ────┤─► one-line result
+      │  message_end     │        │ (primary display) │    below the input
+      │  300 ms debounce │        └─────────┬─────────┘
+      │  ≤64 KB chunks   │        ┌─────────┴─────────┐
+      └────────┬─────────┘        │ src/pi/provider   │
+               ▼                  │ (fallback display)│
+      ┌───────────────────────────┴───┐               │
+      │            src/core           │               │
+      │ segment → shapeGate → dict →  │               │
+      │  score → store (cap 20k) →    │               │
+      │  query (anchored fuzzy)       │               │
+      └───────────────────────────────┘               │
 ```
 
-Lifecycle: `session_start` loads config, builds a fresh store, registers
-the provider, and (unless the session is genuinely new and empty) replays
-existing session history through the same pipeline oldest→newest — a
-resumed session's vocabulary is available again. `message_end` only
+Lifecycle: `session_start` loads config, builds a fresh store, wires the
+display path — the widget composition when pi exposes an editor factory,
+otherwise the stacked autocomplete provider — and (unless the session is
+genuinely new and empty) replays existing session history through the same
+pipeline oldest→newest — a resumed session's vocabulary is available
+again. `message_end` only
 observes: the handler never returns a value, so hapax cannot modify
 messages or anything sent to providers. `session_shutdown` disposes
 timers and drops every reference — nothing to flush, because there is no
@@ -228,28 +276,37 @@ session never admits history through a broken dictionary.
 
 ## Design invariants
 
-1. **Never hijack typing.** No key is ever captured, consumed, or altered
-   except Tab while a suggestion is selected. The user's typing experience is
-   unchanged; the menu is strictly take-it-or-leave. Tab only completes —
-   the menu opens by typing only: the 2nd threshold char, the 1st char
-   after the trigger char, or the zero-char chain offer. There is no
-   manual open gesture. This is guaranteed, not
-   best-effort: ordinary prose never opens a menu — the calibrated bands
-   reject the top ~8,500 English words, including the PRD's named
-   `context` example and every everyday word in its rank band
-   (`test/shipped-dict.test.ts`), and prose-no-menu probes pin it
-   (`test/adversarial-typing.test.ts`).
-2. **Tab is never delayed by UI.** The top suggestion is computed
-   synchronously on every keystroke; the popup may be debounced, but Tab
-   always resolves the current top item immediately. Tab also never
-   replaces the wrong span: the debounced popup's displayed set is
-   invalidated whenever the input prefix moves (a character typed, or a
-   fresh acceptance), so a stale suggestion set is never applied over
-   shifted text — the rapid-Tab corruption class is regression-pinned by
-   the editor sims in `test/adversarial-typing.test.ts`.
+Mirrored from [`spec/SPEC.md`](spec/SPEC.md) ("Design invariants") — that
+file is authoritative; the text below is verbatim.
+
+1. **Never hijack typing.** No key is ever captured, consumed, or altered except
+   Tab while a suggestion is selected — plus, on the one-line widget display
+   (M3), the four arrow keys and Escape while the result line is visible; ↑/←
+   on the first word act as Escape (boundary-Esc), dismissing the line and
+   returning every key to the user. The user's typing experience is
+   otherwise unchanged; the result line is strictly take-it-or-leave.
+2. **Tab is never delayed by UI — and Tab only ever completes.** The top
+   suggestion is computed synchronously on every keystroke; the popup may be
+   debounced, but a single Tab keypress always resolves the current top or
+   selected item immediately. Tab never opens, toggles, or summons the
+   menu; the menu opens automatically on the 1st char of a matching word
+   (when candidates exist), on the 1st char after the trigger char, or at
+   the zero-char chain offer. Enter always submits — never accepts a
+   completion (see 07).
 3. **The popup never flickers and never appears with zero candidates.**
-4. **Everything stays in RAM.** No persistence, no telemetry, no network.
-   The candidate store is per-session and dies at `session_shutdown`.
+4. **Everything stays in RAM.** No persistence, no telemetry, no network. The
+   candidate store is per-session and dies at `session_shutdown`.
+
+The guarantee behind invariant 1 is calibrated, not best-effort: under the
+2026-10 R_eff curve, a prose-only session ingests to an EMPTY store —
+`the`, `with`, `this`, `context`, `data`, `code` and every everyday word
+in their rank band reject outright
+(`test/shipped-dict.test.ts`), and prose-no-menu probes pin it
+(`test/adversarial-typing.test.ts`). Tab also never replaces the wrong
+span: the displayed result set is invalidated whenever the input prefix
+moves (a character typed, or a fresh acceptance), so a stale suggestion
+set is never applied over shifted text — the rapid-Tab corruption class is
+regression-pinned by the editor sims in `test/adversarial-typing.test.ts`.
 
 ## Known limitations
 
@@ -262,8 +319,10 @@ session never admits history through a broken dictionary.
 - **Absence conflates "rare real word" with "random string."** Shape gates
   filter the worst noise; salience handles the ordering. A rare real word
   that never recurs in-session was never a useful completion.
-- **Tab may insert a top item the debounced popup hasn't painted yet.**
-  The computation is deterministic and correct; treated as cosmetic.
+- **Tab may insert a top item the display hasn't repainted yet.** The
+  computation is deterministic and correct; the widget line (or fallback
+  popup) can be up to one debounce behind the live result. Treated as
+  cosmetic.
 
 ## Non-goals
 
@@ -296,7 +355,7 @@ build; case variants merge with summed counts) are documented in
 [`tools/corpus/README.md`](tools/corpus/README.md).
 
 The corpus is dialogue register, so `you`/`i` outrank `the` — expected, and
-harmless: admission gating uses the score bands, not exact rank order.
+harmless: admission gating uses the R_eff curve, not exact rank order.
 
 The build script itself is corpus-agnostic: any `word<TAB>count` unigram list
 (UTF-8, plain integer counts) works as input. When sourcing a different list,
@@ -321,22 +380,25 @@ commit. Builds are deterministic: same input TSVs → byte-identical binary.
 
 #### Calibration guarantee
 
-The admission bands in `src/core/score.ts` (`REJECT_COMMON_THRESHOLD = 50`,
-`MID_FREQ_THRESHOLD = 20`) are calibrated against this artifact's quantized
-rank distribution, and the calibration is load-bearing: `q ≥ 50` covers
-the top ~8,501 of the 48,802 entries under this dialogue-register corpus —
-everyday prose words rank far more frequent here than in the PRD's
-web/books register, so the band must reach deep to keep the guarantee:
-`the`, `with`, `this`, `them` … and the PRD's named reject example
-`context` (q = 51), plus `data`, `code`, `lazy`, `ordinary`-class words,
-are all rejected outright, so ordinary prose never opens a menu. (The
-first BUG-001 recalibration, q ≥ 100, covered only the top ~945 ranks and
-still admitted `context` — the 2026-09 Issue-1 retune closed that gap.) Band recalibration is a separate
-concern from artifact regeneration: `node tools/calibrate-bands.mjs` prints
-the rank↔word↔q table and re-verifies the constants against the artifact,
-while `test/calibration.test.ts` (band edges, measured behavior) and
-`test/shipped-dict.test.ts` (top words reject, prose no-menu) pin the
-guarantee to the shipped binary.
+Admission is governed by the length-conditioned reject curve R_eff in
+`src/core/score.ts` (2026-10): a flat floor at `REJECT_COMMON_THRESHOLD =
+12` through 8 characters, a sqrt ramp `R + (255−R)·√((len−8)/12)` across
+9–19, admit-all at ≥ 20. The floor is calibrated against this artifact's
+quantized rank distribution and the calibration is load-bearing: 45,118 of
+the 48,802 entries score q ≥ 12, so essentially the whole everyday-prose
+vocabulary rejects at short lengths — `the` (240), `with` (179), `this`
+(197), `them` (156), the PRD's named reject example `context` (51), plus
+`data` (82), `code` (91), `lazy` (67), `ordinary` (79), `provider` (34)
+— while longer rare words survive the ramp (`handoff`, q = 10, admits;
+nothing attested admits below the floor). Ordinary prose never opens a
+result line: a prose-only session ingests to an empty store, pinned by
+`test/shipped-dict.test.ts` (2026-10). Band recalibration is a separate
+concern from artifact regeneration: `node tools/calibrate-bands.mjs
+<words...>` is R_eff-aware — it prints each word's q, R_eff(len), and
+verdict (lowercase and Capitalized) and re-verifies the constants against
+the artifact — while `test/calibration.test.ts` (band edges, measured
+behavior) and `test/shipped-dict.test.ts` (top words reject, prose
+no-menu, empty prose store) pin the guarantee to the shipped binary.
 
 #### Versioning contract
 
@@ -362,8 +424,9 @@ silently (forward compatibility):
 | ---------------- | ------- | ------- | ------------------------------------------------------- | ---------------------------------------------- |
 | `triggerChar`    | string  | `"#"`   | one non-word, non-space character (`/^[^\w\s]$/`), or `""` to disable trigger mode entirely | prefix that opens the completion popup |
 | `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | retained but inert — matching is effectively 1 char (see spec 07) |
-| `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once               |
-| `rejectCommonness` | number | `12`  | `1`–`255` (clamped)                                      | dictionary quantile at/above which words reject (lower = stricter); probes: `node tools/calibrate-bands.mjs <words>` |
+| `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once (the widget line cap AND terminal-width truncation) |
+| `rejectCommonness` | number | `12`  | `1`–`255` (clamped)                                      | dictionary-attestation FLOOR of the length-conditioned reject curve R_eff (flat through 8 chars, sqrt ramp, admit-all at 20) — higher = looser; the whole curve scales from this floor. Also governs the conjugation guard's stem comparisons (via R_eff). Probe any word first: `node tools/calibrate-bands.mjs <words...>` prints q + verdict (lowercase and Capitalized). Default is the baked constant in `src/core/score.ts` |
+| `fuzzThreshold`  | number  | `60`    | `0`–`100` (clamped)                                      | minimum anchored-fuzzy match score for a candidate to enter a result set (spec 04). Higher = stricter; 100 = exact-prefix-only mode. Default is the calibration starting point (tuning protocol, spec 09), imported automatically from the baked constant in the query module — same pattern as `rejectCommonness` |
 | `menuDelayMs`     | number  | `0`     | `0`–`2000` (clamped)                                     | hesitation gate for the menu's first appearance; **default OFF** (150/300 calibration attempts failed against real rhythm — set only if flow-popping returns) |
 | `enableChaining` | boolean | `true`  | `true` / `false`                                         | gates chained (successor) completion only; word completion unaffected either way; `enablePhrases` is accepted as a deprecated alias and is mapped to this key |
 | `debug`          | boolean | `false` | `true` / `false`                                         | enables the `/acwords` command + store dump     |
@@ -388,10 +451,12 @@ booleans — no truthy coercion.
 
 #### Not configurable (by design)
 
-Salience weights, admission bands (100/50), shape-gate rules, the eviction
-cap, debounce intervals, and popup timing are internal tuning constants —
-never user-configurable. If better values are learned, they ship as new
-constants, not new config fields.
+The match-tier boundaries and tier constants, the R_eff curve shape, the
+conjugation-guard suffix set, salience weights, the eviction cap, debounce
+intervals, and popup timing are internal tuning constants — never
+user-configurable (only the two floors above are knobs; tier BOUNDARIES
+are semantics, never runtime-tunable). If better values are learned, they
+ship as new constants, not new config fields.
 
 ### Debug
 
@@ -403,7 +468,9 @@ notification, what the ingest pipeline actually admitted this session:
 
 - the candidate store size against the 20,000-entry cap and the current
   message ordinal;
-- the rank-group histogram (rare / mid / common entry counts);
+- the rank-group histogram (admission group entry counts — under the
+  2026-10 curve attested admissions land in group 1, so the mid/common
+  buckets stay near-empty);
 - the top 50 candidates by salience — display form, occurrence count
   (`×N`), and admission group;
 - ingest counters: words seen, admitted, and per-rule shape-gate
@@ -436,7 +503,10 @@ new source is live.
 
 Verified 2026-09-07 (P1.M3.T5.S2): `pi -e` starts with zero extension-load
 errors; sending a message containing a distinctive word (`quokkatestword`)
-and then typing `#quok` in the input box shows the hapax suggestion popup.
+and then typing `#quok` in the input box shows a hapax result. The M3
+widget path was additionally live-verified 2026-09-08 against the real
+pi + split-editor stack (widget visibility, arrow/Escape/Tab key capture,
+Enter submits — spec 09 live-verification technique).
 
 #### jiti and the dictionary path
 
@@ -506,9 +576,13 @@ Performance gates (PRD §09; asserted at 3× budget headroom by
 
 | Gate | Budget |
 |---|---|
-| 20k-candidate prefix query + rank + top 8 | < 1 ms p99 |
+| 20k-candidate anchored-fuzzy query (first-char bucket + tiers + frequency sort + top 8) | < 1 ms p99 |
 | Dictionary load + full 20k-word lookup sweep | < 60 ms |
 | Ingest of 800 KB session text | < 60 ms, yield every ≤ 64 KB |
 | Steady-state heap delta (dict + store) | < 6 MB |
+
+(The suite additionally pins two shipped-extras beyond the PRD gates: a
+large-session bigram-ON restore bound and a 25k-distinct-word eviction
+flood bound.)
 
 `pi --check` does not exist — these three gates are the definition of green.

@@ -473,7 +473,7 @@
                   "type": "Subtask",
                   "id": "P1.M4.T1.S1",
                   "title": "README.md sweep — 12 drift items verified against shipped behavior",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",
