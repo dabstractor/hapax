@@ -32,7 +32,11 @@ import { beforeAll, describe, expect, it, vi, type Mock } from "vitest";
 
 import { loadDictionary } from "../src/core/dictionary.js";
 import { rankMatches } from "../src/core/query.js";
-import { MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD } from "../src/core/score.js";
+import {
+  MID_FREQ_THRESHOLD,
+  REJECT_COMMON_THRESHOLD,
+  REJECT_LEN_FLOOR,
+} from "../src/core/score.js";
 import { CandidateStore } from "../src/core/store.js";
 import type { Dictionary } from "../src/core/types.js";
 import {
@@ -128,15 +132,47 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     await finished;
   }, 60_000);
 
-  it("ingests prose.jsonl into a store that is now EMPTY by design (2026-09 retighten)", () => {
-    // Ordinary English prose is no longer completion material: every
-    // prose.jsonl word is either attested (q ≥ 12 rejects — fences 41,
-    // posts 47, garden 86…) or capitalized-only-at-structural-starts.
-    // The no-menu assertions below are therefore trivially true for the
-    // RIGHT reason (nothing admits); the live-menu control elsewhere in
-    // this suite uses a direct store upsert, keeping this file
-    // non-vacuous.
+  it("ingests prose.jsonl into a store that is now EMPTY by design (2026-10 R_eff curve)", () => {
+    // Ordinary English prose is no longer completion material. 2026-10
+    // semantics: every prose.jsonl word is ≤ 8 chars, so the R_eff ramp
+    // (spec/04 h2.26) stays in its floor-hold region for the whole
+    // fixture — R=12 rejects all attested words (fences 41, posts 47,
+    // garden 86…) exactly as the 2026-09 flat band did; the rest are
+    // capitalized-only-at-structural-starts. 9+ char attested words
+    // WOULD admit under the ramp, but the fixture contains none — a
+    // property pinned by the length test below so this expectation
+    // cannot silently rot. The no-menu assertions below are therefore
+    // trivially true for the RIGHT reason (nothing admits); the
+    // live-menu control elsewhere in this suite uses a direct store
+    // upsert, keeping this file non-vacuous.
     expect(store.size).toBe(0);
+  });
+
+  it("prose.jsonl contains no ramp-length words (store-empty pin, 2026-10)", () => {
+    // The 2026-10 R_eff ramp admits 9+ char attested prose; this fixture
+    // deliberately has none (max measured distinct-word length 7), which
+    // is why the store-EMPTY expectation above still holds under the
+    // curve. If a future fixture edit adds a long word, this pin forces
+    // that expectation to be revisited deliberately instead of passing
+    // by accident. Cheap string scan over the parsed fixture — the
+    // pipeline replay in beforeAll is NOT re-run.
+    const entries = parseSessionFixture(PROSE);
+    const words = new Set<string>();
+    for (const e of entries) {
+      if (e.message === undefined) continue;
+      const text = extractText(e.message as unknown as AgentMessage);
+      if (text === null) continue;
+      for (const m of text.matchAll(/[A-Za-z][A-Za-z'-]+/g)) {
+        words.add(m[0].toLowerCase());
+      }
+    }
+    expect(words.size, "fixture scan found no words — parsing regressed").toBeGreaterThan(0);
+    for (const w of words) {
+      expect(
+        w.length,
+        `fixture word '${w}' is ≥ ramp length — revisit the store-empty expectation`,
+      ).toBeLessThanOrEqual(REJECT_LEN_FLOOR);
+    }
   });
 
   it.each(COMMON_PROBES)(
@@ -166,7 +202,7 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     },
   );
 
-  it("posts/thin/firs: attested English rejects at the TABLE now (2026-09 retighten), rejected prefixes stay rejected", async () => {
+  it("posts/thin/firs: attested English rejects at the TABLE now (2026-09 retighten; floor hold under the 2026-10 curve), rejected prefixes stay rejected", async () => {
     // posts(47), thin(76), first(144) are all ≥ REJECT(12): admission
     // rejects them before the conjugation guard is even consulted. The
     // dict-band assertions keep documenting where these words sit.

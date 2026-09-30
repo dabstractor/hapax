@@ -20,6 +20,15 @@
  *      example 'context' must reject, a tail word must stay group 1, and
  *      the band populations must stay near their calibration targets.
  *
+ * 2026-10 (P1.M1.T1.S3): the probe is R_eff-aware. Word-probe verdicts
+ * print each word's own length-conditioned threshold rEff(R, len)
+ * (spec/04 h2.26) — admit() itself has ridden the curve since S1/S2; the
+ * probe only DISPLAYS it. The flat band-population and threshold-sweep
+ * sections are explicitly labeled legacy (length-blind views kept for
+ * floor-R tuning), and the acceptance assertions pin the 2026-10
+ * boundary words (uploads/configurations, government/everything) plus
+ * behavioral flat-group-1 (never group 2).
+ *
  * Exit 0 = the constants in src/core/score.ts still satisfy the contract
  * (run it after any future retune or artifact regen). Exit 1 = drift.
  *
@@ -37,6 +46,9 @@ import {
   admit,
   MID_FREQ_THRESHOLD,
   REJECT_COMMON_THRESHOLD,
+  REJECT_LEN_FLOOR,
+  REJECT_LEN_FULL,
+  rEff,
 } from "../src/core/score.ts";
 import { DICT_N, KEY_RE, quant } from "./build-dict.mjs";
 
@@ -46,11 +58,13 @@ const tsvPath = join(root, "tools", "corpus", "en-50k.tsv");
 
 // ── 0. Word-probe mode: node tools/calibrate-bands.mjs <word...> ──────────
 // The manual tuning dial for admission: print each word's dictionary q
-// (null = absent → rarest, group 0) and its verdict under the CURRENT
-// constants, then exit. Use it to pick a rejectCommonness value in
-// ~/.pi/agent/hapax.json (or .pi/hapax.json): a word rejects when its
-// q ≥ the configured band, so to drop "lists" (q=49) set
-// rejectCommonness to 49 — and every word at or above it goes too.
+// (null = absent → rarest, group 0), its own threshold rEff(R, len), and
+// its verdict under the CURRENT constants, then exit. Use it to pick a
+// rejectCommonness value in ~/.pi/agent/hapax.json (or .pi/hapax.json):
+// the knob moves the floor R and the whole R_eff curve scales from it —
+// a word (or its stem, per the conjugation guard) rejects when its
+// q ≥ R_eff(len(word)), so to drop "lists" (q=49, 5 chars → floor hold)
+// set rejectCommonness to 49; longer words keep their ramped thresholds.
 const words = process.argv.slice(2);
 if (words.length > 0) {
   const dict = loadDictionary(dictPath);
@@ -60,7 +74,11 @@ if (words.length > 0) {
     properName: false,
     isSubword: false,
   });
-  console.log(`word → q → verdict under REJECT=${REJECT_COMMON_THRESHOLD}, MID=${MID_FREQ_THRESHOLD} (lc | Cap)`);
+  console.log(
+    `word → q → verdict under R_eff(len), R=${REJECT_COMMON_THRESHOLD} ` +
+      `(hold ≤${REJECT_LEN_FLOOR}, admit-all ≥${REJECT_LEN_FULL}, ` +
+      `ramp: R + (255−R)·√((len−8)/12))  (lc | Cap)`,
+  );
   const capDraft = (key) => ({
     key,
     display: key[0].toUpperCase() + key.slice(1),
@@ -73,9 +91,12 @@ if (words.length > 0) {
     const verdict = admit(draft(lower), dict);
     const cap = admit(capDraft(lower), dict);
     const qText = q === null ? "absent" : String(q);
+    const eff = rEff(REJECT_COMMON_THRESHOLD, lower.length);
     const fmt = (v) => (v === "reject" ? "REJECT" : `g${v}`);
     console.log(
-      `  ${w.padEnd(16)} q=${qText.padEnd(6)} ${fmt(verdict).padEnd(6)} | Cap: ${fmt(cap)}`,
+      `  ${w.padEnd(16)} len=${lower.length} q=${qText.padEnd(6)} ` +
+        `R_eff=${eff >= 256 ? "admit-all" : eff.toFixed(0)}  ` +
+        `${fmt(verdict).padEnd(6)} | Cap: ${fmt(cap)}`,
     );
   }
   process.exit(0);
@@ -111,7 +132,8 @@ console.log(
     `MID_FREQ_THRESHOLD=${MID_FREQ_THRESHOLD}  (curve denominator DICT_N=${DICT_N})\n`,
 );
 console.log(
-  `band populations: reject(q≥${REJECT_COMMON_THRESHOLD})=${popReject(REJECT_COMMON_THRESHOLD)}  ` +
+  `band populations (legacy flat view — admission is length-conditioned since 2026-10): ` +
+    `reject(q≥${REJECT_COMMON_THRESHOLD})=${popReject(REJECT_COMMON_THRESHOLD)}  ` +
     `group2(${MID_FREQ_THRESHOLD}≤q<${REJECT_COMMON_THRESHOLD})=${popBand2(MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD)}  ` +
     `group1(q<${MID_FREQ_THRESHOLD}, attested)=${popBand2(0, MID_FREQ_THRESHOLD)}`,
 );
@@ -160,13 +182,20 @@ for (const w of [
 }
 
 // ── 4. Threshold sweep — dictionary-rank boundary per candidate constant ───
-console.log(`\nthreshold sweep (max dictionary rank covered by q ≥ T):`);
+console.log(
+  `\nthreshold sweep (legacy flat view — per-length boundaries come from ` +
+    `R_eff; T = floor R only):`,
+);
 for (let T = 15; T <= 255; T += 5) {
   const boundary = popReject(T); // q = quant(rank) is non-increasing, so the
   // population of q ≥ T IS the boundary rank (0-based count of covered ranks).
   console.log(
     `  T=${String(T).padStart(3)}  → top ${String(boundary).padStart(6)} ranks` +
-      (T === REJECT_COMMON_THRESHOLD ? "  ← REJECT" : T === MID_FREQ_THRESHOLD ? "  ← MID" : ""),
+      (T === REJECT_COMMON_THRESHOLD
+        ? "  ← REJECT"
+        : T === MID_FREQ_THRESHOLD
+          ? "  ← MID (retired 2026-10)"
+          : ""),
   );
 }
 
@@ -211,6 +240,31 @@ const group2Pop = popBand2(MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD);
 check(
   group2Pop === 0,
   `group-2 band is empty (retired; measured ${group2Pop})`,
+);
+// 2026-10 R_eff boundary pins (spec/04 h2.26): the table AND the
+// conjugation guard ride the length-conditioned curve. These are the
+// contract's named checks — they pass only once S1 (rEff in admit()) and
+// S2 (guard rides R_eff) have landed. If any verdict differs, the CURVE
+// is drifted: fix the curve, do not loosen the assertion.
+check(
+  admit(draft("uploads"), dict) === "reject",
+  "guard rides R_eff: 'uploads' (7c, stem upload q=38 ≥ R_eff(7)=12) rejects",
+);
+check(
+  admit(draft("configurations"), dict) === 0,
+  "guard rides R_eff: 'configurations' (14c, stem configuration q=26 < R_eff(14)≈184) admits group 0",
+);
+check(
+  admit(draft("government"), dict) === 1,
+  "'government' (10c, q=101 < R_eff(10)≈111) admits group 1",
+);
+check(
+  admit(draft("everything"), dict) === "reject",
+  "'everything' (10c, q=139 ≥ R_eff(10)≈111) rejects",
+);
+check(
+  admit(draft(tailWord), dict) !== 2,
+  "attested admission is flat at group 1 — group 2 stays dead",
 );
 let monotone = true;
 for (let i = 1; i < 500; i++) {
