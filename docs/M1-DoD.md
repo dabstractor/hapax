@@ -1226,3 +1226,36 @@ npm run bench                                     # reporting numbers (gate t0 r
 #                  path's self-successor from the doubled seed, so the
 #                  absence is load-bearing)
 ```
+
+## Bugfix changeset 001 (001_1a2f4ffe408f, plan 004) post-delta note — 2026-09-30
+
+Four defects were found and fixed after the M3 gauntlet above. Every dated
+record above stands as written — each was true when measured; nothing here
+rewrites history.
+
+- **BUG-001 — M2 chained completion was dead on the widget primary path**
+  (any session with an editor factory — pi-vim, split-editor). Fixed per
+  spec/07: the widget's Tab-insert arms the shared chain machine and
+  zero-typed-char successor offers publish through the visibility machine's
+  intent bypass; the one-shot grant is shared with the fallback path.
+  Pins: `test/widget.test.ts` (arming classification matrix + end-to-end
+  widget chain flow) beside the untouched fallback pins
+  (`test/chain.test.ts`, `test/chaining-gating.test.ts`); live TTY per
+  spec/09 recorded by P1.M1.T2.S3 (tmux + `pi --no-session`).
+- **BUG-002 — trailing-`_` literals duplicated their contained base
+  token** in the store instead of deferring. Fixed as the strictly-additive
+  containment defer of spec/04 (`FOO_1_` keeps its base token). Pins:
+  `test/segment.test.ts` + `test/ingest-pipeline.test.ts` (duplicate-free
+  underscore ingest).
+- **BUG-003 — a dismissed result line suppressed the next message's first
+  word** (start-0 suppression leak). Fixed: suppression is bounded to the
+  dismissed buffer. Pin: `test/widget-visibility.test.ts`.
+- **BUG-004 — tokens straddling a 64 KB slice boundary were shredded.**
+  Fixed: the trailing partial token is carried into the next slice and
+  tokenized exactly once (spec/05). Pin: `test/ingest-pipeline.test.ts`
+  (chunk-boundary carry battery).
+
+Post-delta baseline: `npm run check` exit 0 · `npm test` green (1109
+passed / 1 skipped). The Mode B doc sweep (README chained-completion
+blurb + status paragraph, this note) is P1.M2.T4.S1; the spec/04 + spec/09
+text-drift corrections follow in P1.M2.T4.S2.

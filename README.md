@@ -18,7 +18,12 @@ pi + split-editor stack per spec 09). The M1 definition-of-done gauntlet —
 every gate, command, and measured number — is recorded in
 [`docs/M1-DoD.md`](docs/M1-DoD.md), together with its M2 post-delta
 re-verification (zero-typed-char chain offers, one-word-per-Tab invariant,
-`before_agent_start` reset) and the bugfix-001 re-verification; the M3 DoD
+`before_agent_start` reset), the 2026-09 bugfix-001 re-verification, and
+the 2026-09-30 widget-path bugfix post-delta note (four defects found and
+fixed: chained Tab completion armed on the widget primary display,
+duplicate-free ingest of trailing-`_` literals, dismissal suppression
+bounded to its own message, and tokens carried whole across 64 KB slice
+boundaries); the M3 DoD
 append lands with the DoD re-verification sweep. The scripted zero-typing
 chain proof is the item-7 section of
 [`test/fixtures/sessions/RESULTS.md`](test/fixtures/sessions/RESULTS.md)
@@ -132,15 +137,21 @@ keep it current; this README is a summary).
 - **Zero persistence, zero telemetry, zero network** — everything lives in
   RAM and dies at `session_shutdown` (`src/pi/index.ts`).
 - **Chained Tab completion — zero additional typing, one word per Tab**
-  (`src/pi/provider.ts`) — a top-3 successor index is built at ingest from
+  (`src/pi/provider.ts`, `src/pi/widget.ts`) — a top-3 successor index is
+  built at ingest from
   strict-adjacency bigrams captured from raw text (`recordBigramRuns`,
   `src/core/store.ts`; the 10,000-key bigram cap drains to ≤ cap within
   the same `recordBigramRuns` call — looped 256-batch eviction — so no
-  transient overshoot survives a message). Accepting a word via Tab arms its most-likely
-  successor: at the next word start the successor is already the top
-  result with ZERO typed characters — Tab inserts ONE word and re-arms, so
-  `Acme` → `Zephyr` → `Noria` → `Inverter` walks with nothing
-  typed between accepts. Inserted chain words use the candidate's display
+  transient overshoot survives a message). Accepting a word via Tab arms
+  its most-likely successor on BOTH display paths: on the widget line (the
+  primary path) the zero-typed-char successor renders like any result set —
+  explicit intent bypasses the display hesitation gate (spec 07) — and in
+  the fallback menu it arms and offers exactly as before. At the next word
+  start the successor is already the top result with ZERO typed characters —
+  Tab inserts ONE word and re-arms, so `Acme` → `Zephyr` → `Noria` →
+  `Inverter` walks with nothing typed between accepts; every other chain
+  behavior below (one-word-per-Tab re-arm, live filtering, resets, restore
+  arming) is identical on the two paths. Inserted chain words use the candidate's display
   casing (most-recent-casing-wins), exactly like word completions. Typed characters filter the live successor list
   normally (anchored fuzzy matches admitted into chains, gated by the
   same `fuzzThreshold`) — and chains stay ANCHORED everywhere: the chain
@@ -151,7 +162,7 @@ keep it current; this README is a summary).
   prefix — and arms normally in resumed sessions —
   chain-after-restore probe in `test/adversarial-typing.test.ts` (machine:
   `test/chain.test.ts`; gating: `test/chaining-gating.test.ts`; index:
-  `test/successors.test.ts`).
+  `test/successors.test.ts`; widget path: `test/widget.test.ts`).
 
 ## Quick start
 
@@ -199,7 +210,8 @@ type  acme    → offers Acme → Tab inserts "Acme"
               → Tab inserts "Zephyr" → Tab → "Noria" → Tab → "Inverter"
 ```
 
-Accepting a word arms its most-likely successor (`src/pi/provider.ts`):
+Accepting a word arms its most-likely successor (`src/pi/provider.ts`,
+`src/pi/widget.ts`):
 at the very next word start the armed successor is offered as the top
 result with nothing typed, each Tab inserts one word and re-arms, and
 typed characters filter the live successor list normally. The chain resets
