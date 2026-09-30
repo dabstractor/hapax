@@ -783,6 +783,31 @@ describe("trailing-'_' literals store once — no duplicate candidates (BUG-002,
     expect(userMatches.map((m) => m.key)).toEqual(["user_2_token_"]);
     expect(userMatches[0]!.display).toBe("USER_2_TOKEN_");
   });
+
+  it("processText('fix the q~z9_ flag and the X=1ZZ_ var today') stores the literals, never the straddled base shreds (BUG-002 second arm, V-1)", async () => {
+    // The residual overlap class: the base match STARTS inside the literal
+    // run (after a non-word symbol) and ends past the trimmed trailing '_'
+    // — no containment, so the S1 containment defer never fired and BOTH
+    // tokens reached the store ('q~z9' + 'z9_', 'x=1zz' + 'zz_') as
+    // near-duplicate completion targets. The merge-loop overlap arm
+    // (segment.ts) absorbs the shred; pinned at the ingest→store seam.
+    const h = makePipeline();
+    await h.pipeline.processText(
+      "fix the q~z9_ flag and the X=1ZZ_ var today",
+      true,
+    );
+
+    // The literal is the token; the straddling shred never stores.
+    expect(h.store.get("q~z9")).toBeDefined();
+    expect(h.store.get("z9_")).toBeUndefined();
+    expect(h.store.get("x=1zz")).toBeDefined();
+    expect(h.store.get("zz_")).toBeUndefined();
+
+    // Menu level: one target per probe, never the plural 'both' shape.
+    expect(rankMatches(h.store, "q~z").map((m) => m.key)).toEqual(["q~z9"]);
+    expect(rankMatches(h.store, "x=1").map((m) => m.key)).toEqual(["x=1zz"]);
+    expect(rankMatches(h.store, "z9")).toEqual([]); // shred is gone
+  });
 });
 
 // The BUG-004 regression battery (P1.M2.T3.S2): a token straddling a chunk

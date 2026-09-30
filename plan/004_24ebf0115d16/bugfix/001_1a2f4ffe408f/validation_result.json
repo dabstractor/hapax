@@ -1,0 +1,5 @@
+{
+  "hasIssues": true,
+  "issueCount": 2,
+  "summary": "All 4 PRD bugs verified fixed end-to-end (typecheck clean, 1109 unit tests + 22/24 independent E2E pass), but 2 new minor issues remain: tokenizer still emits overlapping tokens for non-containment literal/base straddles (q~z9_, X=1ZZ_ class; duplicate store candidates), and spec/09's stale 'q=82 rejects' boundary contradicts the amended spec/04 and pinned test."
+}

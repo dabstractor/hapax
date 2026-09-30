@@ -35,7 +35,7 @@
 - Admission is length-conditioned (2026-10 gradient; assert relative to
   the imported constants/R_eff, not absolute quants): floor hold —
   q ≥ 12 rejects at any length ≤ 8; sqrt ramp 9–19 (boundary probes,
-  e.g. q=81 admits / q=82 rejects at 9 chars); admit-all at len ≥ 20;
+  e.g. q=82 admits / q=83 rejects at 9 chars); admit-all at len ≥ 20;
   every attested admission lands at GROUP 1 (flat — the old group-2
   band stays dead); absent → group 0; the `rejectCommonness` override
   moves the floor and the curve scales from it.

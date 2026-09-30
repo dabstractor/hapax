@@ -471,8 +471,10 @@ export function tokenize(text: string): RawToken[] {
   // and decimals ("3.14") keep the base-pass split; CLI "--flag"/"-v"
   // are not tokens. Every base/hexish token fully inside a compound
   // span is absorbed (dropped) — same absorption semantics as the
-  // hexish pass. Both span families feed ONE sorted array; they cannot
-  // overlap (dots and hyphens are mutually exclusive inside a span).
+  // hexish pass. Both span families feed ONE sorted array; a single
+  // family's spans cannot overlap (dots and hyphens are mutually exclusive
+  // inside one match), but a mixed run matches BOTH families
+  // ("load-bearing.ts") — the union filter below resolves that.
   FILENAME_RE.lastIndex = 0;
   HYPHEN_RE.lastIndex = 0;
   LITERAL_RE.lastIndex = 0;
@@ -580,16 +582,17 @@ export function tokenize(text: string): RawToken[] {
     literals.push({ raw: text.slice(start, end), start, end });
   }
   if (compounds.length > 0 || literals.length > 0 || paths.length > 0) {
-    // Union with containment dedupe: sort by start asc, longer span first,
+    // Union with overlap dedupe: sort by start asc, longer span first,
     // compound before literal before path on exact ties (same raw either
     // way for compound/literal; a path tie is structurally impossible —
     // paths contain '/', no other family can produce that span — the
-    // rank is symmetry only), then drop any span fully covered by an
-    // already-kept span's end. Overlaps between the families are almost
-    // impossible by construction (a compound match inside a literal/path
-    // run can only start at the run's first char), but the filter makes
-    // "never overlapping spans" a structural invariant instead of a
-    // proof obligation.
+    // rank is symmetry only), then drop any span contained in OR merely
+    // overlapping an already-kept span. Cross-family overlaps are rare
+    // but REAL (a compound match inside a literal/path run can only
+    // start at the run's first char, yet a dotted filename with a
+    // hyphenated early part matches both compound families), so the
+    // filter — not a construction argument — is what makes "never
+    // overlapping spans" hold.
     const spans: Array<{
       raw: string;
       start: number;
@@ -628,7 +631,19 @@ export function tokenize(text: string): RawToken[] {
     const absorbers: typeof spans = [];
     let maxEnd = -1;
     for (const s of spans) {
-      if (s.end <= maxEnd) continue; // contained in a kept span
+      // Contained in OR overlapping a kept span → dropped. Spans ascend by
+      // start, so s.start < maxEnd ⇔ s intersects the kept span ending at
+      // maxEnd; kept spans stay pairwise disjoint and maxEnd grows with
+      // every keep (a disjoint span's end exceeds its start ≥ maxEnd).
+      // The containment arm alone was not enough: a mixed hyphen+dot run
+      // matches BOTH compound families ("load-bearing.ts" → hyphen
+      // "load-bearing" [0,12) AND filename "bearing.ts" [5,15)) — the
+      // filename match starts inside the hyphen match but is not
+      // contained, so both survived a containment-only filter and shipped
+      // as overlapping tokens (BUG-002 class, found by the
+      // span-disjointness fuzz). Earlier-start/longer-first sort order
+      // decides the winner.
+      if (s.start < maxEnd) continue;
       absorbers.push(s);
       maxEnd = s.end;
     }
@@ -668,10 +683,29 @@ export function tokenize(text: string): RawToken[] {
         emitFn(f); // overlap safety — last-resort guard. The old comment
         // ("\b boundaries make this unreachable") was FALSE for rule 4c:
         // LITERAL_RE has no \b (it mirrored the hexish pass's note). The
-        // containment defer in the literal pass makes this branch dead
-        // for the trailing-'_' straddle class, but it remains the correct
-        // defensive fallback for any future family overlap.
+        // containment defer in the literal pass keeps the CONTAINED
+        // direction here dead (FOO_1_), but the straddle direction is
+        // real (below), and for non-literal absorbers this remains the
+        // correct defensive fallback for any future family overlap.
         f++;
+        if (fn.literal) {
+          // BUG-002 second arm (V-1): '_' is a base word char AND a
+          // literal trim symbol, so a base token can START inside the
+          // literal's post-trim span and end PAST it ("q~z9_" → literal
+          // [0,4) vs base "z9_" [2,5); "X=1ZZ_" → [0,5) vs "ZZ_" [3,6))
+          // — neither span contains the other, so neither defer arm in
+          // the literal pass can fire. The literal wins: the straddling
+          // token is a shred of the same characters (its trailing '_' is
+          // exactly the edge the literal trimmed), so emit the literal
+          // and drop the token. Loop invariants give the full overlap
+          // predicate: absorbers[f].end > tok.start (the while above)
+          // and fn.start < tok.end (this branch). Dropping — not
+          // keeping — is what keeps "never overlapping spans" true for
+          // the class; the compound/path families cannot straddle a
+          // trim edge (their trimmed tail chars are outside BASE_RE's
+          // class), so they keep the keep-token fallback above.
+          continue;
+        }
       }
       kept.push(tok);
     }

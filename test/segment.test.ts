@@ -303,6 +303,12 @@ describe("tokenize — span offsets (P1.M1.T3.S1)", () => {
       "FOO_1_", // BUG-002 straddle class: '_' is a base word char AND a
       "rename FOO_1_ ok", // literal trim symbol — spans must stay disjoint
       "USER_2_TOKEN_",
+      "q~z9_", // BUG-002 second arm: straddle WITHOUT containment —
+      "X=1ZZ_", // literal [0,n) vs base shred starting inside, ending
+      "aa1~bb2@cc_", // past the trimmed '_' edge: literal must absorb
+      "fix the q~z9_ flag and the X=1ZZ_ var today",
+      "load-bearing.ts", // mixed compound families: overlap must resolve
+      "+/Z-Ba.a", // to ONE token (fuzz-found compound×compound overlap)
     ];
     for (const text of cases) {
       const toks = tokenize(text);
@@ -652,6 +658,97 @@ describe("technical literals (2026-10 rule 4c)", () => {
     expect(raws("call API_V2_KEY_ now")).toEqual([
       "call", "API_V2_KEY_", "now",
     ]);
+  });
+
+  it("trailing-'_' straddle WITHOUT containment: the literal absorbs the base shred (BUG-002 second arm, V-1)", () => {
+    // '_' is the only char in both BASE_RE's class and LITERAL_SYMBOL_CHARS,
+    // so it is the only trim edge a base token can straddle. When the base
+    // match starts INSIDE the literal run (after a non-word symbol) and ends
+    // past the literal's post-trim end, NEITHER span contains the other and
+    // the containment defer above never fires. Pre-fix both shipped —
+    // 'q~z9' [0,4) + 'z9_' [2,5), overlapping spans → duplicate store
+    // candidates. The literal wins; the straddling base is a shred of the
+    // same characters (its '_' is exactly the edge the literal trimmed).
+    expect(tokenize("q~z9_")).toMatchObject([
+      { raw: "q~z9", start: 0, end: 4, literal: true },
+    ]);
+    expect(tokenize("X=1ZZ_")).toMatchObject([
+      { raw: "X=1ZZ", start: 0, end: 5, literal: true }, // PRD fuzz's own example
+    ]);
+    expect(tokenize("l~gY1p_")).toMatchObject([
+      { raw: "l~gY1p", start: 0, end: 6, literal: true },
+    ]);
+    // The straddler need not sit at the literal's start: with an earlier
+    // contained token the pass-4 equal-span cursor lands on THAT token, so
+    // this shape is caught by the merge loop's absorber sweep, not the
+    // defer check ('cc_' [8,11) vs literal [0,10)).
+    expect(tokenize("aa1~bb2@cc_")).toMatchObject([
+      { raw: "aa1~bb2@cc", start: 0, end: 10, literal: true },
+    ]);
+    // Document order and neighbors survive the absorption.
+    expect(raws("fix the q~z9_ flag and the X=1ZZ_ var today")).toEqual([
+      "fix", "the", "q~z9", "flag", "and", "the", "X=1ZZ", "var", "today",
+    ]);
+  });
+
+  it("mixed hyphen+dot run matches both compound families; overlap resolves to ONE compound (BUG-002 class, fuzz-found)", () => {
+    // FILENAME_RE cannot cross '-', HYPHEN_RE cannot cross '.', so a
+    // dotted filename with a hyphenated early part matches each family
+    // partially: 'load-bearing.ts' → hyphen 'load-bearing' [0,12) AND
+    // filename 'bearing.ts' [5,15). Neither contains the other; the
+    // union filter's containment arm kept BOTH (overlapping spans).
+    // The overlap arm drops the later-starting span. The bare extension
+    // 'ts' reverts to its base-pass token (it was only ever absorbed by
+    // the now-dropped filename span) — disjoint, and shape-gated out of
+    // the menu downstream (candidates need ≥ 4 chars). With a path
+    // wrapper the conflict never arises ('src/load-bearing.ts' is ONE
+    // path token that absorbs both compounds).
+    expect(tokenize("load-bearing.ts")).toMatchObject([
+      { raw: "load-bearing", start: 0, end: 12 },
+      { raw: "ts", start: 13, end: 15 },
+    ]);
+    expect(raws("+/Z-Ba.a")).toEqual(["Z-Ba"]);
+    // Pure single-family compounds are unchanged.
+    expect(raws("load-bearing wall")).toEqual(["load-bearing", "wall"]);
+    expect(raws("see AGENTS.md next")).toEqual(["see", "AGENTS.md", "next"]);
+  });
+
+  it("25k-iteration seeded fuzz: emitted spans are always valid slice bounds, ascending, disjoint (BUG-002 class)", () => {
+    // Permanent version of the validation harness's tokenizer fuzz: a
+    // deterministic mulberry32 stream over the literal/base alphabet, so a
+    // failure reproduces exactly. Asserts the structural invariant
+    // directly (valid bounds, ascending, non-overlapping) instead of
+    // enumerating expected tokenizations.
+    const mulberry32 = (a: number): (() => number) => () => {
+      a |= 0;
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    // Letters/digits plus '_' (the straddle char), the literal symbol set
+    // (single interior joins + trim edges), and separators.
+    const ALPHABET = "abcxyzABCXYZ019_~=.:@/+- \n,;";
+    const rand = mulberry32(0x00c0ffee);
+    for (let iter = 0; iter < 25_000; iter++) {
+      const len = 1 + Math.floor(rand() * 32);
+      let s = "";
+      for (let i = 0; i < len; i++) {
+        s += ALPHABET[Math.floor(rand() * ALPHABET.length)];
+      }
+      const toks = tokenize(s);
+      for (let i = 0; i < toks.length; i++) {
+        const t = toks[i]!;
+        const okBounds = s.slice(t.start, t.end) === t.raw;
+        const okOrder = i === 0 || toks[i - 1]!.end <= t.start;
+        if (!okBounds || !okOrder) {
+          throw new Error(
+            `fuzz iter ${iter}: invalid/overlapping spans for ${JSON.stringify(s)}: ` +
+              JSON.stringify(toks.map(({ raw, start, end }) => ({ raw, start, end }))),
+          );
+        }
+      }
+    }
   });
 
   it("pure digit runs ≥ 4 are literals; shorter ones stay out", () => {

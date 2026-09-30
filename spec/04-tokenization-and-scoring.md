@@ -103,8 +103,14 @@ Rules:
          that token (`utf8Reader` keeps camelCase subword splitting;
          `0f3a9c2` stays hexish-flagged; `FOO_1_` keeps its base token —
          the trailing-`_` trim cannot fork a `FOO_1` literal);
-         literals absorb only strictly-contained tokens
-         (`2560x1440@2` absorbs its `x1440` tail). Rule 3
+         literals absorb every base/hexish token inside or OVERLAPPING
+         their post-trim span — containment (`2560x1440@2` absorbs its
+         `x1440` tail) AND the trailing-`_` straddle class: `_` is a
+         base word char AND a trim symbol, so a base token can start
+         inside the literal and end past its trimmed edge without either
+         span containing the other (`q~z9_` → `q~z9` whole, never the
+         shred `z9_`; `X=1ZZ_` → `X=1ZZ`, never `ZZ_`). One span per
+         character class region — never overlapping tokens. Rule 3
          (Unicode-letter adjacency) applies to literals like every
          pass. Literals are OPAQUE to subword splitting — codes
          complete whole as typed.
