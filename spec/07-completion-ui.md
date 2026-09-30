@@ -20,6 +20,19 @@ mode). Two paths, decided at session start:
   single-item forced return included). Both paths share the query
   core (04), the startup gate, and the debounce/hysteresis timing.
 
+**Session lifecycle (rebind, 2026-10):** `session_start` builds a fresh
+store/pipeline/chain/restore-gate per fire and can fire repeatedly
+in-process (resume, session switch). The widget path therefore
+RE-BINDS on every re-fire: the installed wrapper is replaced by a
+fresh composition around the ORIGINAL pre-hapax factory (remembered
+in the wrapper's introspection seam), bound to the new session's
+deps. This preserves the no-stacking invariant (a wrapper is never
+wrapped again) while never leaving the widget reading a previous
+session's store — the pre-2026-10 keep-installed behavior left
+completions serving stale vocabulary after any `/resume` (violating
+acceptance item 3; live-observed via the §09 technique). The fallback
+path re-registers a fresh provider per fire and needs no such step.
+
 Considered and rejected (2026-10, recorded for history): a single
 synthesized menu item whose label is the joined line (zero pi-tui
 changes, but arrow selection of non-top words is lost) and waiting

@@ -46,6 +46,7 @@ import hapax, {
 import type { AgentMessage } from "../src/pi/ingest.js";
 import { isWidgetWrapper, widgetOptsOf } from "../src/pi/widget.js";
 import { CandidateStore } from "../src/core/store.js";
+import { rankMatches } from "../src/core/query.js";
 import { writeDictFile } from "./helpers/dict-writer.js";
 
 // --- fixture helpers ----------------------------------------------------------
@@ -790,8 +791,9 @@ describe("dual-path display branch (spec 07 h2.42)", () => {
     expect(built.handleInput).toBe(ownHandleInput); // still the original
   });
 
-  it("reload cycle: session_start re-run neither stacks a wrapper nor re-installs; still no provider", () => {
-    let current: unknown = stockFactory(); // pi's editor slot, pre-seeded
+  it("reload cycle: re-run RE-BINDS a fresh wrapper around the original factory — this session's store, no stacking, no provider", () => {
+    const stock = stockFactory();
+    let current: unknown = stock; // pi's editor slot, pre-seeded with a foreign factory
     const { handlers, ctx, addAutocompleteProvider, setEditorComponent, getEditorComponent } =
       wired({ editorFactory: current });
     setEditorComponent.mockImplementation((f: unknown) => {
@@ -802,14 +804,77 @@ describe("dual-path display branch (spec 07 h2.42)", () => {
     startSession(handlers.get("session_start")!, ctx, "startup");
     const firstInstall = current;
     expect(isWidgetWrapper(firstInstall)).toBe(true);
+    const firstOpts = widgetOptsOf(firstInstall)!;
+    expect(firstOpts.inner).toBe(stock); // wrapped the foreign factory, not itself
 
-    // Reload: getEditorComponent now returns OUR wrapper — the
-    // WIDGET_WRAPPED guard must skip re-install (no stacking) and stay
-    // provider-free (the widget layer keeps owning display).
+    // Reload (resume/session-switch, in-process): getEditorComponent now
+    // returns OUR wrapper. The rebind contract (2026-10 stale-store fix):
+    // a FRESH wrapper is installed around the ORIGINAL factory, bound to
+    // the NEW session's store — never a wrapper-around-our-wrapper, and
+    // never the stale first-session composition left in place.
+    startSession(handlers.get("session_start")!, ctx, "resume");
+    expect(setEditorComponent).toHaveBeenCalledTimes(2);
+    const secondInstall = current;
+    expect(secondInstall).not.toBe(firstInstall); // genuinely re-bound
+    expect(isWidgetWrapper(secondInstall)).toBe(true);
+    const secondOpts = widgetOptsOf(secondInstall)!;
+    expect(secondOpts.inner).toBe(stock); // the ORIGINAL factory — no stacking
+    expect(secondOpts.inner).not.toBe(firstInstall);
+    expect(secondOpts.store).not.toBe(firstOpts.store); // fresh session store
+    expect(secondOpts.store).toBeInstanceOf(CandidateStore);
+    expect(addAutocompleteProvider).not.toHaveBeenCalled(); // still provider-free
+  });
+
+  it("reload cycle: after re-fire, ingest reaches the store the INSTALLED widget queries (no stale vocabulary)", async () => {
+    useDict();
+    enableDebug();
+    const stock = stockFactory();
+    let current: unknown = stock;
+    const { handlers, ctx, registerCommand, setEditorComponent, getEditorComponent } =
+      wired({ editorFactory: current });
+    setEditorComponent.mockImplementation((f: unknown) => {
+      current = f;
+    });
+    getEditorComponent.mockImplementation(() => current);
+
     startSession(handlers.get("session_start")!, ctx, "startup");
-    expect(setEditorComponent).toHaveBeenCalledTimes(1);
-    expect(current).toBe(firstInstall);
-    expect(addAutocompleteProvider).not.toHaveBeenCalled();
+    const firstStore = widgetOptsOf(current)!.store;
+
+    // Second fire (resume) carries NEW history — replayed into the new
+    // session's store by restoreFromHistory, exactly like a real /resume.
+    const resumeCtx = fakeCtx({
+      editorFactory: current,
+      branch: [msgEntry("r1", userMsg("hello zorblaxian world"))],
+    });
+    resumeCtx.getEditorComponent.mockImplementation(() => current);
+    resumeCtx.setEditorComponent.mockImplementation((f: unknown) => {
+      current = f;
+    });
+    startSession(handlers.get("session_start")!, resumeCtx.ctx, "resume");
+
+    const installed = widgetOptsOf(current)!;
+    expect(installed.store).not.toBe(firstStore); // re-bound, not stale
+
+    // Poll the real /acwords dump until the resumed history replays —
+    // then the word MUST be findable through the INSTALLED widget's
+    // store (the exact failure mode: pre-fix the replay wrote a store
+    // the widget never read, so completions served the old session).
+    // TWO session_starts → TWO /acwords registrations; index 1 is the
+    // resumed session's (index 0 is bound to session 1's pipeline).
+    const handler = acwordsHandler(registerCommand, 1);
+    await vi.waitFor(async () => {
+      const text = await dump(handler);
+      expect(wordsSeenIn(text)).toBeGreaterThan(0);
+    });
+    // The exact call the installed widget's visibility machine makes:
+    // the resumed-history word must surface through the INSTALLED
+    // composition's store (pre-fix this returned [] — the replay wrote
+    // a store the widget never read).
+    const matches = rankMatches(installed.store, "zor", {
+      limit: 8,
+      fuzzThreshold: 60,
+    });
+    expect(matches.some((m) => m.display === "zorblaxian")).toBe(true);
   });
 
   it("no factory → fallback: provider registered once, editor untouched, disposed at shutdown", () => {

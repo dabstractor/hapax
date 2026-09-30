@@ -57,7 +57,11 @@ import {
   createStartupGate,
 } from "./provider.js";
 import type { ChainMachine } from "./provider.js";
-import { createWidgetEditorFactory, isWidgetWrapper } from "./widget.js";
+import {
+  createWidgetEditorFactory,
+  isWidgetWrapper,
+  widgetOptsOf,
+} from "./widget.js";
 
 /**
  * Dictionary path resolution lives in ./paths.js (P1.M3.T5.S2): the seam
@@ -251,10 +255,36 @@ export default function hapax(pi: ExtensionAPI): void {
       // via ?., nothing else dereferences it).
       displayProvider = null;
     } else if (editorFactory) {
-      // Reload cycle: our widget wrapper is already installed (the
-      // WIDGET_WRAPPED marker mirrors editor.ts's WRAPPED guard) — never
-      // stack a second layer, never re-install. The widget layer keeps
-      // owning display: still no provider.
+      // Reload cycle (2026-10 stale-store fix, live-observed via the
+      // §09 tmux technique): our widget wrapper is already installed,
+      // but this session_start fired for a NEW session (resume/switch,
+      // in-process) and built a FRESH store/pipeline/chain/restoreReady
+      // above — the installed wrapper still closes over the FIRST
+      // session's store, so everything ingested after the re-fire lands
+      // in a store the widget never reads: completions served the
+      // previous session's vocabulary forever (violating acceptance
+      // item 3's resume guarantee). RE-BIND instead of skip: wrap the
+      // ORIGINAL pre-hapax factory (remembered in the wrapper's
+      // WIDGET_OPTS — this arm only runs when getEditorComponent()
+      // still returns OUR wrapper, i.e. no other extension took editor
+      // ownership since) in a FRESH composition bound to THIS session's
+      // deps. Replacing our own wrapper with a fresh wrapper of the
+      // same unwrapped inner preserves the no-stacking invariant
+      // (WIDGET_WRAPPED still guards the first branch above) — never
+      // nests, never composes around itself.
+      const priorInner = widgetOptsOf(editorFactory)?.inner;
+      if (priorInner !== undefined) {
+        ctx.ui.setEditorComponent?.(
+          createWidgetEditorFactory({
+            inner: priorInner,
+            store: sessionStore, // THIS session's store — never the stale one
+            config,
+            chain: sessionChain,
+            restoreReady,
+            onKeystroke: tickInputClock,
+          }),
+        );
+      }
       displayProvider = null;
     } else {
       // FALLBACK: today's steps 3–4, byte-for-byte (provider registration

@@ -76,11 +76,16 @@
  *
  * Idempotence: the built factory is stamped WIDGET_WRAPPED (mirroring
  * editor.ts's WRAPPED) so a reload cycle re-running session_start with
- * our wrapper already installed neither stacks a second layer nor
- * re-installs — index.ts branches on isWidgetWrapper. TOCTOU with an
- * extension calling setEditorComponent AFTER our read is the same
- * accepted tolerance as today's enter-submit wrap (reload cycles re-run
- * session_start and re-read).
+ * our wrapper already installed never STACKS a layer around itself —
+ * instead index.ts RE-BINDS: it replaces the installed wrapper with a
+ * fresh composition around the ORIGINAL (remembered, pre-hapax)
+ * factory, bound to the new session's store/config/chain/restoreReady
+ * (2026-10 stale-store fix — the old keep-installed behavior left the
+ * widget querying the previous session's store after any in-process
+ * session_start re-fire). TOCTOU with an extension calling
+ * setEditorComponent AFTER our read is the same accepted tolerance as
+ * today's enter-submit wrap (a later re-fire re-reads and wraps the
+ * new owner's factory).
  */
 
 import { matchesKey } from "@earendil-works/pi-tui";
