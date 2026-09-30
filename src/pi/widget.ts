@@ -49,10 +49,20 @@
  *     decides show/hide/suppress per input tick; the factory glues its
  *     VisibilityState into the S2 state holder (set/hide below) and is
  *     ticked through the enter-submit guard's onKeystroke seam.
- *   - P1.M3.T3.S1/S2  key consumption (arrows/Esc/Tab/Enter) BEFORE the
- *     enter-submit guard; mutate state.highlightIndex and consume the
- *     rendered list for Tab insertion; reach the machine via
- *     widgetMachineOf for onDismissed(true/false).
+ *   - P1.M3.T3.S1  LANDED: the widget key layer (spec §07 h3.9). While
+ *     the line is visible the composed handleInput decides BEFORE the
+ *     enter-submit guard: ←/→/↑/↓ navigate the highlight (up≡left,
+ *     down≡right); ↑/← on the FIRST word is boundary-Esc (line hides,
+ *     press CONSUMED — caret unmoved — and suppressed via
+ *     machine.onDismissed(true)); →/↓ on the LAST word clamps (consumed,
+ *     no movement, no dismissal); Escape dismisses + suppresses. Every
+ *     other key — Tab and Enter included until S2 — forwards verbatim
+ *     to the enter-submit proxy; while hidden or empty NOTHING is
+ *     captured (invariant 1 amendment). Suppression is ONLY ever set
+ *     through the machine's onDismissed seam — never directly.
+ *   - P1.M3.T3.S2  replaces the forward branches for Tab (insert the
+ *     highlighted word — needs the rendered list via widgetStateOf) and
+ *     Enter (dismiss-then-forward so it still submits).
  *
  * Repaint note (T2): the visibility machine does NOT request forced
  * repaints — decisions land at the next natural per-keystroke render;
@@ -68,6 +78,7 @@
  * session_start and re-read).
  */
 
+import { matchesKey } from "@earendil-works/pi-tui";
 import { rankMatches } from "../core/query.js";
 import type { CandidateStore } from "../core/store.js";
 import type { RankedMatch } from "../core/types.js";
@@ -163,6 +174,44 @@ export interface WidgetLineOptions {
 }
 
 /**
+ * Width-fit core shared by rendering (renderWidgetLine) and key
+ * handling (the T3 highlight decisions must see the same list the user
+ * sees): applies BOTH caps — at most `maxSuggestions` items (leftmost
+ * first; input is rankMatches output, already final-ranked, never
+ * re-sorted), then a greedy width fit left→right where an item is
+ * admissible only if the joined line WITH it (separator included)
+ * still fits. Overflow drops the RIGHTMOST (lowest-ranked) items —
+ * never ellipsis, never wrap, never a truncated word. Length
+ * arithmetic runs on the PLAIN display strings (ANSI-styled text must
+ * never feed the width fit — its .length counts escape codes, not
+ * columns). An empty result means NO line can exist (invariant 3).
+ */
+function fitItems(
+  items: readonly { display: string }[],
+  width: number,
+  maxSuggestions: number,
+): { display: string }[] {
+  // Cap 1 — count (leftmost first; input order is rank order).
+  const capped = items.slice(0, Math.max(0, maxSuggestions));
+  const kept: { display: string }[] = [];
+  for (const item of capped) {
+    const display = item.display;
+    const candidateLength =
+      kept.length === 0
+        ? display.length
+        : kept.map((k) => k.display).join(" | ").length +
+          " | ".length +
+          display.length;
+    if (candidateLength > width) {
+      if (kept.length === 0) return kept; // not even one word fits
+      break; // drop the rightmost (lowest-ranked) remainder
+    }
+    kept.push(item);
+  }
+  return kept;
+}
+
+/**
  * Build the one-line widget (spec §07 h3.8): candidates joined by
  * " | " in rank order, display strings ONLY. Returns null when the
  * line must be STRUCTURALLY ABSENT (invariant 3, h2.2 — never a blank
@@ -171,40 +220,18 @@ export interface WidgetLineOptions {
  *   - not even the first item fits `width` → null (a line that can't
  *     hold a word must not exist);
  *
- * Caps (h2.50): at most `maxSuggestions` items (leftmost first — input
- * is rankMatches output, already final-ranked, never re-sorted), then a
- * greedy width fit left→right: an item is admissible only if the joined
- * line WITH it (separator included) still fits; overflow drops the
- * RIGHTMOST (lowest-ranked) items — never ellipsis, never wrap, never a
- * truncated word.
- *
- * Length arithmetic runs on the PLAIN display strings; `accent` is
- * applied last, only to the item at `highlightIndex` (clamped into the
- * rendered list) — ANSI-styled text must never feed the width fit (its
- * .length counts escape codes, not columns).
+ * Caps and the width fit are fitItems (above). `accent` is applied
+ * last, only to the item at `highlightIndex` (clamped into the
+ * rendered list).
  */
 export function renderWidgetLine(
   items: readonly { display: string }[],
   opts: WidgetLineOptions,
 ): string | null {
-  // Cap 1 — count (leftmost first; input order is rank order).
-  const capped = items.slice(0, Math.max(0, opts.maxSuggestions));
-  const kept: string[] = []; // PLAIN displays — styling happens at the end
-  for (const item of capped) {
-    const display = item.display;
-    const candidateLength =
-      kept.length === 0
-        ? display.length
-        : kept.join(" | ").length + " | ".length + display.length;
-    if (candidateLength > opts.width) {
-      if (kept.length === 0) return null; // not even one word fits
-      break; // drop the rightmost (lowest-ranked) remainder
-    }
-    kept.push(display);
-  }
+  const kept = fitItems(items, opts.width, opts.maxSuggestions);
   if (kept.length === 0) return null; // invariant 3 — structurally absent
   const hi = Math.max(0, Math.min(opts.highlightIndex, kept.length - 1));
-  return kept.map((d, i) => (i === hi ? opts.accent(d) : d)).join(" | ");
+  return kept.map((item, i) => (i === hi ? opts.accent(item.display) : item.display)).join(" | ");
 }
 
 // ── S2: widget state holder (T2 drives set/hide; T3 moves highlight) ────────
@@ -672,6 +699,50 @@ export function createVisibilityMachine(
   };
 }
 
+// ── T3/S1: the widget key layer (spec §07 h3.9) ─────────────────────────────
+
+/** Decision of the widget key layer for one input event. Consumed
+ *  decisions never reach the enter-submit guard; "forward" delegates
+ *  verbatim. (Tab/Enter forward until S2 wires insert/dismiss.) */
+export type WidgetKeyDecision =
+  | { action: "navigate"; delta: -1 | 1 } // move the highlight
+  | { action: "boundary-esc" } // first word + ←/↑: dismiss+consume+suppress
+  | { action: "clamp" } // last word + →/↓: consume, no movement
+  | { action: "escape" } // plain Escape: dismiss+consume+suppress
+  | { action: "forward" }; // everything else — never captured
+
+/**
+ * Pure decision — no editor access, trivially table-testable (the
+ * wiring below owns every state mutation). While the line is hidden or
+ * the rendered list is empty NOTHING is captured (invariant 1
+ * amendment: the capture window exists only while the line is visible;
+ * zero candidates never render — invariant 3). Keys are matched via
+ * pi-tui's matchesKey so custom keybindings and the kitty protocol
+ * keep working (never raw ANSI byte matching).
+ *
+ * `highlightIndex` is clamped into [0, count-1] BEFORE the first/last
+ * checks — the list can shrink between paints (width truncation,
+ * result-set changes), and a stale index must not turn a boundary
+ * press into an out-of-range move.
+ */
+export function decideWidgetKey(
+  data: string,
+  visible: boolean,
+  count: number,
+  highlightIndex: number,
+): WidgetKeyDecision {
+  if (!visible || count <= 0) return { action: "forward" };
+  const i = Math.min(Math.max(highlightIndex, 0), count - 1);
+  if (matchesKey(data, "escape")) return { action: "escape" };
+  if (matchesKey(data, "up") || matchesKey(data, "left")) {
+    return i === 0 ? { action: "boundary-esc" } : { action: "navigate", delta: -1 };
+  }
+  if (matchesKey(data, "down") || matchesKey(data, "right")) {
+    return i === count - 1 ? { action: "clamp" } : { action: "navigate", delta: 1 };
+  }
+  return { action: "forward" };
+}
+
 /** Accent fallback for tests/environments without a pi EditorTheme
  *  (theme.selectList.selectedText is the real channel — editor.d.ts/
  *  select-list.d.ts). */
@@ -681,11 +752,12 @@ const identityAccent = (text: string): string => text;
  * Compose the widget layer AROUND the captured editor factory: build
  * the inner editor verbatim, wrap it in the Enter-submits guard (which
  * ticks opts.onKeystroke on every input event), and wrap THAT in the
- * widget proxy — the widget layer sees reads first; the enter-submit
- * guard second; the inner editor last. The inner instance is never
- * mutated (v1 recursion crash lesson). Nested proxies are safe because
- * neither mutates the inner and each owns exactly its own members
- * (r4 doc §2).
+ * widget proxy — the widget layer sees reads and KEYS first (its
+ * handleInput override decides arrows/Esc before the guard, spec §07
+ * h3.9); the enter-submit guard second; the inner editor last. The
+ * inner instance is never mutated (v1 recursion crash lesson). Nested
+ * proxies are safe because neither mutates the inner and each owns
+ * exactly its own members (r4 doc §2).
  *
  * S2 render override: the get trap intercepts "render" and returns an
  * UNBOUND composing closure — FRESH on every read (never the inner's
@@ -776,13 +848,89 @@ export function createWidgetEditorFactory(
 
     // Reads forward THROUGH the enter-submit proxy (innerRecord[prop]
     // triggers its get trap: functions bind to the real inner, `then`
-    // stays undefined, handleInput stays the guard) — S2 adds exactly
-    // one member of its own: "render". Never mutate the inner.
+    // stays undefined, handleInput stays the guard). This layer adds
+    // exactly two members of its own: "render" (S2) and "handleInput"
+    // (T3/S1 key layer). Never mutate the inner.
     const innerRecord = inner as unknown as Record<PropertyKey, unknown>;
+
+    // The list the highlight moves within — the state's items AS THE
+    // RENDER PATH truncates them (fitItems at the cached width; T1.S2
+    // width truncation means the rendered list can be shorter than
+    // state.items). Before the first render there is no width and the
+    // uncapped-by-width list is the honest list. Zero (empty set,
+    // unfittable line) → nothing is on screen → capture nothing
+    // (invariant 3).
+    const renderedCount = (): number =>
+      lastWidth === undefined
+        ? state.items.length
+        : fitItems(state.items, lastWidth, opts.config.maxSuggestions).length;
+
+    // Forward = the enter-submit proxy's handleInput (the guard — its
+    // clock seam keeps ticking and the Enter guard stays in the chain);
+    // NEVER the raw inner. The read is dynamic (fresh through the get
+    // trap per call — no cached identity can cycle, r4 §2).
+    const forwardInput = (data: string): unknown =>
+      (innerRecord.handleInput as ((d: string) => unknown) | undefined)?.(data);
+
+    // T3/S1 — the widget key handler (spec §07 h3.9): decides BEFORE
+    // the enter-submit guard. Consumed = RETURN WITHOUT delegating (the
+    // caret must not move on boundary-Esc/clamp); forwarded keys reach
+    // the guard verbatim, exactly once.
+    const widgetHandleInput = (data: string): unknown => {
+      let decision: WidgetKeyDecision;
+      try {
+        decision = decideWidgetKey(
+          data,
+          !state.hidden,
+          renderedCount(),
+          state.highlightIndex,
+        );
+      } catch {
+        return forwardInput(data); // decision hiccup → degrade to forward
+      }
+      if (decision.action === "forward") return forwardInput(data);
+      // Consumed keys never reach the guard, whose clock seam fires
+      // only on delegation — tick the shared clock HERE so arrows/Esc
+      // count as input activity (hesitation timing). The visibility
+      // machine is deliberately NOT ticked: the editor state did not
+      // change (consumed keys never move the caret), and a re-
+      // evaluation could paint a pending swap and clobber the highlight
+      // mid-navigation. Exactly ONE clock tick per keypress, consumed
+      // or forwarded.
+      try {
+        opts.onKeystroke?.();
+      } catch {
+        /* clock failures never break input */
+      }
+      try {
+        if (decision.action === "navigate") {
+          state.highlightIndex = Math.max(
+            0,
+            Math.min(
+              state.highlightIndex + decision.delta,
+              renderedCount() - 1,
+            ),
+          );
+        } else if (
+          decision.action === "escape" ||
+          decision.action === "boundary-esc"
+        ) {
+          state.hide(); // immediate visual dismissal…
+          machine.onDismissed(true); // …+ suppression until the next word
+          // start — set ONLY via the machine's seam (it owns the flag).
+        }
+        // clamp: consumed, no movement, no dismissal.
+      } catch {
+        /* state/machine failures never break input */
+      }
+      return undefined; // consumed
+    };
+
     return new Proxy(inner as object, {
       get(_target, prop) {
         if (prop === WIDGET_STATE) return state;
         if (prop === WIDGET_MACHINE) return machine;
+        if (prop === "handleInput") return widgetHandleInput;
         if (prop === "render") {
           // UNBOUND composing closure — fresh on EVERY read (r4 §2:
           // pi-tui must not see a cached identity; the inner's bound

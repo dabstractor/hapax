@@ -301,7 +301,7 @@
           "type": "Milestone",
           "id": "P1.M3",
           "title": "One-line widget, primary display path (R4; spec 07 Display architecture, M3 goal 10)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "New src/pi/widget.ts + extended src/pi/editor.ts; dual-path selected at session_start: editor factory exists -> widget PRIMARY (no word autocomplete provider registered; stock path/slash/@ untouched by construction); no factory -> existing provider registration FALLBACK byte-for-byte. Both paths share the query core (P1.M2), startup gate, debounce/hysteresis timing. Live TTY verification is mandatory before acceptance. Research for this milestone is DONE and lives in plan/003_bbac3b15e8d0/architecture/r4-widget-pi-api.md (pi 0.84.4 API verified).",
           "tasks": [
             {
@@ -385,14 +385,14 @@
               "type": "Task",
               "id": "P1.M3.T3",
               "title": "Widget key handling on the editor-proxy double",
-              "status": "Planned",
+              "status": "Ready",
               "description": "A second proxy layer over the v2 enter-submit proxy consumes the sanctioned keys (four arrows, Escape, Tab, Enter-dismiss) while the line is visible, before the inner editor; the inner instance is never mutated.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T3.S1",
                   "title": "Arrow navigation, clamp, boundary-Esc, suppress rules",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T2.S1"
@@ -410,7 +410,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T3.S2",
                   "title": "Tab synchronous insert (applyCompletion semantics) + Enter dismiss-then-forward + never-mutate pin",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T3.S1"
@@ -430,14 +430,14 @@
               "type": "Task",
               "id": "P1.M3.T4",
               "title": "Live TTY verification against the real extension stack (binding)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Spec 09's binding technique for the deepest UI-layer change: scripted tmux verification of the widget against the real extension stack (pi-vim + split-editor), including integration item 1's M3 clause, item 2's arrow-capture clause, and item 7. Sanctioned temporary instrumentation is removed before commit.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T4.S1",
                   "title": "tmux scripted widget verification + instrumentation removal + record",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T3.S2"
