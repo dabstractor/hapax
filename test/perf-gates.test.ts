@@ -158,6 +158,12 @@ describe("perf gate a3 — zero-fragment full-store listing (loose sanity, not t
 // stores (fill is setup, never followed by a warmup query) and asserts the
 // cold first query stays under the 3× CI bound.
 describe("perf gate a2 — cold first query on a fresh 20k store (no warmup)", () => {
+  // Explicit timeout sized for the SETUP, not the assertion: 120 × 20k
+  // upserts of fixture filling costs multiple seconds by itself and sits
+  // near vitest's 5 s default under parallel worker load (observed as an
+  // intermittent "Test timed out in 5000ms" flake during the M3 DoD
+  // sweep). The measured assertion below is unchanged — p99 of the COLD
+  // query must stay under 3 ms regardless.
   it("the very first rankMatches after a 20k fill stays under 3 ms (3× the 1 ms budget)", () => {
     // T2.S2 RE-BASE NOTE: the cold query now ranks a full first-char
     // bucket (~913 keys vs the old ~150 'co' range), roughly doubling the
@@ -188,7 +194,7 @@ describe("perf gate a2 — cold first query on a fresh 20k store (no warmup)", (
         `post-T2.S2 typical max ~1.9ms, sporadic spikes tolerated by the N=120 percentile)`,
     );
     expect(p99).toBeLessThan(3);
-  });
+  }, 30_000);
 });
 
 // ── Gate b ──────────────────────────────────────────────────────────────────

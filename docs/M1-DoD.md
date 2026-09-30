@@ -676,3 +676,300 @@ npx vitest --run test/bigrams.test.ts             # BUG-006, 12/12
 grep -n "PROPER_NOUN_ADMIT_CEILING = 95" src/core/score.ts   # relief ceiling shipped
 cat plan/002_3e8a42cadf2c/bugfix/001_0f4b641cf9ce/P1M4T1S1/research/regression-evidence.md       # cited S1 evidence
 ```
+
+---
+
+## M3 Definition of Done — post-delta re-verification (P1.M4.T1.S2, 2026-09-30)
+
+Contract (spec/09 h2.56 item 1 M3 clause + item 2 capture window + item 7;
+r5 §1 verbatim extraction): M1 done plus anchored-fuzzy matching
+(first-char anchor, tier classification, `fuzzThreshold` gate),
+frequency/tier ranking (tier desc → sessionCount desc within tier →
+shorter key → byte-lex), the length-conditioned `R_eff` admission curve,
+rule-4d conversational path candidates, and the one-line widget display
+with arrow selection + boundary-Esc — plus the binding live verification
+(h2.57). This section records the full M3 acceptance gauntlet; every PASS
+is backed by a re-runnable command. Spec is read-only this run: drift
+notes live in the sweep's run report
+(plan/003_bbac3b15e8d0/P1M4T1S2/research/run-report.md), not in spec/.
+
+- **Sweep date:** 2026-09-30 (12:07 UTC)
+- **Head commit:** `0f1018c` (full: `0f1018c49e7570af7811a904be02698a44ccbd15`
+  — "feat(pi): live-verify widget; repaint on timer swaps", the P1.M3.T4.S1
+  landing)
+- **Environment:** Linux x64 · Node v26.10.0 · vitest 4.1.11 · pi 0.85.1
+- **Suite counts:** `npm test` → **37 test files, 1007 passed / 1 skipped**
+  (the one skip is the pre-existing gc-dependent `dictionary.test.ts` case;
+  no new skips). M3 suites present: `widget.test.ts` (52),
+  `widget-visibility.test.ts` (18), `editor-enter.test.ts` (28),
+  `startup-gate.test.ts` (7) — all green.
+- **pi --check substitution:** as recorded in the M1 section above, the PRD's
+  `pi --check (or lint)` names a command that does not exist; the sanctioned
+  equivalents are `npm run check` (tsc --noEmit, strict) + `npm test`.
+
+### Type check: PASS
+
+```
+$ npm run check        # tsc --noEmit, strict
+```
+- 2026-09-30: exit 0, zero errors.
+
+### Full suite: PASS
+
+```
+$ npm test             # vitest --run, whole suite
+```
+- 2026-09-30: exit 0 — **37 test files, 1007 passed / 1 skipped** (three
+  consecutive green runs at sweep end).
+
+### Widget visibility machine: PASS
+
+```
+$ npx vitest --run test/widget-visibility.test.ts
+$ npx vitest --run test/widget.test.ts -t "never show"
+```
+- 2026-09-30: **18/18** and 1/1. Named cases: "R1: stock contexts
+  (slash/mention/quoted-path/path) never show the line"; "R3: trailing space
+  (no @//) closes without suppressing"; "R4: cursor move with unchanged text
+  hides (no suppression)"; "invariant: zero candidates are never visible,
+  even at a word start with no suppression"; suppression taxonomy
+  (onDismissed(true) same-word sticky, trigger-char reopen,
+  disqualification-close-reopens); startup-gate hold/release cases R5.
+
+### Widget key handling / boundary-Esc: PASS
+
+```
+$ npx vitest --run test/widget.test.ts -t "boundary-Esc"
+$ npx vitest --run test/widget.test.ts          # full 52
+```
+- 2026-09-30: 3/3 boundary-Esc cases; **52/52** file total. Named: "↑ and ←
+  on the first word: press CONSUMED (no inner call — caret unmoved), line
+  hidden, suppressed"; "a single-item list: ↑/← is boundary-Esc …, →/↓ is
+  clamp"; "→ and ↓ on the last word: consumed, highlight unchanged, no
+  dismissal, no suppression"; navigation describes (either arrow pair spans
+  the list both ways; highlight clamps within the RENDERED list); "Escape:
+  line hides + suppressed (explicit dismissal)"; "a close WITHOUT explicit
+  dismissal … never suppresses"; "every non-arrow/non-Escape key … forwards
+  verbatim, exactly once, while visible"; "hidden line: EVERY key — arrows
+  and Escape included — forwards verbatim (zero capture outside the visible
+  window)"; "the inner instance is NEVER mutated" (v1 pin); input-clock
+  one-tick-per-keypress cases.
+
+### Insertion casing (display string over the word span / #fragment): PASS
+
+```
+$ npx vitest --run test/widget.test.ts -t "Tab inserts"
+```
+- 2026-09-30: **11/11** — Tab inserts `items[highlightIndex].display` over
+  the word-regex span or `#fragment` (trigger char consumed), consumed
+  end-to-end (no inner keypress, line dismissed + suppressed, repaint
+  requested), never debounce-gated.
+
+### Highlight reset: PASS
+
+```
+$ npx vitest --run test/widget.test.ts -t "resets highlightIndex"
+```
+- 2026-09-30: 1/1 — "set() resets highlightIndex to 0 on every result-set
+  change (spec h2.55)" (within the 52/52; render/width-cache/hide-show
+  neighbors all green).
+
+### Startup-gate carry-over: PASS
+
+```
+$ npx vitest --run test/startup-gate.test.ts
+```
+- 2026-09-30: **7/7** — "a query racing an unfinished replay WAITS for the
+  settled signal"; "the wait is BOUNDED … ≤ maxWaitMs"; "settled gate is a
+  pure pass-through"; "a REJECTED replay promise still unblocks the gate";
+  restoreFromHistory onSettled exactly-once trio (finish / abort BUG-004
+  path / empty history). Widget-side: visibility R5 hold/release/pass-through
+  cases (18/18 above).
+
+### Editor-enter carry-over (enter-submit proxy): PASS
+
+```
+$ npx vitest --run test/editor-enter.test.ts
+```
+- 2026-09-30: **28/28** — "Enter + open word menu → cancel FIRST, then inner
+  handles the same key"; slash menu / no-menu / non-submit keys untouched;
+  rebound submit key honored; "the inner instance is NEVER mutated" +
+  sibling-style re-entry termination + exactly-ONE-delegation pins (v1
+  recursion regression); proxy get/set/has forwarding; thenable guard;
+  "onKeystroke hook fires for EVERY input event"; "a throwing onKeystroke
+  never breaks input".
+
+### Anchored-fuzzy matching + tier ranking (query core): PASS
+
+```
+$ npx vitest --run test/query.test.ts          # 66/66
+$ npx vitest --run test/query.test.ts -t "ANCHOR"
+$ npx vitest --run test/query.test.ts -t "anchored fuzzy"
+$ npx vitest --run test/query.test.ts -t "tier"
+$ npx vitest --run test/query.test.ts -t "fuzzThreshold"
+```
+- 2026-09-30: **66/66**; named subsets: ANCHOR never-matches case 1/1;
+  `matchFragment — anchored fuzzy` describe 13/13 (tier 2 contiguous tail
+  `zsk`→`zendesk`, tier 1 leading-stretch `zds`→`zendesk`, boundaries);
+  tier-classification cases 24/24 (tier desc always — a 1-count exact-prefix
+  outranks a 40-count scattered); fuzzThreshold cases 7/7 (below-threshold
+  never renders; 100 = exact-prefix-only); first-char-bucket scan describe
+  4/4 ("anchor holds: different-first-char keys are never scanned");
+  zero-fragment sessionCount-desc ordering; plural pruning before the limit
+  slice.
+
+### R_eff admission curve + conjugation guard (score core): PASS
+
+```
+$ npx vitest --run test/score.test.ts          # 75/75
+$ npx vitest --run test/score.test.ts -t "admission"
+```
+- 2026-09-30: **75/75**; admission subset 11/11 — length-conditioned curve
+  asserted relative to the imported `R_eff` constants (floor hold q ≥ 12 at
+  ≤ 8 chars, sqrt ramp 9–19 with boundary probes, admit-all ≥ 20, every
+  attested admission at GROUP 1, absent → 0, `rejectCommonness` moves the
+  floor); proper-noun relief stays retired; conjugation guard rides
+  `R_eff(len(word))`; salience arithmetic; eviction ordering (salience ×
+  τ=50; menu ordering is NOT salience).
+
+### Integration item 1 (M3 clause — one-line widget below the input): PASS
+
+Scripted: the widget suites above (visibility machine + key handling +
+render join/caps/highlight) — `Zendesk | …` line format, arrows move the
+highlight, boundary-Esc.
+Live (spec/09 h2.57 binding): **plan/003_bbac3b15e8d0/P1M3T4S1/verification-record.md**
+— W1 (line renders directly below the input on the typing keystroke,
+`Zendesk | zendesk-zephyr`; one real bug found — one-keystroke set lag —
+minimally fixed in src/pi/widget.ts and live re-verified `w1fix-t0.txt`),
+W2 (arrows navigate/clamp), W3 (boundary-Esc: first press dismisses
+consumed with caret unmoved, second ← moves the caret — exactly the two-←
+mid-word contract), W5 (Tab inserts display casing). Overall T4.S1
+verdict: PASS (W1–W12). Not duplicated here; captures/ holds the tmux
+evidence.
+
+### Integration item 2 (capture window while the line is visible): PASS
+
+Scripted: "every non-arrow/non-Escape key … forwards verbatim" + "hidden
+line: EVERY key … forwards verbatim" + consumed navigate/clamp/Tab cases
+(widget.test.ts, 52/52) — the sanctioned capture window is exactly
+{arrows, Escape, Tab} while visible.
+Live: T4.S1 W2/W4 (letters land verbatim mid-visibility; Escape dismisses
+and returns every later key; arrows/Tab consumed with zero inner calls).
+
+### Integration item 7 (conversational path completion, rule 4d): PASS
+
+```
+$ npx vitest --run test/segment.test.ts -t "path tokens"        # 12/12
+$ npx vitest --run test/query.test.ts -t "path candidates"      # 4/4
+```
+- 2026-09-30: segment "path tokens (2026-10 rule 4d)" 12/12 (`'use
+  src/core/query.ts here'` → ONE path token; `docs/architecture.md`;
+  `example.com/a/b`; `4:36`/`localhost:8080` keep colons; `and/or` not a
+  token; 96-char key cap); query "path candidates under the prefix matcher"
+  4/4 ("'sr' (first-segment prefix) surfaces the whole-path candidate with
+  its display"; "absolute-path key … display keeps the leading '/'"; "a
+  mid-path component is never matchable"); acceptance.test.ts pins the
+  fixture path candidate surviving to the menu (`fresh` →
+  `src/core/query.ts`).
+Live: T4.S1 W9 (`sr` → `src/core/query.ts` line, Tab inserts the whole
+path; `/ho` — hapax disarms once `/` precedes the cursor, stock pi owns the
+rest, input verbatim) + W10 (`#sr/c` shows nothing — trigger fragments with
+`/` disarm). Item 6 stock contexts: W8 (quoted path/slash/@-mention all
+stock, no hapax line).
+
+### No-persistence: PASS (static backdrop drift recorded)
+
+```
+$ npx vitest --run test/no-persistence.test.ts   # 3/3
+$ grep -rn "writeFile\|appendFile\|createWriteStream" src/
+```
+- 2026-09-30: dynamic assertion **3/3 green**. Static grep is **no longer
+  empty** (a change vs the M1/M2 records' backdrop):
+  `src/pi/debug.ts` uses `writeFileSync("/tmp/hapax-store.txt", …)` —
+  landed 2026-09-10 (`4d26f3f`, "/acwords writes the COMPLETE store list to
+  /tmp/hapax-store.txt"). This is the spec/08-sanctioned `debug` surface:
+  the write fires ONLY on the user's explicit /acwords dump command,
+  targets /tmp, is try/catch'd best-effort, and the suite's filesystem
+  snapshots (which never invoke the command) stay empty-set. Recorded as
+  static-backdrop drift, not a persistence regression; detail in the run
+  report.
+
+### Bench numbers (2026-09-30, re-captured at 0f1018c)
+
+Hard CI gate — `npx vitest --run test/perf-gates.test.ts` → **8/8 PASS**;
+measured actuals vs the spec/09 h2.58 budgets:
+
+| Gate (h2.58) | Budget | Measured | vs budget | CI bound (3×) | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| a. 20k-candidate anchored-fuzzy query (first-char bucket + tiers + frequency sort + top 8) | < 1 ms p99 | **p99 0.475 ms** (median 0.230, max 0.697; hot bucket 913) | 0.48× | < 3 ms | PASS |
+| a2. cold first query (no warmup; extra gate) | < 1 ms p99 | **p99 1.735 ms** (median 1.125) over 120 fresh stores | 1.74× | < 3 ms | PASS (watch — above 1×, inside bound) |
+| b. dictionary load + full 20k-word lookup sweep | < 60 ms | **4.5 ms** (0 null hits, 0 phantom hits) | 0.08× | < 180 ms | PASS |
+| c. ingest 800 KB synthetic session text (+ yield ≤ 64 KB) | < 60 ms | **122.8 ms** (best of 3), yields 39 (min 13) | 2.05× | < 180 ms | PASS (watch — inherited from the M2-era calibration, inside bound) |
+| d. steady-state heap delta (dict + store) | < 6 MB | **4.98 MB** (settled low-water) | 0.83× | < 18 MB | PASS |
+
+Extra gates green (not part of the h2.58 four): a3 zero-fragment full-store
+listing 8.8 ms p99 (sanity only), e default-config 100k restore 193.9 ms
+(< 600 ms), f 25k-distinct flood 171.7 ms (< 300 ms CI bound; 1.72× the §05
+hard 100 ms — watch, eviction passes dominate). Reporting bench
+(`npm run bench`, exit 0): gate a mean 0.2486 ms / p99 0.5114 ms, b 1.81 ms,
+c 111.2 ms, d 44.1 ms/cycle. Gate a exercises the ANCHORED-FUZZY path in
+both files (perf-gates sanity comment asserts first-char-bucket entry; bench
+describe reads "first-char bucket 'p' (~913 range)") — no stale "prefix
+query" labels remain.
+
+Honesty note (M2-section practice): gates a2, c, and f sit above the 1×
+ideal budget but inside their calibrated CI bounds — recorded as watch, not
+failures; no budget was loosened by this sweep. One flake was FOUND and
+FIXED during the sweep: gate a2 intermittently hit vitest's default 5 s
+test timeout because its 120-store SETUP (not the measured query) sits near
+5 s under parallel worker load; the fix is an explicit 30 s test timeout on
+that test only — the p99 < 3 ms assertion is unchanged. Three consecutive
+full-suite runs were green after the fix.
+
+### Triage log
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| 1 | perf gate a2 intermittent 5 s timeout under parallel worker load (setup-bound, 2 of 4 pre-fix full-suite runs) | FIXED minimally in test/perf-gates.test.ts: explicit `30_000` test timeout on the a2 case (setup cost), assertion untouched; owning contract P1.M2.T2.S2's gate budget unchanged. 3/3 green full suites post-fix. |
+| 2 | static no-persistence grep shows `src/pi/debug.ts` writeFileSync (/acwords → /tmp/hapax-store.txt, commit `4d26f3f`) | RECORDED, not fixed: spec/08-sanctioned debug surface, command-gated, /tmp target; dynamic snapshot suite 3/3. Static-backdrop drift vs M1/M2 records. |
+| 3 | T4.S1 W7: fallback provider path unreachable live on the recorded pi build (factory always present) | RECORDED (upstream finding, cited): fallback path covered by unit suites only; widget-around-stock-editor was live-verified instead. |
+
+**Verdict: M3 (v3) DONE.** Every M3 acceptance clause maps to named green
+tests or the cited live-verification record; the four h2.58 gates are green
+with two inherited watch flags; one setup-bound test flake was minimally
+fixed and re-verified.
+
+### Files changed by this sweep
+
+| Change | Kind |
+| --- | --- |
+| `docs/M1-DoD.md` (this M3 section) | appended evidence record (M1/M2/Bugfix sections untouched) |
+| `test/perf-gates.test.ts` | triage fix #1: explicit timeout on gate a2 (setup-bound), assertion unchanged |
+| `plan/003_bbac3b15e8d0/P1M4T1S2/research/run-report.md` | sweep record + spec-drift notes |
+
+Parallel inputs (cited, not re-run): P1.M3.T4.S1 live-verification record
+(+ captures/, tmux technique per h2.57); P1.M4.T1.S1 README sweep
+(docs-only, landed; green post-sweep per its sweep-log).
+
+### Reproduction
+
+```bash
+git rev-parse HEAD                                # 0f1018c… (or later; re-capture if src/ or test/ moved)
+npm run check
+npm test                                          # 37 files / 1007 passed / 1 skipped
+npx vitest --run test/widget-visibility.test.ts   # 18/18
+npx vitest --run test/widget.test.ts              # 52/52
+npx vitest --run test/widget.test.ts -t "boundary-Esc"   # 3/3
+npx vitest --run test/widget.test.ts -t "Tab inserts"    # 11/11
+npx vitest --run test/editor-enter.test.ts        # 28/28
+npx vitest --run test/startup-gate.test.ts        # 7/7
+npx vitest --run test/query.test.ts               # 66/66 (anchored-fuzzy, tiers, fuzzThreshold, buckets)
+npx vitest --run test/score.test.ts               # 75/75 (R_eff, conjugation guard, salience, eviction)
+npx vitest --run test/segment.test.ts -t "path tokens"          # item 7, 12/12
+npx vitest --run test/query.test.ts -t "path candidates"        # item 7, 4/4
+npx vitest --run test/no-persistence.test.ts      # 3/3
+grep -rn "writeFile\|appendFile\|createWriteStream" src/   # debug.ts dump only (see triage #2)
+npx vitest --run test/perf-gates.test.ts --disable-console-intercept   # [gate …] actuals
+npm run bench                                     # reporting numbers
+cat plan/003_bbac3b15e8d0/P1M3T4S1/verification-record.md       # cited live record (W1–W12)
+```

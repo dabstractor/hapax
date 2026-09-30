@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "M3 landing — R_eff gradient, path candidates (4d), anchored-fuzzy matching, one-line widget",
-      "status": "Ready",
+      "status": "Complete",
       "description": "Bring the code into agreement with spec at af63f1d for the four unimplemented deltas: R1 length-conditioned admission curve, R2 rule-4d slash-joined path candidates, R3 anchored-fuzzy matching + tier/sessionCount ranking + fuzzThreshold, R4 one-line widget primary display with dual-path architecture; close with R5 changeset-level documentation and DoD re-verification. Everything else in the PRD diff is already shipped and verified — do not redo. Spec/*.md is read-only this run; record drift in reports.",
       "milestones": [
         {
@@ -459,14 +459,14 @@
           "type": "Milestone",
           "id": "P1.M4",
           "title": "Changeset coherence (R5; Mode B)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Final changeset-level documentation task: README sweep (every claim verified against shipped behavior) and DoD re-verification recorded in docs/M1-DoD.md. Depends on ALL implementing subtasks of P1.M1-P1.M3. Spec files remain read-only; any discovered spec drift is recorded in the run report for a later interactive session.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M4.T1",
               "title": "Sync changeset-level documentation (README sweep + DoD re-verification)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Mode B catch-all: README.md updated for the whole M3 delta (features, config rows, dual-path architecture, invariant amendment) and the DoD record annotated with an M3 section (suite counts, bench numbers, date, live-verification record). Per-feature docs already rode with their implementing subtasks (Mode A: calibrate-bands header, query-module JSDoc).",
               "subtasks": [
                 {
@@ -513,7 +513,7 @@
                   "type": "Subtask",
                   "id": "P1.M4.T1.S2",
                   "title": "DoD re-verification + docs/M1-DoD.md M3 section append",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M4.T1.S1",
