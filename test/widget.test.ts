@@ -43,6 +43,7 @@ import { CandidateStore } from "../src/core/store.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
 import type { ChainMachine } from "../src/pi/provider.js";
+import type { ChainGrantTracker } from "../src/pi/chain-grant.js";
 import type { WidgetState } from "../src/pi/widget.js";
 import {
   createWidgetEditorFactory,
@@ -1345,5 +1346,35 @@ describe("widget chain offers render + re-arm (BUG-001 fix, P1.M1.T2.S1 consult 
     h.press("\t"); // the word span "qu" exists → the NORMAL span path inserts
     expect(h.buf.lines).toEqual(["zorpwibble Quuxblat"]);
     expect((chain.arm as Mock).mock.calls[0]![0]).toBe("quuxblat");
+  });
+});
+
+// ── acceptance resets the SHARED grant tracker (plan 004 T2.S2) ────────────
+// The factory owns one ChainGrantTracker and hands the SAME instance to
+// the visibility machine (consult-branch ticks) and this arm site — the
+// acceptance must reset it beside chain.arm so the NEXT word start gets a
+// fresh one-shot offer (never a stale seen=1 from before the accept, and
+// never the popping forever-armed behavior the grant exists to stop).
+describe("widget acceptance resets the shared grant tracker (plan 004 T2.S2)", () => {
+  it("a consumed Tab acceptance calls grant.reset() beside chain.arm", async () => {
+    const chain = spiedChain();
+    const grant: ChainGrantTracker = {
+      tick: vi.fn(() => false),
+      reset: vi.fn(),
+    };
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 }, {
+      chain,
+      grant,
+      store: seedStore([["zendesk", "Zendesk"]]),
+    });
+
+    h.press("x"); // forwarded text event → the machine paints the real query
+    await flushPaint();
+    expect(h.machine.painted()[0]?.key).toBe("zendesk"); // fixture sanity
+
+    h.press("\t"); // consumed acceptance — the arm site
+
+    expect(chain.arm).toHaveBeenCalledTimes(1);
+    expect(grant.reset).toHaveBeenCalledTimes(1); // FRESH grant, beside the arm
   });
 });

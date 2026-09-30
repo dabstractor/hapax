@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "M2 chained completion live on the widget PRIMARY path (BUG-001)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Implement spec/07:437-476 (M2 chained completion) on the widget path: arm the shared ChainMachine on widget Tab acceptance, render zero-typed-char successor offers through the visibility machine's isIntentBypass seam with the one-shot grant, invert the plan-004 no-arm pin, and add the spec/07 clarifying clause. The fallback provider path (provider.ts) is the reference implementation and must not regress.",
           "tasks": [
             {
@@ -76,7 +76,7 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Render zero-typed-char successor offers on the widget line",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Wire the chain consult into createVisibilityMachine (the isIntentBypass seam, widget.ts ~415, is present but unwired by createWidgetEditorFactory ~995-1011): at an empty word start offer the armed word's top successors immediately; typed fragments filter via the anchored-fuzzy membership gate at threshold 0; port the one-shot grant tracker as a shared helper used by both display paths; pin end-to-end behavior and add the spec/07 clarifying clause.",
               "subtasks": [
                 {
@@ -101,7 +101,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "Port the one-shot grant tracker as a shared helper for both paths",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1"
@@ -118,7 +118,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S3",
                   "title": "End-to-end widget chain tests, live TTY verification, and spec/07 clarifying clause",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S2",
@@ -155,7 +155,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "Containment defer in tokenize pass 4 + segment tests + spec/04 sync",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/004_24ebf0115d16/bugfix/001_1a2f4ffe408f/architecture/r2-tokenizer-overlap.md (all claims live-verified). '_' is the ONLY character in both BASE_RE's word class (segment.ts:75) and LITERAL_SYMBOL_CHARS (:109), so the trailing-'_' trim is the only straddle possible. The equal-span defer sits at segment.ts:569; the overlap-safety branch (:658-662) emits the literal AND keeps the straddling base (its '\\b boundaries make this unreachable' comment is false for rule 4c — LITERAL_RE has no \\b). Chosen fix (b) defer-to-containing-base: consistent with the equal-span defer and spec/04:104-105 ('literals absorb only strictly-contained tokens'); fix (a) overlap-absorption was REJECTED because it contradicts that spec clause and would complete 'FOO_1' by deleting a typed '_'.\n2. INPUT: tokenize()'s pass-4 literal loop in src/core/segment.ts (~560-680): the out-cursor token o (first not-yet-passed token ending after start), the trimmed literal span [start, end), and the final merge's overlap-safety branch.\n3. LOGIC: At segment.ts:569 change the defer condition from (o.start === start && o.end === end) to (o.start <= start && end <= o.end) — equality is the subset case; a kept base/hexish token that CONTAINS the trimmed literal span wins and no literal is emitted ('FOO_1_' keeps its base token). Update the overlap-safety comment at :660 (branch stays as a defensive guard; note the 4c caveat). Tests (TDD): raws('FOO_1_') === ['FOO_1_'] in the rule-4c describe block (test/segment.test.ts ~615+); add trailing-'_' inputs ('FOO_1_', 'rename FOO_1_ ok', 'USER_2_TOKEN_') to the disjoint-spans invariant cases (test/segment.test.ts:293-305). Adjacent invariants must keep passing: '2560x1440@2' absorption (:617-631 — strictly-contained bases still absorb; the new defer only fires when the BASE is the container), opaque-literal equal-span class pins (:679-690), hexish/CJK/path cases.\n4. OUTPUT: tokenize() honoring its documented disjoint-span invariant (segment.ts:316) — one token for the trailing-'_' class; consumed by P1.M2.T1.S2's end-to-end assertion.\n5. DOCS: Mode A — extend spec/04-tokenization-and-scoring.md's 'Strictly additive' bullet (:101-106): a literal whose post-trim span equals or is contained in a kept base/hexish/compound token defers to that token; add the FOO_1_ example. Lands with the code (AGENTS.md binding policy).",

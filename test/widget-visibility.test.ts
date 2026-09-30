@@ -23,6 +23,7 @@ import type { RankedMatch, Sighting } from "../src/core/types.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
 import type { ChainMachine } from "../src/pi/provider.js";
+import { createChainGrantTracker, type ChainGrantTracker } from "../src/pi/chain-grant.js";
 import {
   createVisibilityMachine,
   type VisibilityMachine,
@@ -76,6 +77,7 @@ async function build(
     config?: Partial<HapaxConfig>;
     query?: (fragment: string, mode: "trigger" | "ambient") => RankedMatch[];
     store?: CandidateStore;
+    grant?: ChainGrantTracker;
     restoreReady?: Promise<void>;
     chain?: ChainMachine;
   } = {},
@@ -92,6 +94,7 @@ async function build(
     restoreReady: over.restoreReady ?? Promise.resolve(),
     ...(over.query ? { query: over.query } : {}),
     ...(over.chain ? { chain: over.chain } : {}),
+    ...(over.grant ? { grant: over.grant } : {}),
   };
   const machine = createVisibilityMachine(deps);
   await vi.advanceTimersByTimeAsync(0);
@@ -594,17 +597,34 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
     word: string,
   ): {
     chain: ChainMachine;
+    grant: ChainGrantTracker;
     armNow: () => void;
     reset: ReturnType<typeof vi.fn>;
   } => {
     const chain = {
       state: vi.fn((): { word: string } | null => null),
       arm: vi.fn(),
-      reset: vi.fn(),
+      // FAITHFUL double (plan 004 T2.S2): a real ChainMachine goes idle on
+      // reset — the armed branch (and with it the grant tracker) is then
+      // never consulted again until the next arm. A state() that stayed
+      // armed through reset() would let stale grant history cross a
+      // disqualification — impossible with the real machine.
+      reset: vi.fn((): void => {
+        chain.state.mockImplementation(() => null);
+      }),
     };
+    // The REAL grant tracker (plan 004 T2.S2) — same instance the build
+    // wires as deps.grant. armNow() models the ARM-SITE CONTRACT (arm ⇒
+    // fresh grant — what the provider/widget arm sites do beside
+    // chain.arm), so re-arms never inherit stale grant history.
+    const grant = createChainGrantTracker();
     return {
       chain: chain as unknown as ChainMachine,
-      armNow: () => chain.state.mockImplementation(() => ({ word })),
+      grant,
+      armNow: () => {
+        chain.state.mockImplementation(() => ({ word }));
+        grant.reset();
+      },
       reset: chain.reset,
     };
   };
@@ -632,7 +652,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
 
   it("(1) zero-char offer: an empty word start paints the successors IMMEDIATELY (count order, store casing, no reset)", async () => {
     const c = armedChain("zorpwibble");
-    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain, grant: c.grant });
     c.armNow();
     editor.set("zorpwibble ", 12);
     const st = machine.onInput();
@@ -653,7 +673,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
 
   it("(2) typed fragment filters via matchFragment membership; the swap is R6-debounced, not immediate", async () => {
     const c = armedChain("zorpwibble");
-    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain, grant: c.grant });
     c.armNow();
     editor.set("zorpwibble ", 12);
     machine.onInput(); // full offer paints (count order)
@@ -673,7 +693,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
 
   it("(3) glued trigger fragment '#q' resets the chain; trigger mode answers (no chain shim)", async () => {
     const c = armedChain("zorpwibble");
-    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain, grant: c.grant });
     c.armNow();
     editor.set("zorpwibble #q", 13); // col = line length (13)
     const st = machine.onInput();
@@ -686,7 +706,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
 
   it("(4) punctuation-glued fragment resets and falls through (word-start guard)", async () => {
     const c = armedChain("zorpwibble");
-    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain, grant: c.grant });
     c.armNow();
     editor.set("zorpwibble!qu", 13);
     const st = machine.onInput();
@@ -699,7 +719,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
 
   it("(5) empty successor set → reset + fall-through; NEVER a visible line with zero candidates", async () => {
     const c = armedChain("loneword"); // armed, but no bigrams seeded
-    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain, grant: c.grant });
     c.armNow();
     editor.set("loneword ", 9);
     const st = machine.onInput();
@@ -711,7 +731,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
 
   it("(6) stock context wins: R1 hides before the branch runs (no paint, no reset)", async () => {
     const c = armedChain("zorpwibble");
-    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain });
+    const { machine, editor } = await build({ store: seedChainStore(), chain: c.chain, grant: c.grant });
     c.armNow();
     editor.set("/cmd", 4); // line-0 slash command → stock context
     const st = machine.onInput();
@@ -725,6 +745,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
     const { machine, editor } = await build({
       store: seedChainStore(),
       chain: c.chain,
+      grant: c.grant,
       config: { enableChaining: false },
     });
     c.armNow();
@@ -740,6 +761,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
     const { machine, editor } = await build({
       store: seedChainStore(),
       chain: c.chain,
+      grant: c.grant,
       config: { menuDelayMs: 2000 },
     });
     c.armNow();
@@ -750,6 +772,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
     expect(machine.getState().visible).toBe(false);
     // 300 ms later: past freshReopen (200), far under menuDelayMs (2000).
     await vi.advanceTimersByTime(300);
+    c.armNow(); // re-armed (the user accepted a word again) — arm ⇒ fresh grant
     editor.set("zorpwibble ", 12);
     const st = machine.onInput();
     // The chain offer is INTENT — it paints NOW; a word-mode reopen at
@@ -767,6 +790,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
     const { machine, editor } = await build({
       store: seedChainStore(),
       chain: c.chain,
+      grant: c.grant,
       restoreReady: gate.promise,
     });
     c.armNow();
@@ -782,5 +806,99 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
       "Quuxblat",
       "deltaword",
     ]);
+  });
+
+  // ── one-shot grant (plan 004 T2.S2, bugfix 001_1a2f4ffe408f) ──
+
+  it("(10) typing through the offered word disarms at the NEXT word start — the normal path answers that same tick", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({
+      store: seedChainStore(),
+      chain: c.chain,
+      grant: c.grant,
+    });
+    c.armNow();
+
+    // The granted offer's word: empty word start → tick("") = word 1.
+    editor.set("zorpwibble ", 12);
+    machine.onInput();
+    expect(machine.painted().every((m) => m.description === "chain")).toBe(true);
+    expect(c.reset).not.toHaveBeenCalled();
+
+    // Typing INTO the offered word — same word, still armed, still offering.
+    // (The narrowed set differs inside the 100 ms swap window → parked;
+    // promote it before asserting, mirroring S1's case (2).)
+    editor.set("zorpwibble quuxblat", 19);
+    machine.onInput();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(machine.painted().map((m) => m.display)).toEqual(["Quuxblat"]);
+    expect(c.reset).not.toHaveBeenCalled();
+
+    // The NEXT word start → the grant is spent: chain reset + fall
+    // through — the normal path answers THIS tick (trailing space → R3
+    // close; never a chain shim, never a stuck offer).
+    editor.set("zorpwibble quuxblat ", 20);
+    const st = machine.onInput();
+    expect(c.reset).toHaveBeenCalledTimes(1);
+    expect(st.visible).toBe(false);
+    expect(machine.painted().every((m) => m.description !== "chain")).toBe(true);
+  });
+
+  it("(11) narrowing AND backspace inside the granted word keep the chain (mutual prefix)", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({
+      store: seedChainStore(),
+      chain: c.chain,
+      grant: c.grant,
+    });
+    c.armNow();
+
+    editor.set("zorpwibble ", 12);
+    machine.onInput(); // word 1 granted
+    editor.set("zorpwibble q", 12);
+    machine.onInput(); // typing into the offer (empty → non-empty: same word)
+    await vi.advanceTimersByTimeAsync(100); // promote the narrowed set
+    editor.set("zorpwibble qu", 13); // narrowing — mutual prefix, same word
+    machine.onInput();
+    editor.set("zorpwibble q", 12); // backspace — still mutual prefix
+    machine.onInput();
+    await vi.advanceTimersByTimeAsync(100); // promote the widened-back set
+
+    expect(c.reset).not.toHaveBeenCalled(); // never disarmed mid-word
+    expect(machine.painted().map((m) => m.display)).toEqual(["Quuxblat"]);
+  });
+
+  it("(12) the acceptance contract (arm ⇒ fresh grant) re-offers at the next word start", async () => {
+    const c = armedChain("zorpwibble");
+    const { machine, editor } = await build({
+      store: seedChainStore(),
+      chain: c.chain,
+      grant: c.grant,
+    });
+    c.armNow();
+
+    editor.set("zorpwibble ", 12);
+    machine.onInput(); // tick #1 → the granted offer paints
+    expect(machine.painted().every((m) => m.description === "chain")).toBe(true);
+
+    // Type through the offered word (same word — the grant is NOT spent),
+    // then the next word start spends it (non-empty → "" = new word).
+    editor.set("zorpwibble quuxblat", 19);
+    machine.onInput();
+    editor.set("zorpwibble quuxblat ", 20);
+    machine.onInput(); // tick #2 → spent → chain reset + fall through
+    expect(c.reset).toHaveBeenCalledTimes(1);
+
+    // The acceptance half (widget.test.ts's matrix pins grant.reset beside
+    // chain.arm): re-arm — armNow models that contract (arm ⇒ fresh grant).
+    c.armNow();
+
+    editor.set("zorpwibble quuxblat ", 20);
+    machine.onInput(); // fresh grant → tick #1 → the offer paints again
+    expect(machine.painted().map((m) => m.display)).toEqual([
+      "Quuxblat",
+      "deltaword",
+    ]);
+    expect(c.reset).toHaveBeenCalledTimes(1); // not re-spent — one shot
   });
 });

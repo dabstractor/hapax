@@ -48,6 +48,7 @@ import { matchFragment, rankMatches } from "../core/query.js";
 import type { CandidateStore } from "../core/store.js";
 import type { RankedMatch, Successor } from "../core/types.js";
 import { resolveFuzzThreshold, type HapaxConfig } from "./config.js";
+import { createChainGrantTracker } from "./chain-grant.js";
 
 /**
  * How hapax should respond at a cursor position. `fragment` is the
@@ -276,8 +277,9 @@ export function createHapaxProvider(
   // One-shot chain tracker (2026-09): words answered per arming + the
   // last answered armed prefix (word-boundary detection). Reset on
   // every acceptance (applyCompletion below).
-  let chainWordsSeen = 0;
-  let chainLastArmedPrefix: string | null = null;
+  // One-shot grant tracker (spec/07:450–457) — shared helper, plan 004
+  // T2.S2; the widget path consumes the same logic via src/pi/chain-grant.ts.
+  const grant = createChainGrantTracker();
 
   // Identifier trigger chars: pi-tui only auto-requests suggestions
   // on plain-letter keystrokes when the char is a registered trigger
@@ -400,38 +402,12 @@ export function createHapaxProvider(
           before === "" || /[ \t]$/.test(before)
             ? ""
             : (before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0] ?? null);
-        if (curArmedPrefix !== null) {
-          // Word-boundary detection, empty-prefix asymmetry and all:
-          //   - first armed answer of this arming → the GRANTED word
-          //     (counts as word 1)
-          //   - "" → non-empty = typing INTO the granted offer (same word)
-          //   - non-empty → "" = moved past a typed-through word (new word)
-          //   - two non-empties with no prefix relation = different words;
-          //     mutual prefix relation (incl. backspace) = same word
-          const isNewWord =
-            chainLastArmedPrefix === null
-              ? false
-              : curArmedPrefix === "" && chainLastArmedPrefix !== ""
-                ? true
-                : curArmedPrefix !== "" &&
-                    chainLastArmedPrefix !== "" &&
-                    !curArmedPrefix.startsWith(chainLastArmedPrefix) &&
-                    !chainLastArmedPrefix.startsWith(curArmedPrefix);
-          if (chainLastArmedPrefix === null) {
-            chainWordsSeen = 1; // the granted offer's word
-          } else if (isNewWord) {
-            chainWordsSeen += 1;
-          }
-          if (chainWordsSeen >= 2) {
-            // Typed through the granted offer without accepting → idle.
-            // Fall through: the normal path (under the hesitation gate)
-            // answers this SAME keystroke.
-            chain.reset();
-            chainWordsSeen = 0;
-            chainLastArmedPrefix = null;
-          } else {
-            chainLastArmedPrefix = curArmedPrefix;
-          }
+        if (curArmedPrefix !== null && grant.tick(curArmedPrefix)) {
+          // Typed through the granted offer without accepting → idle.
+          // Fall through: the normal path (under the hesitation gate)
+          // answers this SAME keystroke. (The tracker already zeroed
+          // itself — never double-reset.)
+          chain.reset();
         }
         if (chain.state() !== null) {
 
@@ -667,8 +643,7 @@ export function createHapaxProvider(
             // A chain successor was accepted → armed(next); fresh one-shot
             // grant (the immediate offer for the NEXT word).
             chain.arm(key.slice(CHAIN_KEY_PREFIX.length));
-            chainWordsSeen = 0;
-            chainLastArmedPrefix = null;
+            grant.reset(); // fresh one-shot grant (spec/07:450–457)
           } else {
             // Whole-word candidate: single whitespace-free tokens — words
             // and rule-4d path tokens alike. Arm the MAPPED STORE KEY,
@@ -693,8 +668,7 @@ export function createHapaxProvider(
               // tier-0 anchorless: never arms (spec §04).
             } else {
               chain.arm(key);
-              chainWordsSeen = 0;
-              chainLastArmedPrefix = null;
+              grant.reset(); // fresh one-shot grant (spec/07:450–457)
             }
           }
         }

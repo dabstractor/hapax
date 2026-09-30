@@ -100,6 +100,7 @@ import { matchFragment, rankMatches } from "../core/query.js";
 import type { CandidateStore } from "../core/store.js";
 import type { RankedMatch, Successor } from "../core/types.js";
 import { resolveFuzzThreshold, type HapaxConfig } from "./config.js";
+import { createChainGrantTracker, type ChainGrantTracker } from "./chain-grant.js";
 import {
   createEnterSubmitEditor,
   isSubmitKey,
@@ -134,6 +135,12 @@ export interface WidgetLayerOptions {
    *  forwards). The successor-offer consult branch is P1.M1.T2.S1; the
    *  shared one-shot grant tracker is P1.M1.T2.S2. */
   chain: ChainMachine;
+  /** Test seam: the ONE-SHOT grant tracker (spec/07:450–457, plan 004
+   *  T2.S2) shared by the consult branch (ticks before paints) and the
+   *  tab-insert arm site (reset beside chain.arm). Absent → the factory
+   *  creates one, so production wiring is zero-config; injected → tests
+   *  can spy/reset or share an instance deliberately. */
+  grant?: ChainGrantTracker;
   /** startup restore gate signal — shared with the fallback path's
    *  createStartupGate (resolves when history replay settles). */
   restoreReady: Promise<void>;
@@ -362,6 +369,13 @@ export interface VisibilityMachineDeps {
    *  mirroring the provider armed branch (provider.ts). Optional so
    *  idle-chain builds and tests without a machine change behavior. */
   chain?: ChainMachine;
+  /** One-shot grant tracker (spec/07:450–457, plan 004 T2.S2): the
+   *  consult branch ticks it BEFORE painting offers (the granted offer's
+   *  word is word 1); a spent grant resets the chain and falls through.
+   *  Absent → the machine creates its own, so direct machine tests need
+   *  no wiring; the factory always passes ITS instance so the machine
+   *  and the tab-insert arm site share one grant (no drift). */
+  grant?: ChainGrantTracker;
   /** Called after every paint() — INCLUDING swap-timer promotions — so
    *  the wiring can push the fresh snapshot and request a repaint even
    *  when no keystroke tick follows (W1 fix, P1.M3.T4.S1: a parked swap
@@ -468,6 +482,7 @@ export function createVisibilityMachine(
   const debounceMs = deps.debounceMs ?? 100;
   const reopenMs = deps.reopenMs ?? 200;
   const menuDelayMs = deps.config.menuDelayMs ?? 0;
+  const grant = deps.grant ?? createChainGrantTracker();
   const query =
     deps.query ??
     ((fragment: string, mode: "trigger" | "ambient"): RankedMatch[] =>
@@ -685,68 +700,91 @@ export function createVisibilityMachine(
         return state();
       }
 
-      const succ: Successor[] = [];
-      if (before === "" || /[ \t]$/.test(before)) {
-        // (a) Zero-typed-char offer: cursor at an EMPTY word start.
-        succ.push(
-          ...deps.store
-            .topSuccessors(armed.word)
-            .slice(0, deps.config.maxSuggestions),
-        );
-      } else {
-        // (b) Typed fragment at a WORD START (BUG-005 guard, provider
-        // parity): a fragment glued to the trigger char or punctuation
-        // is not a chain fragment — pi-tui-style blind prefix deletion
-        // would strand the glue. Membership filter, threshold 0.
-        const frag = before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0];
-        const fragAt = frag === undefined ? -1 : before.length - frag.length;
-        const atWordStart =
-          frag !== undefined &&
-          (fragAt === 0 || /[ \t]/.test(before[fragAt - 1] ?? ""));
-        if (frag !== undefined && atWordStart) {
+      // ONE-SHOT GRANT (spec/07:450–457, plan 004 T2.S2) — tick BEFORE any
+      // paint: the granted offer's word is word 1 (the first tick with a
+      // null history sets seen=1, never disarms), so ticking after the
+      // paint would disarm one word late. Null prefixes (glued
+      // punctuation, no trailing word) skip the tick entirely — the (c)
+      // guards below own disqualification, exactly like the provider's
+      // armed branch. Spent → the tracker has already zeroed itself: reset
+      // the chain and fall through — the normal (hesitation-gated) path
+      // answers this SAME tick, byte-for-byte the (c) precedent.
+      const curArmedPrefix =
+        before === "" || /[ \t]$/.test(before)
+          ? ""
+          : (before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0] ?? null);
+      const grantSpent =
+        curArmedPrefix !== null && grant.tick(curArmedPrefix);
+      if (grantSpent) {
+        deps.chain?.reset?.();
+        chainIntent = false;
+      }
+
+      if (!grantSpent) {
+        const succ: Successor[] = [];
+        if (before === "" || /[ \t]$/.test(before)) {
+          // (a) Zero-typed-char offer: cursor at an EMPTY word start.
           succ.push(
             ...deps.store
               .topSuccessors(armed.word)
-              .filter((s) => matchFragment(frag, s.next) !== null)
               .slice(0, deps.config.maxSuggestions),
           );
+        } else {
+          // (b) Typed fragment at a WORD START (BUG-005 guard, provider
+          // parity): a fragment glued to the trigger char or punctuation
+          // is not a chain fragment — pi-tui-style blind prefix deletion
+          // would strand the glue. Membership filter, threshold 0.
+          const frag = before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0];
+          const fragAt = frag === undefined ? -1 : before.length - frag.length;
+          const atWordStart =
+            frag !== undefined &&
+            (fragAt === 0 || /[ \t]/.test(before[fragAt - 1] ?? ""));
+          if (frag !== undefined && atWordStart) {
+            succ.push(
+              ...deps.store
+                .topSuccessors(armed.word)
+                .filter((s) => matchFragment(frag, s.next) !== null)
+                .slice(0, deps.config.maxSuggestions),
+            );
+          }
         }
-      }
-
-      if (succ.length > 0) {
-        const items = succ.map(chainShim);
-        chainIntent = true; // R5 intent: a chain paint bypasses hesitation
-        const sig = items.map((m) => m.display).join("\u0000");
-        // Suppression note: chain offers are INTENT — this branch paints
-        // even under explicit-dismissal suppression (mirroring trigger
-        // mode's R4 bypass). Suppression-release refinement lands in
-        // P1.M2.T2.S1 on this same block.
-        // R6/R7 composition (fallback parity): the FIRST paint is
-        // immediate; a visible line refreshes idempotently on the same
-        // set, paints an elapsed-window change, and PARKS a differing
-        // set inside the swap window (narrowing never closes+reopens).
-        if (!visible) {
-          paint(items, sig, now);
+  
+        if (succ.length > 0) {
+          const items = succ.map(chainShim);
+          chainIntent = true; // R5 intent: a chain paint bypasses hesitation
+          const sig = items.map((m) => m.display).join("\u0000");
+          // Suppression note: chain offers are INTENT — this branch paints
+          // even under explicit-dismissal suppression (mirroring trigger
+          // mode's R4 bypass). Suppression-release refinement lands in
+          // P1.M2.T2.S1 on this same block.
+          // R6/R7 composition (fallback parity): the FIRST paint is
+          // immediate; a visible line refreshes idempotently on the same
+          // set, paints an elapsed-window change, and PARKS a differing
+          // set inside the swap window (narrowing never closes+reopens).
+          if (!visible) {
+            paint(items, sig, now);
+            return state();
+          }
+          if (sig === displayedSig) {
+            paint(items, sig, now);
+            return state();
+          }
+          if (now - lastPaintAt >= debounceMs) {
+            paint(items, sig, now);
+            return state();
+          }
+          parkSwap(items);
           return state();
         }
-        if (sig === displayedSig) {
-          paint(items, sig, now);
-          return state();
-        }
-        if (now - lastPaintAt >= debounceMs) {
-          paint(items, sig, now);
-          return state();
-        }
-        parkSwap(items);
-        return state();
-      }
-      // (c) Disqualification: glued fragment ('#q' — trigger mode wins
-      // at '#q'), non-start/punctuation fragment, or zero matching
-      // successors → reset + fall through to the normal path on this
-      // SAME tick (the provider's reset-WITHOUT-return precedent).
-      // NEVER paint an empty set; NEVER return one from this branch.
-      deps.chain?.reset?.();
-      chainIntent = false;
+        // (c) Disqualification: glued fragment ('#q' — trigger mode wins
+        // at '#q'), non-start/punctuation fragment, or zero matching
+        // successors → reset + fall through to the normal path on this
+        // SAME tick (the provider's reset-WITHOUT-return precedent).
+        // NEVER paint an empty set; NEVER return one from this branch.
+        // (Also the grant-spent fall-through target — see the tick above.)
+        deps.chain?.reset?.();
+        chainIntent = false;
+      } // if (!grantSpent) — the whole offer half is grant-gated
     }
 
     const match = extractMatchState(lines, line, col, deps.config);
@@ -1147,6 +1185,14 @@ export function createWidgetEditorFactory(
     // empty/hidden; T2's visibility machine drives set/hide.
     const state = createWidgetState();
 
+    // ONE-SHOT GRANT tracker (spec/07:450–457, plan 004 T2.S2) — ONE
+    // instance per built editor, owned HERE next to the chain machine and
+    // shared by both consumers so they cannot drift: the visibility
+    // machine's consult branch ticks it before painting offers; the
+    // tab-insert arm site below resets it beside chain.arm (fresh grant
+    // per acceptance). opts.grant overrides for tests.
+    const chainGrant = opts.grant ?? createChainGrantTracker();
+
     // T2/S1 — the visibility machine. Created per BUILT editor (fresh
     // state per instance, mirroring the S2 state holder). Its editor
     // reads go through the enter-submit proxy once it exists — reads
@@ -1160,6 +1206,9 @@ export function createWidgetEditorFactory(
       store: opts.store,
       config: opts.config,
       restoreReady: opts.restoreReady,
+      // plan 004 T2.S2: the factory's grant instance — the SAME object
+      // the tab-insert arm site resets (shared state, no drift).
+      grant: chainGrant,
       // BUG-001 fix (P1.M1.T2.S1): the SAME chain instance the tab-insert
       // branch arms — evaluate consults it at empty word starts /
       // word-start fragments (the successor-offer half of the fix).
@@ -1376,14 +1425,18 @@ export function createWidgetEditorFactory(
           // arm or extend a chain (spec §04); records that OMIT tier
           // (chain shims, '#' listings) keep arming. enableChaining gate:
           // the flag false → M1 word-only behavior, byte-identical.
-          // Arm-only — the one-shot grant tracker is P1.M1.T2.S2's; the
-          // successor-offer consult branch is P1.M1.T2.S1's. opts.chain
+          // Arm + FRESH GRANT (plan 004 T2.S2): the one-shot grant
+          // tracker is now WIRED (portned from provider.ts into
+          // src/pi/chain-grant.ts) — this arm site resets the factory's
+          // shared instance so the NEXT word start offers the accepted
+          // word's successors exactly once. opts.chain
           // is the SAME instance index.ts resets on before_agent_start,
           // so reset semantics compose unchanged. An arm() throw lands
           // in this branch's catch — worst case inert, input never
           // breaks (the file's failure model).
           if (opts.config.enableChaining && rec && rec.tier !== 0 && rec.key) {
             opts.chain.arm(rec.key);
+            chainGrant.reset();
           }
         }
         // clamp: consumed, no movement, no dismissal.
