@@ -45,6 +45,8 @@ import {
   DEFAULT_LIMIT,
   matchFragment,
   rankMatches,
+  TIER0_BASE_SCORE,
+  TIER0_SKIP_FACTOR,
   TIER1_BASE_SCORE,
   TIER1_GAPCHAR_CAP,
   TIER1_GAPRUN_PENALTY,
@@ -188,7 +190,7 @@ describe("rankMatches — result shape (work-item contract)", () => {
     expect(Number.isInteger(m.salience)).toBe(false); // exact float, not rounded
   });
 
-  it("every result carries exactly the five RankedMatch fields", () => {
+  it("every match-path result carries exactly the six RankedMatch fields (incl. tier)", () => {
     const s = new CandidateStore();
     put(s, "alpha");
     put(s, "alpine", 2);
@@ -199,7 +201,17 @@ describe("rankMatches — result shape (work-item contract)", () => {
         "key",
         "salience",
         "sessionCount",
+        "tier",
       ]);
+    }
+  });
+
+  it("zero-fragment listing items OMIT tier — public tier===0 means anchorless only", () => {
+    const s = new CandidateStore();
+    put(s, "alpha");
+    put(s, "alpine", 2);
+    for (const m of rankMatches(s, "")) {
+      expect(Object.hasOwn(m, "tier")).toBe(false);
     }
   });
 
@@ -293,6 +305,118 @@ describe("rankMatches — ordering (spec §04 h2.29: tier → count → shorter 
   });
 });
 
+describe("rankMatches — tier-0 anchorless ambient fallback (2026-10, spec §04 h2.28)", () => {
+  // Spec/04 h2.28 tier-0: when the anchored scan admits ZERO records and
+  // the fragment is ≥ 3 chars, ONE anchorless full-store pass may rescue
+  // the menu — score = TIER0_BASE_SCORE − TIER0_SKIP_FACTOR·(runStart/len),
+  // Math.round + clampScore, strict < threshold gate (== survives),
+  // threshold-gated at the active fuzzThreshold. It can never enrich a
+  // menu that would already open (isolation), so never-hijack holds.
+
+  it("'esk' → 'zendesk' at tier 0, score 62 (from exported constants), when anchored is empty", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "zendesk", display: "zendesk", rankGroup: 0 }));
+    const [m] = rankMatches(s, "esk");
+    expect(m!.key).toBe("zendesk");
+    expect(m!.tier).toBe(0);
+    // runStart 4 (zendesk: z-e-n-d-E-S-K), len 7: 85 − 40·4/7 = 62.14 → 62.
+    // (The spec prose's "74 via runStart 2" is a hand-arithmetic slip —
+    // indexOf is leftmost, and 'esk' first occurs at index 4; the formula
+    // + exported constants are the contract. 62 still clears the default
+    // 60, so the exemplar's rescuing behavior holds.)
+    const score = Math.round(TIER0_BASE_SCORE - (TIER0_SKIP_FACTOR * 4) / 7);
+    expect(score).toBe(62);
+    // Score is admission-only and never public — pin the exact value
+    // behaviorally: strict gate, == survives.
+    expect(rankMatches(s, "esk", { fuzzThreshold: score })).toHaveLength(1);
+    expect(rankMatches(s, "esk", { fuzzThreshold: score + 1 })).toEqual([]);
+  });
+
+  it("'query' → 'src/core/query.ts' at tier 0, score 64 (rule-4d path filename entry)", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "src/core/query.ts", display: "src/core/query.ts" }));
+    const [m] = rankMatches(s, "query");
+    expect(m!.key).toBe("src/core/query.ts");
+    expect(m!.tier).toBe(0);
+    // runStart 9, len 17: 85 − 40·9/17 = 63.82 → 64 (spec exemplar).
+    const score = Math.round(TIER0_BASE_SCORE - (TIER0_SKIP_FACTOR * 9) / 17);
+    expect(score).toBe(64);
+    expect(rankMatches(s, "query", { fuzzThreshold: score })).toHaveLength(1);
+    expect(rankMatches(s, "query", { fuzzThreshold: score + 1 })).toEqual([]);
+  });
+
+  it("floor 3: 1–2-char fragments with zero anchored results → []", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "zendesk", display: "zendesk" }));
+    // "de" (runStart 3 → would-be 68) and "e" (runStart 1 → would-be 79)
+    // both live mid-key — without the floor they would fire tier-0.
+    expect(rankMatches(s, "de")).toEqual([]);
+    expect(rankMatches(s, "e")).toEqual([]);
+  });
+
+  it("non-empty anchored result is byte-identical — latent tier-0 match never merges", () => {
+    const s = new CandidateStore();
+    put(s, "zebra");
+    put(s, "zendesk");
+    put(s, "amaze"); // latent tier-0 match for "ze" (runStart 2)
+    // "ze" anchors on zebra/zendesk (tier 3) → fallback must not run,
+    // amaze must never appear, order byte-identical to pre-tier-0.
+    expect(rankMatches(s, "ze").map((m) => m.key)).toEqual(["zebra", "zendesk"]);
+    for (const m of rankMatches(s, "ze")) {
+      expect(m.tier).toBe(3); // match-path records carry their anchored tier
+    }
+    // Same store, mid-word fragment → anchored empty → the fallback fires.
+    expect(rankMatches(s, "esk").map((m) => m.key)).toEqual(["zendesk"]);
+  });
+
+  it("late runs gate at default 60: runStart/len > 0.625 discarded (== survives)", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "abcdefghij", display: "abcdefghij" }));
+    // runStart 7, len 10: 85 − 40·7/10 = 57 < 60 → discarded.
+    expect(rankMatches(s, "hij")).toEqual([]);
+    // Boundary: runStart 5, len 8 → 85 − 25 = 60 → == survives the strict
+    // gate. The 10-char key also contains "fgh" (runStart 5, len 10 → 65
+    // ≥ 60) and admits alongside — shorter key orders first.
+    s.upsert(sighting({ key: "abcdefgh", display: "abcdefgh" }));
+    expect(rankMatches(s, "fgh").map((m) => m.key)).toEqual([
+      "abcdefgh",
+      "abcdefghij",
+    ]);
+  });
+
+  it("explicit fuzzThreshold gates the fallback too", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "src/core/query.ts", display: "src/core/query.ts" }));
+    expect(rankMatches(s, "query", { fuzzThreshold: 75 })).toEqual([]);
+    expect(rankMatches(s, "query", { fuzzThreshold: 60 })).toHaveLength(1);
+  });
+
+  it("plural pruning applies to fallback results before the limit slice", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "midfielder", display: "midfielder" }));
+    s.upsert(sighting({ key: "midfielders", display: "midfielders" }));
+    // "ield" (4 chars, mid-word, no anchor) admits both at tier 0
+    // (85−12=73 / 85−10.9=74); the plural is pruned BEFORE the slice.
+    expect(rankMatches(s, "ield").map((m) => m.key)).toEqual(["midfielder"]);
+    expect(rankMatches(s, "ield", { limit: 1 }).map((m) => m.key)).toEqual([
+      "midfielder",
+    ]);
+  });
+
+  it("fallback records are ordinary records: tier-0 orders by count → shorter → byte-lex", () => {
+    const s = new CandidateStore();
+    put(s, "warpath", 3);
+    put(s, "warped");
+    // "arp" (3 chars, mid-word, no anchor): warpath runStart 1, len 7 →
+    // 85−5.7≈79; warped runStart 1, len 6 → 85−6.7≈78 — both admit at
+    // tier 0; the comparator's keys 2–4 order within the tier (count first).
+    expect(rankMatches(s, "arp").map((m) => m.key)).toEqual([
+      "warpath",
+      "warped",
+    ]);
+  });
+});
+
 describe("compareRankedMatches — 4-key order (spec §04 h2.29, comparator level)", () => {
   /** Direct comparator fixture — tier-1 stays invisible through
    *  rankMatches at the default threshold (T1 max 50 < 60), so
@@ -342,6 +466,19 @@ describe("compareRankedMatches — 4-key order (spec §04 h2.29, comparator leve
     expect(compareRankedMatches(rec(0, "zzlongestkey", 9), rec(0, "a", 1))).toBeLessThan(0);
     expect(compareRankedMatches(rec(0, "a", 1), rec(0, "bb", 1))).toBeLessThan(0);
     expect(compareRankedMatches(rec(0, "bb", 1), rec(0, "a", 1))).toBeGreaterThan(0);
+  });
+
+  it("strictness chain 3 > 2 > 1 > 0: anchorless ambient (0) loses to scattered (1)", () => {
+    // 2026-10 tier-0 (spec §04 h2.28): the comparator already ordered
+    // 0 below 1 — the anchorless fallback rides that same row.
+    const t3 = rec(3, "a", 1);
+    const t2 = rec(2, "b", 1);
+    const t1 = rec(1, "c", 1);
+    const t0 = rec(0, "d", 99); // 99× the count still cannot cross a tier
+    expect(compareRankedMatches(t3, t2)).toBeLessThan(0);
+    expect(compareRankedMatches(t2, t1)).toBeLessThan(0);
+    expect(compareRankedMatches(t1, t0)).toBeLessThan(0);
+    expect(compareRankedMatches(t0, t1)).toBeGreaterThan(0);
   });
 });
 

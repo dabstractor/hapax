@@ -174,4 +174,11 @@ export interface RankedMatch {
    *  a count difference can never cross a tier boundary. Agrees with
    *  description ("session x" + sessionCount). */
   sessionCount: number;
+  /** Strictness tier diagnostic (spec §04 h2.28): populated ONLY on the
+   *  match path (anchored 1–3, anchorless 0); OMITTED by zero-fragment
+   *  listing items, so `tier === 0` unambiguously means an anchorless
+   *  match (which never arms a successor chain). Diagnostic only —
+   *  ordering uses the internal sort record; this field never sorts and
+   *  consumers must not branch on it except for the anchorless signal. */
+  tier?: 0 | 1 | 2 | 3;
 }

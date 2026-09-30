@@ -16,8 +16,9 @@
  *
  * MENU ORDER (2026-10 owner rule, spec §04 h2.29 — supersedes the
  * retired 2026-09 content-derived order, kept as history below):
- * compareRankedMatches is a 4-KEY TOTAL ORDER — tier desc (matchFragment's
- * strictness class: exact prefix > contiguous tail > scattered) →
+ * compareRankedMatches is a 4-KEY TOTAL ORDER — tier desc
+ * (strictness class: exact prefix (3) > contiguous tail (2) > scattered
+ * (1) > anchorless ambient run (0)) →
  * sessionCount desc WITHIN a tier → shorter key → byte-lex. Among equally
  * strict matches the more conversation-relevant word (higher raw
  * sessionCount) belongs leftmost. The composite salience score still
@@ -33,6 +34,15 @@
  * (shorter key → byte-lex, counts invisible) so menus were keystroke-
  * stable but conversation-blind; h2.29 trades that for relevance within
  * the strictness tiers.
+ * TIER-0 AMBIENT FALLBACK (spec §04 h2.28, 2026-10): when the anchored
+ * scan admits ZERO records and the fragment is ≥ 3 chars, ONE
+ * anchorless full-store pass (contiguous run anywhere,
+ * score = TIER0_BASE_SCORE − TIER0_SKIP_FACTOR·runStart/len,
+ * threshold-gated) may rescue a menu that would not otherwise appear —
+ * it can never enrich a menu that would already open, so the
+ * never-hijack profile is preserved. Public RankedMatch.tier carries
+ * the strictness class on the match path only; listing items omit it
+ * (so tier === 0 unambiguously means anchorless).
  * An empty result tells the provider to delegate (never an empty menu) —
  * this function just returns [].
  *
@@ -91,6 +101,19 @@ export const TIER1_BASE_SCORE = 50 as const;
 export const TIER1_GAPRUN_PENALTY = 5 as const;
 export const TIER1_GAPCHAR_CAP = 15 as const;
 
+/** Tier-0 anchorless base score / skip penalty (spec §04 h2.28, 2026-10):
+ *  contiguous-run matches ANYWHERE in the key (runStart counts from 0 —
+ *  no anchor consumed), resorted to only when the anchored scan admits
+ *  nothing and the fragment is ≥ 3 chars. Numerically equal to the tier-2
+ *  pair but a DISTINCT semantic — exported separately so tuning never
+ *  silently couples the tiers. Calibration starting points (§09 tuning
+ *  protocol), never inlined; the tier BOUNDARIES are semantics, never
+ *  tunable. Verified exemplars: esk→zendesk (runStart 2, len 7 → 74);
+ *  query→src/core/query.ts (runStart 9, len 17 → 64); default-60 pass
+ *  band: runStart/len ≤ 0.625. */
+export const TIER0_BASE_SCORE = 85 as const;
+export const TIER0_SKIP_FACTOR = 40 as const;
+
 /** Default fuzzThreshold (PRD §08 h2.52): minimum admission score for a
  *  candidate to enter a result set. 60 admits all exact prefixes (100)
  *  and strong contiguous tails, gates out ALL scattered matches (tier-1
@@ -121,13 +144,15 @@ export interface RankOptions {
 }
 
 /** Fuzzy match result (PRD §04 h2.28): `tier` is the strictness class
- *  (3 = exact prefix, 2 = contiguous tail, 1 = scattered subsequence) —
- *  also compareRankedMatches' ORDER key 1; `score` is the admission
+ *  (3 = exact prefix, 2 = contiguous tail, 1 = scattered subsequence,
+ *  0 = anchorless ambient run — rankMatches' zero-anchored-results
+ *  fallback, which never flows through matchFragment) — also
+ *  compareRankedMatches' ORDER key 1; `score` is the admission
  *  score 0–100 — threshold-gated before ranking (the discard lives in
  *  rankMatches, P1.M2.T1.S2) and NEVER order-determining: only the tier
  *  (and within it the raw sessionCount) sorts the menu. */
 export interface MatchResult {
-  tier: 1 | 2 | 3;
+  tier: 0 | 1 | 2 | 3;
   score: number;
 }
 
@@ -261,14 +286,16 @@ export function matchFragment(f: string, c: string): MatchResult | null {
 }
 
 /** Internal sort record: the RankedMatch plus its matchFragment tier, so
- *  the comparator can apply key 1 (strictness). Tier is deliberately NOT
- *  on RankedMatch — the widget/provider never consume it — so rankMatches
- *  strips the record down to the 5-field public contract before
- *  returning. Exported for the comparator's contract and its tests
- *  (tiers are not observable through rankMatches under today's
- *  prefix scan; they become load-bearing when P1.M2.T2.S2 generalizes
- *  the scan to the first-char bucket). Zero-fragment listings carry a
- *  uniform tier 0, making key 1 a no-op there by construction. */
+ *  the comparator can apply key 1 (strictness). The PUBLIC RankedMatch
+ *  carries `tier` only as a match-path DIAGNOSTIC (anchored 1–3,
+ *  anchorless 0); zero-fragment listing records keep internal tier 0 as
+ *  a sort no-op but OMIT it from the public record — so a public
+ *  `tier === 0` unambiguously means an anchorless ambient match (which
+ *  never arms a successor chain), never a listing item. The two tier-0
+ *  meanings are mutually exclusive by construction: the fallback runs
+ *  only when the anchored loop pushed nothing, and listings only when
+ *  the fragment is empty. Exported for the comparator's contract and
+ *  its tests. */
 export interface RankedSortRecord {
   tier: number;
   m: RankedMatch;
@@ -278,7 +305,10 @@ export interface RankedSortRecord {
  *  §04 h2.29), a 4-key total order:
  *
  *  1. tier desc — matchFragment strictness: exact prefix (3) >
- *     contiguous tail (2) > scattered (1). Strictness ALWAYS wins: no
+ *     contiguous tail (2) > scattered (1) > anchorless ambient run (0,
+ *     spec §04 h2.28 — tier-0 records only ever coexist with each other,
+ *     since the ambient fallback runs exclusively on an empty anchored
+ *     result). Strictness ALWAYS wins: no
  *     sessionCount difference crosses a tier boundary (the 1-count
  *     exact-prefix word outranks the 40-count scattered one).
  *  2. sessionCount desc WITHIN a tier — the more conversation-relevant
@@ -346,6 +376,24 @@ export function compareRankedMatches(
  * x12"). `salience` is the exact unquantized value; `sessionCount` is
  * copied from the store entry and agrees with the description.
  *
+ * TIER-0 ANCHORLESS FALLBACK (spec §04 h2.28): with a non-empty
+ * fragment whose anchored scan admitted nothing, and length ≥ 3
+ * (shorter fragments would flood), one full-store pass admits keys
+ * containing the fragment as a contiguous run anywhere
+ * (`key.indexOf(lower)`), scored `TIER0_BASE_SCORE −
+ * TIER0_SKIP_FACTOR·runStart/len` (Math.round + clampScore, strict
+ * `< threshold` gate — == survives, matching the anchored gate). A
+ * runStart of 0 cannot admit here by construction (position-0 run ⇒
+ * anchored tier-3 at 100 ⇒ recs non-empty ⇒ no fallback), so plain
+ * indexOf is the operative arm. These records are ordinary records:
+ * plural pruning and the limit slice apply; they carry public
+ * `tier: 0` (the anchorless diagnostic — listing items omit tier, so
+ * the signal is unambiguous for the T2 chain-arm suppression).
+ * AMBIENT-ONLY: the fallback is skipped whenever the anchored scan
+ * admitted anything — it can never merge into (or enrich) an anchored
+ * menu. The always-consulted (loose) variant is P1.M1.T2.S2, not this
+ * module today.
+ *
  * @param store the session candidate store (accepted, never constructed)
  * @param prefix the user's fragment so far, any casing
  * @param opts `{ limit, fuzzThreshold }` (defaults: 8, DEFAULT_FUZZ_THRESHOLD)
@@ -382,7 +430,13 @@ export function rankMatches(
   // comparator's key 1 a no-op there by construction.
   const recs: RankedSortRecord[] = [];
   for (const k of keys) {
-    let tier = 0; // zero-fragment: tier-agnostic records (keys 2–4 order)
+    // Internal tier 0 on a zero-fragment listing is a SORT no-op (keys
+    // 2–4 order); it is OMITTED from the public record below. Public
+    // tier 0 is the ANCHORLESS ambient diagnostic (fallback push) — the
+    // two meanings never meet (listings require "", the fallback
+    // requires non-empty), and the omit-contract keeps public tier===0
+    // unambiguous for T2's chain-arm suppression.
+    let tier: 0 | 1 | 2 | 3 = 0; // zero-fragment: tier-agnostic records (keys 2–4 order)
     // §04 h2.28 admission gate (P1.M2.T1.S2): discard below-threshold
     // matches BEFORE ranking — inside the loop, before the push, so they
     // never enter the result and never render. Zero-fragment skips the
@@ -404,8 +458,47 @@ export function rankMatches(
         description: `session x${c.sessionCount}`, // ASCII x per item contract
         salience: salience(c, ordinal), // exact unquantized value
         sessionCount: c.sessionCount, // order key 2 within a tier (§04 h2.29)
+        // Match-path diagnostic only — the key must be OMITTED entirely
+        // on the zero-fragment listing path (lower === ""), so public
+        // tier === 0 unambiguously means an anchorless ambient match.
+        ...(lower !== "" ? { tier } : {}),
       },
     });
+  }
+
+  // TIER-0 AMBIENT FALLBACK (spec §04 h2.28): only when the anchored
+  // scan admitted NOTHING and the fragment is ≥ 3 chars — it can rescue
+  // a menu that would not otherwise open, never enrich one that would
+  // (isolation is the spec's never-hijack property, not an
+  // optimization). Full-store pass: prefixRange("") FIRST (ordering
+  // invariant — it consolidates a dirty index), THEN a FRESH snapshot
+  // (never reuse the bucket-sliced `keys`). Plain indexOf: a runStart
+  // of 0 implies an anchored tier-3 match, which would have made recs
+  // non-empty — so every admitted run here is genuinely mid-key.
+  if (lower !== "" && recs.length === 0 && lower.length >= 3) {
+    const [fStart, fEnd] = store.prefixRange("");
+    const allKeys = store.sortedKeysSnapshot().slice(fStart, fEnd);
+    for (const k of allKeys) {
+      const runStart = k.indexOf(lower);
+      if (runStart === -1) continue;
+      const score = clampScore(
+        Math.round(TIER0_BASE_SCORE - (TIER0_SKIP_FACTOR * runStart) / k.length),
+      );
+      if (score < threshold) continue; // strict gate, == survives (anchored parity)
+      const c = store.get(k); // undefined if evicted ghost — skip
+      if (!c) continue;
+      recs.push({
+        tier: 0,
+        m: {
+          key: c.key,
+          display: c.display,
+          description: `session x${c.sessionCount}`,
+          salience: salience(c, ordinal),
+          sessionCount: c.sessionCount,
+          tier: 0, // public anchorless diagnostic (T2 chain-arm reads this)
+        },
+      });
+    }
   }
 
   // Sort of the (typically small) set: O(r log r), well under the <1 ms
@@ -416,7 +509,11 @@ export function rankMatches(
   // huge hot ranges, a partial top-N selection is the documented
   // fallback — keep it simple until measured.
   recs.sort(compareRankedMatches);
-  const matches = recs.map((r) => r.m); // strip the internal tier before return
+  // Populate/omit contract: `m` records built on the MATCH path carry
+  // their tier (anchored 1–3, anchorless 0); zero-fragment listing
+  // records omit the key entirely — the map copies as-is, so public
+  // `tier === 0` can only ever mean an anchorless ambient match.
+  const matches = recs.map((r) => r.m);
 
   // PLURAL PRUNING (2026-09 owner rule, spec 04): when a result set
   // contains both a key and that key + "s", the plural is redundant
