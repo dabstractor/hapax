@@ -1,0 +1,45 @@
+
+[Prompts]
+  /council, /gather-context-and-clarify, /loadplan, /parallel-cleanup, /parallel-research, /parallel-review, /plan, /review-loop
+
+[Extensions]
+  @carlosgtrz/pi-terminal-bell:src, @pithos-kit/squiggle, dabstractor/split-editor, file-injector.ts, pi, pi-bar:status-footer.ts,
+pi-chrome:chrome-profile-bridge, pi-lsp:pi-lsp, pi-mcp-adapter, pi-mulligan/src, pi-nvim-bridge.ts, pi-patty-bg-tasks, pi-subagents, pi-vim,
+remote-intergration/src, remote-pi:dist
+
+
+ [remote-pi]
+   🟢 Local mesh: connected as "pi-autocomplete" (8 peers)
+   🟢 Relay: on, waiting for an app to connect (http://localhost:4940)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 0.99.1 is available. Run pi update
+ Changelog: https://pi.dev/changelog
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Package Updates Available
+ Package updates are available. Run pi update --extensions
+ Packages:
+ - pi-subagents
+ - pi-chrome
+ - pi-bar
+ - pi-mcp-adapter
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+ We use Zendesk, zendesk-zephyr, zeta and lwlock, see src/core/query.ts
+
+
+
+ read src/core/query.ts
+
+
+ ⠹ Working
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ze
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── INSERT
+Zendesk | zendesk-zephyr
+glm-5.3  ❯  think:low  ❯  2.1% / 1.0M  ❯  📡 local (8)  ❯  🟢 relay

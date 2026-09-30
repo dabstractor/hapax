@@ -1,0 +1,45 @@
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Update Available
+ New version 0.99.1 is available. Run pi update
+ Changelog: https://pi.dev/changelog
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Package Updates Available
+ Package updates are available. Run pi update --extensions
+ Packages:
+ - pi-subagents
+ - pi-chrome
+ - pi-bar
+ - pi-mcp-adapter
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+ Use Zendesk and lwlock now
+
+
+ The user says "Use Zendesk and lwlock now" — this is ambiguous with no prior context. There's no prior conversation. Maybe they mean background jobs? Check
+ jobs list and peers? Perhaps "Zendesk" and "lwlock" are agent/peer names? Could be MCP servers? Check mcp status and list_peers.
+
+mcp status → MCP: 0/2 servers, 4 tools … (Ctrl+O to expand)
+
+
+ list_peers
+ /home/dustin/seedbox/handoff@seedbox-handoff
+ /home/dustin/projects/Pivot@Turnr
+ /home/dustin/projects/Pivot@Turnr#2
+ /home/dustin/projects/resume@resume
+ /home/dustin/projects/Pivot-feature/entity-claims-and-review@entity-claims-and-review
+ /home/dustin@main
+ /home/dustin@main#2
+ /home/dustin/projects/hapax@pi-autocomplete
+
+
+ ⠋ Working
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ze
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── INSERT
+Zendesk
+glm-5.3  ❯  think:low  ❯  1.6% / 1.0M  ❯  📡 local (9)  ❯  🟢 relay  ❯  🔌 MCP: 2 servers enabled

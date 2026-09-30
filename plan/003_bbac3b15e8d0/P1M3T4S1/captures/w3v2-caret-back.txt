@@ -1,0 +1,45 @@
+
+ Tokenize + shape gate: all five tokenize as whole base tokens and pass passesShape fine (zenith/zephyr/zealot are ordinary lowercase words, Zendesk comes
+ through with the properName hint). So segmentation isn't the filter — the dictionary admission band (R=12, spec §04) is the rejecting stage for the three
+ English words: they're dictionary-attested, exactly the class hapax exists to exclude.
+
+ What ends up in the store and menu (query.ts):
+ - Typing z → only zendesk surfaces (the z first-char bucket; all five would be in it, but three were never admitted).
+ - Typing l or lw → lwlock.
+ - The docstring in src/core/query.ts actually uses your two survivors as its canonical tier-2 examples: 'zsk' → zendesk and 'zlock' → z_lwlock
+   (contiguous-tail matches scoring 85 minus skip penalty).
+
+ This is the pipeline working as designed — dictionary-absent jargon (zendesk, lwlock) is the value class; zealot at q=13 sits just one band above the cutoff,
+ if you ever wanted to argue for relaxing R, that's the owner-rule conversation per the 2026-09 commonness retighten history.
+
+
+ also remember zendesk-zephyr and zeta
+
+
+
+ $ node tools/calibrate-bands.mjs zeta; node -e '
+ const { createJiti } = require("./node_modules/@earendil-works/pi-coding-agent/node_modules/jiti");
+ const jiti = createJiti(process.cwd() + "/");
+ const { tokenize, expandCandidates } = jiti("./src/core/segment.ts");
+ const { passesShape } = jiti("./src/core/shapeGate.ts");
+ for (const tok of tokenize(process.argv[1]))
+   for (const d of expandCandidates(tok)) console.log(JSON.stringify(d), JSON.stringify(passesShape(d)));
+ ' "also remember zendesk-zephyr and zeta"
+
+ ... (2 earlier lines, ctrl+o to expand)
+ {"key":"also","display":"also","properName":false,"isSubword":false} {"ok":true}
+ {"key":"remember","display":"remember","properName":false,"isSubword":false} {"ok":true}
+ {"key":"zendesk-zephyr","display":"zendesk-zephyr","properName":false,"isSubword":false} {"ok":true}
+ {"key":"and","display":"and","properName":false,"isSubword":false} {"ok":true}
+ {"key":"zeta","display":"zeta","properName":false,"isSubword":false} {"ok":true}
+
+ Took 0.1s
+
+
+ ⠴ Working
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ze
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── INSERT
+glm-5.3  ❯  think:low  ❯  2.6% / 1.0M  ❯  📡 local (8)  ❯  🟢 relay
+

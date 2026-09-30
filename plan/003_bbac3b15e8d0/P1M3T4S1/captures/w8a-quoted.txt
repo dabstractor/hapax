@@ -1,0 +1,45 @@
+
+ qq -> {"key":"qq","display":"qq","properName":false,"isSubword":false} {"ok":false,"reason":"lowEntropy"}
+ ze -> {"key":"ze","display":"ze","properName":false,"isSubword":false} {"ok":false,"reason":"lowEntropy"}
+ matchFragment("ze","zendesk"): { tier: 3, score: 100 }
+ matchFragment("ze","zendesk-zephyr"): { tier: 3, score: 100 }
+   qq               len=2 q=absent R_eff=12  g0     | Cap: g0
+
+ Took 0.1s
+
+
+ qq — rejected at the shape gate (lowEntropy: 2 chars, 1 distinct → 0 bits/char). It would have been the ideal hapax (dictionary-absent) but the entropy floor
+ seals off ≤3-distinct-char keys unconditionally — that's the spec's deliberate cost to keep -v-class flags out.
+
+ ze — same: 2 distinct chars fails the entropy floor, so ze itself can never be a stored candidate. But as a typed fragment it works fine: matchFragment("ze",
+ …) → tier 3, score 100 for both zendesk and zendesk-zephyr. So typing ze + Tab would offer both (order: tier tie → sessionCount, then shorter key zendesk
+ first).
+
+ Pattern worth noting: the entropy floor means short fragments are fine as queries but short words (like zee, qq) only complete if they arrive as sub-words ≥4
+ chars of a longer token — e.g. qqBar in camelCase would expand qqBar whole and… actually no, sub-word needs ≥4 chars too, so qq can only ride inside a whole
+ passing token.
+
+
+ Zendesk again
+
+
+ User asks about "Zendesk" again — presumably they want the query-time fate: how would "Zendesk" complete when typed, e.g. fragment "Zendesk" or matching.
+ Already admitted, group 0. Maybe they want menu behavior: typing "Zendesk", what the query does — case-insensitive, prefix bucket 'z'. Give a compact trace:
+ ingest → menu order, display casing "Zendesk".
+
+ Full fate of Zendesk, ingest through menu:
+
+ 1. Ingest (ingest.ts): survives — no secret shape.
+ 2. Tokenize (segment.ts): base token Zendesk (letter-initial, ≤63). properName hint is false here only because that flag needs sentence-position context —
+    either way it only affects subword suppression at structural starts, and Zendesk is the whole token.
+ 3. Shape gate: ✅ 7 chars, 7 distinct → ~2.8 bits/char, well above 1.5; no unigram/consonant runs; no secret prefix.
+ 4. Admission (score.ts): dictionary absent → admit as group 0 — the pure hapax value class, the best admission tier there is.
+ 5. Store: key zendesk, display Zendesk (most recent sighting's casing — so if you later type zendesk lowercase, the menu display flips to lowercase).
+ 6. Query (query.ts): in the z bucket, so it surfaces for fragments like z, ze,
+
+ ⠦ Working
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+read "src/co
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── INSERT
+glm-5.3  ❯  think:low  ❯  2.6% / 1.0M  ❯  📡 local (8)  ❯  🟢 relay

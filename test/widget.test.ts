@@ -585,10 +585,11 @@ describe("widget key handling — Escape and suppression taxonomy (spec §07 h3.
     expect(h.innerCalls).toEqual([]); // consumed
   });
 
-  it("a close WITHOUT explicit dismissal (forwarded key → machine closes) never suppresses; onDismissed(false) neither", () => {
+  it("a close WITHOUT explicit dismissal (forwarded key → machine closes) never suppresses; onDismissed(false) neither", async () => {
     const h = makeKeyHarness();
     h.show(["alpha", "beta"]);
     h.press("x"); // forwarded verbatim → the machine ticks, no fragment → closes
+    await Promise.resolve(); // W1 fix: visibility evaluates post-keystroke (microtask)
     expect(h.innerCalls).toEqual(["x"]); // forwarded, not consumed
     expect(h.state.hidden).toBe(true); // closed…
     expect(h.machine.getState().suppressUntilWordStart).toBe(false); // …NOT suppressed
@@ -862,7 +863,7 @@ describe("widget key handling — Tab inserts the highlighted word (spec §07 h2
     expect(h.innerCalls).toEqual([]);
   });
 
-  it("no span under the cursor (trailing space) → Tab forwards verbatim, exactly once (never-hijack fallback)", () => {
+  it("no span under the cursor (trailing space) → Tab forwards verbatim, exactly once (never-hijack fallback)", async () => {
     const h = makeInsertHarness({ lines: ["foo "], line: 0, col: 4 });
     h.show(["Zendesk"]); // visible + non-empty, but nothing to replace
 
@@ -871,21 +872,24 @@ describe("widget key handling — Tab inserts the highlighted word (spec §07 h2
     expect(out).toBe("inner:\t"); // literal Tab passed through
     expect(h.innerCalls).toEqual(["\t"]);
     expect(h.calls).toEqual(["inner:\"\\t\""]); // no setText/caret attempted
-    // The forward ticks the machine, whose gate-held close HIDES the
-    // line — but that is a disqualification-style close, never an
-    // acceptance: no suppression.
+    // The forward ticks the machine (post-keystroke, microtask), whose
+    // gate-held close HIDES the line — but that is a disqualification-style
+    // close, never an acceptance: no suppression.
+    await Promise.resolve(); // W1 fix: visibility evaluates post-keystroke (microtask)
     expect(h.state.hidden).toBe(true);
     expect(h.machine.getState().suppressUntilWordStart).toBe(false);
   });
 
-  it("Tab with an EMPTY list forwards verbatim exactly once; Tab while HIDDEN forwards verbatim exactly once", () => {
+  it("Tab with an EMPTY list forwards verbatim exactly once; Tab while HIDDEN forwards verbatim exactly once", async () => {
     const empty = makeInsertHarness();
     empty.show([]); // visible flag, zero candidates — nothing is captured
     expect(empty.press("\t")).toBe("inner:\t");
+    await Promise.resolve(); // W1 fix: let the deferred machine tick settle
     expect(empty.innerCalls).toEqual(["\t"]);
 
     const hidden = makeInsertHarness(); // fresh editors start hidden
     expect(hidden.press("\t")).toBe("inner:\t");
+    await Promise.resolve(); // W1 fix: let the deferred machine tick settle
     expect(hidden.innerCalls).toEqual(["\t"]);
     expect(hidden.state.hidden).toBe(true); // hiding state untouched
   });
@@ -927,9 +931,10 @@ describe("widget key handling — Enter dismiss-then-forward (spec §07 h2.48, S
     expect(h.machine.getState().suppressUntilWordStart).toBe(true); // …until the next word start
   });
 
-  it("Enter while hidden forwards verbatim with NO dismissal and NO suppression (S1 regression)", () => {
+  it("Enter while hidden forwards verbatim with NO dismissal and NO suppression (S1 regression)", async () => {
     const h = makeInsertHarness(); // starts hidden
     h.press("\r");
+    await Promise.resolve(); // W1 fix: let the deferred machine tick settle
     expect(h.innerCalls).toEqual(["\r"]);
     expect(h.machine.getState().suppressUntilWordStart).toBe(false);
     expect(h.state.hidden).toBe(true);

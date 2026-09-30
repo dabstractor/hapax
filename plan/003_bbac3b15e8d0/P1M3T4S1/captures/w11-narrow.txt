@@ -1,0 +1,45 @@
+
+ ze — same: 2 distinct chars fails the entropy floor, so ze itself can never be a stored candidate. But as a typed fragment it works fine: matchFragment("ze",
+ …) → tier 3, score 100 for both zendesk and zendesk-zephyr. So typing ze + Tab would offer both (order: tier tie → sessionCount, then shorter key zendesk
+ first).
+
+ Pattern worth noting: the entropy floor means short fragments are fine as queries but short words (like zee, qq) only complete if they arrive as sub-words ≥4
+ chars of a longer token — e.g. qqBar in camelCase would expand qqBar whole and… actually no, sub-word needs ≥4 chars too, so qq can only ride inside a whole
+ passing token.
+
+
+ Zendesk again
+
+
+ User asks about "Zendesk" again — presumably they want the query-time fate: how would "Zendesk" complete when typed, e.g. fragment "Zendesk" or matching.
+ Already admitted, group 0. Maybe they want menu behavior: typing "Zendesk", what the query does — case-insensitive, prefix bucket 'z'. Give a compact trace:
+ ingest → menu order, display casing "Zendesk".
+
+ Full fate of Zendesk, ingest through menu:
+
+ 1. Ingest (ingest.ts): survives — no secret shape.
+ 2. Tokenize (segment.ts): base token Zendesk (letter-initial, ≤63). properName hint is false here only because that flag needs sentence-position context —
+    either way it only affects subword suppression at structural starts, and Zendesk is the whole token.
+ 3. Shape gate: ✅ 7 chars, 7 distinct → ~2.8 bits/char, well above 1.5; no unigram/consonant runs; no secret prefix.
+ 4. Admission (score.ts): dictionary absent → admit as group 0 — the pure hapax value class, the best admission tier there is.
+ 5. Store: key zendesk, display Zendesk (most recent sighting's casing — so if you later type zendesk lowercase, the menu display flips to lowercase).
+ 6. Query (query.ts): in the z bucket, so it surfaces for fragments like z, ze, zen, zend (all tier 3, score 100 — survives any fuzzThreshold), or zsk (tier 2:
+    tail sk runs at index 4, score ≈ 85 − 40·3/7 ≈ 68, above the default 60). zdk would be tier-1 scattered → max 50 < 60 → invisible at default threshold.
+ 7. Menu: against zendesk-zephyr it's a tier tie at zen, ordered sessionCount desc then shorter-key → zendesk leftmost when counts tie or lead. Plural pruning
+    is irrelevant here.
+
+ Also a successor-index note: zendesk and zendesk-zephyr both in the store means after completing zendesk, chain offers may surface zendesk-zephyr (if
+ enableChaining is on and the bigram was observed).
+
+ Is there a specific behavior you're seeing with it — not completing, wrong display casing, wrong menu slot?
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+x ze
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── INSERT
+zendesk | zendesk-zephyr | zeph
+glm-5.3  ❯  think:low  ❯  2.7% / 1.0M  ❯  📡 local (8)  ❯  🟢 relay
+
+
+
+
+

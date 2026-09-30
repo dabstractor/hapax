@@ -1,0 +1,45 @@
+ Took 0.3s
+
+
+ So: Zendesk and lwlock admit (dictionary-absent, group 0); zenith, zephyr, zealot are dictionary-attested and REJECTED (q≥12) — they never enter the store, so
+ they never complete. This matches docstring examples in query.ts (zsk→zendesk, zlock→z_lwlock tier-2 fuzzy). No .pi/hapax.json exists — defaults apply.
+
+ Report.
+
+ Here's the actual fate of each word, reproduced through the real pipeline:
+
+ Dictionary gate (src/core/score.ts, R=12) decides the split
+
+ ┌─────────┬───────────┬────────────┬──────────────┬─────────────────┐
+ │ word    │ tokenize  │ shape gate │ dictionary q │ verdict         │
+ ├─────────┼───────────┼────────────┼──────────────┼─────────────────┤
+ │ Zendesk │ ✓ zendesk │ ✓          │ absent       │ admit, group 0  │
+ ├─────────┼───────────┼────────────┼──────────────┼─────────────────┤
+ │ lwlock  │ ✓         │ ✓          │ absent       │ admit, group 0  │
+ ├─────────┼───────────┼────────────┼──────────────┼─────────────────┤
+ │ zenith  │ ✓         │ ✓          │ 22           │ REJECT (q ≥ 12) │
+ ├─────────┼───────────┼────────────┼──────────────┼─────────────────┤
+ │ zephyr  │ ✓         │ ✓          │ 22           │ REJECT          │
+ ├─────────┼───────────┼────────────┼──────────────┼─────────────────┤
+ │ zealot  │ ✓         │ ✓          │ 13           │ REJECT          │
+ └─────────┴───────────┴────────────┴──────────────┴─────────────────┘
+
+ So only Zendesk and lwlock ever reach the store and can complete. zenith, zephyr, zealot are ordinary dictionary words — per
+ spec/04-tokenization-and-scoring.md's commonness rule (rejectCommonness, default 12) they're rejected at admission. That's the deliberate 2026-09 owner rule:
+ attested English must not flood the menu.
+
+ The query.ts connection: zendesk and z_lwlock are the docstring's own worked examples of tier-2 anchored-fuzzy matches — 'zsk' → zendesk (score 62) and
+ 'zlock' → z_lwlock (score 70). Both pass the default fuzzThreshold of 60, and z_lwlock also emits lwlock as a ≥4-char subword (so plain lwl → tier-3 prefix,
+ score 100). Note 'zen' → zephyr is null only because zephyr never got stored — if it were, zen would be a plain tier-3 prefix.
+
+ Config: /home/dustin/projects/hapax/.pi/hapax.json doesn't exist (neither does ~/.pi/agent/hapax.json), so defaults apply: rejectCommonness: 12,
+ fuzzThreshold: 60, maxSuggestions: 8.
+
+ If you want zenith/zephyr/zealot to complete: the only lever is raising rejectCommonness — but zealot sits at q=13, barely over the line, while zenith/zephyr
+ are q=22, so a threshold that admits them (R ≥ 23) would also re-admit a large band of common English. The cleaner option if these are project jargon for you:
+ that's an owner decision on the dictionary rule, not a config tweak. Want me to draft that proposal?
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ze
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── INSERT
+glm-5.3  ❯  think:low  ❯  2.2% / 1.0M  ❯  📡 local (8)  ❯  🟢 relay

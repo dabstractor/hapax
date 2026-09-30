@@ -334,6 +334,11 @@ export interface VisibilityMachineDeps {
    *  fuzzThreshold }) — the threshold discard already happens inside,
    *  so "≥ 1 candidate above fuzzThreshold" === non-empty result. */
   query?: (fragment: string) => RankedMatch[];
+  /** Called after every paint() — INCLUDING swap-timer promotions — so
+   *  the wiring can push the fresh snapshot and request a repaint even
+   *  when no keystroke tick follows (W1 fix, P1.M3.T4.S1: a parked swap
+   *  that promotes at rest must still reach the screen). */
+  onPaint?: () => void;
   /** Intent test ADDITIONAL to trigger mode (explicit intent bypasses
    *  the hesitation gate, spec h2.46 rule 2): T3's armed-chain
    *  successors land here via this seam. Default: nothing extra. */
@@ -512,6 +517,7 @@ export function createVisibilityMachine(
     closeAt = null;
     suppressed = false;
     suppressedFragmentStart = null;
+    deps.onPaint?.(); // W1 fix: timer-driven paints must reach the screen too
   };
 
   /** Rule 6 — park a differing set as the pending swap; a newer
@@ -950,6 +956,14 @@ export function createWidgetEditorFactory(
         line: editorRef?.getCursor?.().line ?? 0,
         col: editorRef?.getCursor?.().col ?? 0,
       }),
+      // W1 fix: paints that happen OUTSIDE any keystroke tick (the 100 ms
+      // swap-timer promotion, gate wakes) must still push into the S2
+      // state holder and surface at a render. Lazy machine/applyVisibility
+      // references are safe: paint() cannot fire during construction.
+      onPaint: () => {
+        applyVisibility(machine.getState());
+        requestRender();
+      },
     });
 
     // Glue: push the machine's snapshot into the S2 state holder. set()
@@ -974,9 +988,22 @@ export function createWidgetEditorFactory(
     // hesitation timing source), then the machine consumes the same
     // event. Both run for EVERY input event (rule 0 — hide/delegate
     // ticks still count for the gap math).
+    //
+    // W1 FIX (P1.M3.T4.S1 live verification; spec §07 h3.10 rule 2
+    // "extract the live fragment"): the enter-submit guard's seam fires
+    // BEFORE it delegates the key, so a synchronous machine.onInput()
+    // here would read the PRE-keystroke buffer — the rendered set trailed
+    // the visible text by one character forever (live-observed: input
+    // "zet" showing the "ze" set, resting state stale). The evaluation
+    // is therefore deferred to a MICROTASK, which runs after the inner
+    // editor has synchronously applied the character, and a repaint is
+    // requested because this input event's frame drew the old state.
     const tick = (): void => {
       opts.onKeystroke();
-      applyVisibility(machine.onInput());
+      queueMicrotask(() => {
+        applyVisibility(machine.onInput());
+        requestRender();
+      });
     };
 
     const inner = createEnterSubmitEditor(

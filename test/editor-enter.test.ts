@@ -416,12 +416,13 @@ describe("the enter-submit guard UNDER the widget layer (P1.M3.T3.S2)", () => {
     expect(h.inner.setHits()).toBe(0); // and nothing wrote to the inner
   });
 
-  it("Enter while HIDDEN + open word menu → stock guard untouched (cancel then submit), no widget dismissal", () => {
+  it("Enter while HIDDEN + open word menu → stock guard untouched (cancel then submit), no widget dismissal", async () => {
     const h = buildWidgetDouble();
     h.inner.open();
     h.inner.setPrefix("zep");
 
     h.press("\r");
+    await Promise.resolve(); // W1 fix: let the deferred machine tick settle
 
     expect(h.inner.calls).toEqual(["cancel", "inner:\r"]);
     expect(h.inner.order).toEqual(["cancel", "inner:\r"]); // no "dismissed"

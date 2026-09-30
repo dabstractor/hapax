@@ -1,0 +1,45 @@
+   zendesk          len=7 q=absent R_eff=12  g0     | Cap: g0
+   zephyr           len=6 q=22     R_eff=12  REJECT | Cap: REJECT
+   zeta             len=4 q=31     R_eff=12  REJECT | Cap: REJECT
+   lwlock           len=6 q=absent R_eff=12  g0     | Cap: g0
+
+ Took 0.1s
+
+
+ All four traced. Quick menu-order note since you pointed at src/core/query.ts: only 3 of the 4 ever reach the store, and they'd rank tier-3 exact prefixes for
+ z:
+
+ ┌────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+ │ Typed string   │ Fate                                                                                                                                      │
+ ├────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ Zendesk        │ ✅ Admits, group 0 (dictionary-absent)                                                                                                    │
+ ├────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ zendesk-zephyr │ Compound 4b whole token passes shape; admits — but zephyr subword is NOT expanded for compounds (only camelCase/snake sub-words ≥4 chars  │
+ │                │ are, segment.ts expandCandidates), so the compound's dictionary-attested half never drags it down                                         │
+ ├────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ zeta           │ ❌ Rejected at admission — dictionary q=31 ≥ 12 (rejectCommonness, score.ts). It's ordinary English, the exact class the spec means to    │
+ │                │ keep out                                                                                                                                  │
+ ├────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+ │ lwlock         │ ✅ Admits, group 0 (absent; passes entropy — 5 distinct chars in 6)                                                                       │
+ └────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+ Query-time behavior for the three stored keys, per query.ts:
+ - z → bucket scan, all three are tier 3; order by sessionCount desc within tier, then shorter key, so zendesk (7) beats zendesk-zephyr (14); lwlock sits in
+   the l bucket.
+ - zeph → tier 2 on zendesk-zephyr (tail -zephyr? no — tail eph runs contiguously at index 4 → tier 2, score 85 − 40·3/14 ≈ 76, above the default 60 →
+   visible).
+ - zl → tier 1 scattered on zendesk-zephyr, score ≤ 50 < 60 → invisible at default fuzzThreshold.
+
+ If you feel zeta should complete, that's an owner decision relaxing rejectCommonness (spec §04, 2026-09 owner rule) — its side effects would be broad (every
+ q<12-ramp dictionary word follows). Note the skill's dictionary verdicts: only zendesk/lwlock are the intended hapax value class.
+
+
+ zee
+
+
+ ⠧ Working
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── NORMAL
+glm-5.3  ❯  think:low  ❯  2.5% / 1.0M  ❯  📡 local (8)  ❯  🟢 relay

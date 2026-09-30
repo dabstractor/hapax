@@ -1,0 +1,45 @@
+ If you feel zeta should complete, that's an owner decision relaxing rejectCommonness (spec §04, 2026-09 owner rule) — its side effects would be broad (every
+ q<12-ramp dictionary word follows). Note the skill's dictionary verdicts: only zendesk/lwlock are the intended hapax value class.
+
+
+ zee
+
+
+ Trace "zee" — dictionary lookup likely attested (zee is a word, last letter of alphabet).
+
+
+ $ node tools/calibrate-bands.mjs zee 2>&1 | tail -2; node -e '
+ const { createJiti } = require("./node_modules/@earendil-works/pi-coding-agent/node_modules/jiti");
+ const jiti = createJiti(process.cwd() + "/");
+ const { tokenize, expandCandidates } = jiti("./src/core/segment.ts");
+ const { passesShape } = jiti("./src/core/shapeGate.ts");
+ for (const tok of tokenize("zee")) for (const d of expandCandidates(tok)) console.log(JSON.stringify(d), JSON.stringify(passesShape(d)));
+ '
+
+ word → q → verdict under R_eff(len), R=12 (hold ≤8, admit-all ≥20, ramp: R + (255−R)·√((len−8)/12))  (lc | Cap)
+   zee              len=3 q=31     R_eff=12  REJECT | Cap: REJECT
+ {"key":"zee","display":"zee","properName":false,"isSubword":false} {"ok":false,"reason":"lowEntropy"}
+
+ Took 0.1s
+
+
+ zee never gets in — rejected even earlier than zeta:
+
+ 1. Shape gate (shapeGate.ts): ❌ lowEntropy — 3 chars but only 2 distinct (z,e), below the 1.5 bits/char floor. Same rule that keeps -v-class flags out
+    forever.
+ 2. Even if it passed shape, dictionary q=31 ≥ 12 would reject at admission — zee is ordinary English.
+
+ And at query time z + ee: no anchored match exists anyway since the key can't be stored. So typing zee completes nothing; zendesk would need zen... (tier 3)
+ or zsk (tier 2 tail). If your team's vocabulary includes zee as jargon, the entropy floor is the binding rule, and lowering it specifically is a much riskier
+ change than the commonness knob — it's what seals off huge classes of low-information flags and stutter-strings.
+
+
+ qq ze
+
+
+ ⠦ Working
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── INSERT
+glm-5.3  ❯  think:low  ❯  2.6% / 1.0M  ❯  📡 local (8)  ❯  🟢 relay
