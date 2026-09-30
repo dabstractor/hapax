@@ -45,10 +45,19 @@
  *   - P1.M3.T1.S2  (this task) render override + state holder. The
  *     novel proxy render override is a flagged risk (r4 §6): LIVE-VERIFY
  *     in P1.M3.T4.S1 per spec §09.
- *   - P1.M3.T2.S1  visibility machine drives state.set()/hide().
+ *   - P1.M3.T2.S1  LANDED: createVisibilityMachine (spec §07 h3.10)
+ *     decides show/hide/suppress per input tick; the factory glues its
+ *     VisibilityState into the S2 state holder (set/hide below) and is
+ *     ticked through the enter-submit guard's onKeystroke seam.
  *   - P1.M3.T3.S1/S2  key consumption (arrows/Esc/Tab/Enter) BEFORE the
  *     enter-submit guard; mutate state.highlightIndex and consume the
- *     rendered list for Tab insertion.
+ *     rendered list for Tab insertion; reach the machine via
+ *     widgetMachineOf for onDismissed(true/false).
+ *
+ * Repaint note (T2): the visibility machine does NOT request forced
+ * repaints — decisions land at the next natural per-keystroke render;
+ * async gate wakes (restoreReady settle / 500 ms bound) surface then
+ * too (accepted; live-verify in P1.M3.T4.S1).
  *
  * Idempotence: the built factory is stamped WIDGET_WRAPPED (mirroring
  * editor.ts's WRAPPED) so a reload cycle re-running session_start with
@@ -59,10 +68,16 @@
  * session_start and re-read).
  */
 
+import { rankMatches } from "../core/query.js";
 import type { CandidateStore } from "../core/store.js";
+import type { RankedMatch } from "../core/types.js";
 import type { HapaxConfig } from "./config.js";
 import { createEnterSubmitEditor } from "./editor.js";
-import type { ChainMachine } from "./provider.js";
+import {
+  classifyStockContext,
+  extractMatchState,
+  type ChainMachine,
+} from "./provider.js";
 
 /** Structural editor factory — duck-typed like editor.ts's
  *  wrapEditorFactory: `any` params on purpose (the wrapper is
@@ -102,6 +117,18 @@ const WIDGET_OPTS = Symbol("hapax.widgetOpts");
 /** Per-built-editor widget state seam (S2): lets tests drive set/hide
  *  directly, and lets T2/T3 reach the state without behavior probes. */
 const WIDGET_STATE = Symbol("hapax.widgetState");
+
+/** Per-built-editor visibility machine seam (T2): T3's key handler
+ *  reaches onDismissed(true/false) here; tests drive/assert the machine
+ *  through the composed editor. */
+const WIDGET_MACHINE = Symbol("hapax.widgetMachine");
+
+/** The visibility machine of a BUILT editor (or undefined when
+ *  `editor` is not a hapax widget composition — see WIDGET_MACHINE). */
+export function widgetMachineOf(editor: unknown): VisibilityMachine | undefined {
+  if (editor === null || typeof editor !== "object") return undefined;
+  return (editor as { [WIDGET_MACHINE]?: VisibilityMachine })[WIDGET_MACHINE];
+}
 
 /** True when the factory is a hapax widget wrapper (prevents stacking
  *  and re-install on repeated session_start runs). */
@@ -232,6 +259,419 @@ export function widgetStateOf(editor: unknown): WidgetState | undefined {
   return (editor as { [WIDGET_STATE]?: WidgetState })[WIDGET_STATE];
 }
 
+// ── T2/S1: the visibility machine (spec §07 h3.10, "auto-open, re-based") ───
+
+/** What the visibility machine hands to rendering/key-handling
+ *  (spec §07 h3.10): a pure decision snapshot, recomputed per input
+ *  event. Pushing it into the S2 WidgetState is the wiring's job. */
+export interface VisibilityState {
+  /** Should the widget line render right now? */
+  visible: boolean;
+  /** Explicit dismissal (Escape/boundary-Esc, set via onDismissed(true))
+   *  — the line stays hidden until the next word start or trigger char. */
+  suppressUntilWordStart: boolean;
+  /** The current (post-debounce/hysteresis) result set to render —
+   *  { display } items in rank order. Empty when not visible. */
+  currentSet: readonly { display: string }[];
+}
+
+/** Dependencies of the visibility machine — all injected so tests drive
+ *  a fake editor stream with a stubbed query (no store, no pi). */
+export interface VisibilityMachineDeps {
+  store: CandidateStore;
+  /** triggerChar, threshold, fuzzThreshold, maxSuggestions, menuDelayMs
+   *  (loadConfig-clamped — never re-validated here). */
+  config: HapaxConfig;
+  /** Live editor state per tick — the wiring closes this over the
+   *  composed editor's getLines()/getCursor() (reads only, never
+   *  mutated). Tests inject a mutable fake. */
+  getEditorState: () => { lines: string[]; line: number; col: number };
+  /** Settled when history replay finishes (the shared gate signal,
+   *  index.ts's restoreReady). Queries before settle are HELD and
+   *  re-evaluated when it settles — bounded at 500 ms (the same bound
+   *  as the fallback's createStartupGate); a settled promise is a
+   *  pass-through (fresh sessions). */
+  restoreReady: Promise<void>;
+  /** Test seam: the query core entry point. Default:
+   *  rankMatches(store, fragment, { limit: maxSuggestions,
+   *  fuzzThreshold }) — the threshold discard already happens inside,
+   *  so "≥ 1 candidate above fuzzThreshold" === non-empty result. */
+  query?: (fragment: string) => RankedMatch[];
+  /** Intent test ADDITIONAL to trigger mode (explicit intent bypasses
+   *  the hesitation gate, spec h2.46 rule 2): T3's armed-chain
+   *  successors land here via this seam. Default: nothing extra. */
+  isIntentBypass?: () => boolean;
+  /** Swap-debounce window; default 100 (spec h2.46 rule 2). */
+  debounceMs?: number;
+  /** Fresh-reopen window after a close; default 200 (spec h2.46 rule 3). */
+  reopenMs?: number;
+}
+
+export interface VisibilityMachine {
+  /** Run once per input event — the onKeystroke tick. Synchronous:
+   *  reads live editor state + the pure helpers, decides show/hide/
+   *  suppress, and returns the fresh snapshot. */
+  onInput(): VisibilityState;
+  /** T3 key-handler seam: explicit=true (Escape/boundary-Esc) sets
+   *  suppressUntilWordStart and hides; explicit=false (disqualification-
+   *  style close) hides only. */
+  onDismissed(explicit: boolean): void;
+  /** Current snapshot (for render glue / tests). */
+  getState(): VisibilityState;
+  /** Release the machine's timers (pending swap, gate deadline) — a
+   *  lifecycle courtesy for teardown; not required for correctness
+   *  (timers are self-invalidating). */
+  dispose(): void;
+}
+
+/** Startup-gate bound, shared with the fallback's createStartupGate
+ *  default (≤ 500 ms). */
+const GATE_MAX_WAIT_MS = 500;
+
+/** Global timer bindings read off globalThis (never node:timers) so
+ *  environment doubles — vitest fake timers — are honored (same
+ *  pattern as ingest.ts). */
+interface WidgetTimerGlobals {
+  setTimeout: (callback: () => void, ms: number) => unknown;
+  clearTimeout: (handle: unknown) => void;
+}
+const widgetTimers = globalThis as unknown as WidgetTimerGlobals;
+
+/**
+ * The widget path's visibility state machine (spec §07 h3.10): a per-
+ * keystroke, INPUT-CLOCK-DRIVEN decision core — no pi-tui request
+ * cadence exists here (r4 §2). Every `onInput()` tick: record the
+ * timestamp FIRST (rule 0 — the hesitation gate's gap math needs
+ * consecutive-tick deltas even for ticks that end in hide), read live
+ * editor state through the injected seam, then decide:
+ *
+ *   R1  stock contexts (classifyStockContext — ALWAYS ahead of
+ *       extractMatchState, which cannot see slash/@/path) → hidden,
+ *       never suppression (stock contexts are not dismissal).
+ *   R2  startup gate: queries before restoreReady settles (or the
+ *       500 ms bound elapses) are HELD — the settle/deadline wake
+ *       re-evaluates the live state and paints if it qualifies.
+ *   R3  no fragment → close (trailing space without @// is the
+ *       close-on-space flavor; both are close events, neither
+ *       suppresses).
+ *   R4  zero candidates → disqualification close (never suppresses);
+ *       with candidates: explicit-dismissal suppression releases only
+ *       at a NEW word start (or trigger mode — same-word continuation
+ *       stays hidden).
+ *   R5  hesitation gate (menuDelayMs, 0 = OFF): a CLOSED line opens on
+ *       a word-mode set only when the tick gap ≥ menuDelayMs; trigger
+ *       mode, the isIntentBypass seam, and a fresh close (< reopenMs)
+ *       bypass it.
+ *   R6  100 ms swap debounce + flicker hysteresis: once visible, a
+ *       differing set paints only after the window; otherwise it is
+ *       parked as a pending swap (newer keystrokes supersede) while
+ *       the OLD set stays on screen — narrowing never closes+reopens.
+ *   R7  cursor move with unchanged text → close; a close followed by
+ *       a qualifying keystroke within reopenMs re-opens FRESH (the
+ *       set is always the live query's — never the pre-close set).
+ *
+ * Pure-core discipline: the machine NEVER mutates the editor, never
+ * renders, never consumes keys. The timing stack (swap debounce,
+ * hysteresis, hesitation, startup gate) is RE-HOMED from the fallback's
+ * createDisplayProvider by copy (spec h2.42: both paths share the
+ * LOGIC — the fallback code stays untouched; the pull-model
+ * prefix-anchor/acceptance exceptions have no push-model equivalent
+ * here because every tick re-queries the live buffer).
+ */
+export function createVisibilityMachine(
+  deps: VisibilityMachineDeps,
+): VisibilityMachine {
+  const debounceMs = deps.debounceMs ?? 100;
+  const reopenMs = deps.reopenMs ?? 200;
+  const menuDelayMs = deps.config.menuDelayMs ?? 0;
+  const query =
+    deps.query ??
+    ((fragment: string): RankedMatch[] =>
+      rankMatches(deps.store, fragment, {
+        limit: deps.config.maxSuggestions,
+        fuzzThreshold: deps.config.fuzzThreshold,
+      }));
+
+  // Visibility snapshot (what render/key-handling see).
+  let visible = false;
+  let suppressed = false;
+  let currentSet: readonly { display: string }[] = [];
+
+  // Rule 0 — input clock: EVERY onInput tick records (gap math needs
+  // consecutive-tick deltas even for hide/delegate/stock ticks).
+  let lastTickAt: number | null = null;
+
+  // Rule 7 — cursor-move detection: identical text + moved cursor.
+  let lastFingerprint: string | null = null;
+  let lastLine = -1;
+  let lastCol = -1;
+
+  // Rule 6 — swap debounce: displayed* is what the line shows; pending*
+  // is the swap parked inside the window (superseded per keystroke).
+  let displayedSig: string | null = null;
+  let lastPaintAt = 0;
+  let pendingSet: readonly RankedMatch[] | null = null;
+  let swapTimer: unknown = null;
+
+  // Rule 7 — hysteresis bookkeeping: Date.now() of the last close event
+  // (cursor-move, disqualification, space/no-fragment close, dismissal —
+  // NOT stock-context hides: leaving pi's context is not a hapax close).
+  let closeAt: number | null = null;
+
+  // Rule 4 — explicit-dismissal suppression: released at a NEW word
+  // start (fragment start differs from the suppressed one) or trigger
+  // mode. Same-word continuation is at "a word start" too — comparing
+  // starts is what makes "extend the same word stays hidden" true.
+  let suppressedFragmentStart: number | null = null;
+
+  // Rule 2 — startup gate.
+  let settled = false;
+  let gateDeadline: number | null = null;
+  let gateTimer: unknown = null;
+
+  const clearSwapTimer = (): void => {
+    if (swapTimer !== null) {
+      widgetTimers.clearTimeout(swapTimer);
+      swapTimer = null;
+    }
+  };
+
+  const state = (): VisibilityState => ({
+    visible,
+    suppressUntilWordStart: suppressed,
+    currentSet,
+  });
+
+  /** Hide without a close-event stamp (stock contexts, gate holds). */
+  const hide = (): void => {
+    visible = false;
+    currentSet = [];
+    displayedSig = null;
+    pendingSet = null;
+    clearSwapTimer();
+  };
+
+  /** Hide AS a close event — stamps closeAt for the fresh-reopen window
+   *  (hysteresis: a qualifying keystroke within reopenMs re-opens). */
+  const closeWith = (now: number): void => {
+    hide();
+    closeAt = now;
+  };
+
+  /** Make `items` the displayed set and advance the window clock. A
+   *  qualifying paint RELEASES suppression (the release conditions were
+   *  checked on the way in: word start / trigger mode). */
+  const paint = (
+    items: readonly RankedMatch[],
+    sig: string,
+    now: number,
+  ): void => {
+    clearSwapTimer();
+    pendingSet = null;
+    visible = true;
+    currentSet = items.map((m) => ({ display: m.display }));
+    displayedSig = sig;
+    lastPaintAt = now;
+    closeAt = null;
+    suppressed = false;
+    suppressedFragmentStart = null;
+  };
+
+  /** Rule 6 — park a differing set as the pending swap; a newer
+   *  keystroke supersedes the timer (re-scheduled, never stacked). */
+  const parkSwap = (items: readonly RankedMatch[]): void => {
+    pendingSet = items;
+    clearSwapTimer();
+    swapTimer = widgetTimers.setTimeout(() => {
+      swapTimer = null;
+      if (pendingSet === null || !visible) return; // superseded/closed
+      const items = pendingSet;
+      paint(items, items.map((m) => m.display).join("\u0000"), Date.now());
+    }, debounceMs);
+  };
+
+  /** Rule 2 — re-evaluate on a gate wake (settle or deadline). NOT a
+   *  keystroke: the input clock is untouched; the decision simply runs
+   *  again against the LIVE editor state (its repaint surfaces at the
+   *  next natural render — no forced repaint is requested, matching
+   *  the recorded repaint strategy in the file header). */
+  const wakeEvaluate = (): void => {
+    const { lines, line, col } = deps.getEditorState();
+    evaluate(Date.now(), lastTickAt, lines, line, col);
+  };
+
+  const armGate = (now: number): void => {
+    if (gateDeadline !== null) return; // armed once, at the first held query
+    gateDeadline = now + GATE_MAX_WAIT_MS;
+    gateTimer = widgetTimers.setTimeout(() => {
+      gateTimer = null;
+      wakeEvaluate(); // bound elapsed → re-evaluate regardless of settle
+    }, GATE_MAX_WAIT_MS);
+  };
+  void deps.restoreReady.then(
+    () => {
+      settled = true; // replay errors settle too — never wedge the gate
+      wakeEvaluate();
+    },
+    () => {
+      settled = true;
+      wakeEvaluate();
+    },
+  );
+
+  /** The decision core (shared by onInput and gate wakes) — runs after
+   *  timestamp/cursor bookkeeping. `prev` is the PREVIOUS tick's time
+   *  (null before the first): the hesitation gate's gap source. */
+  function evaluate(
+    now: number,
+    prev: number | null,
+    lines: string[],
+    line: number,
+    col: number,
+  ): VisibilityState {
+    // R1 — stock contexts OWN slash/@/quoted-path/path verdicts; classify
+    // FIRST (extractMatchState is blind to them). Hidden, no suppression,
+    // no close stamp: leaving pi's context is not a hapax close.
+    if (classifyStockContext(lines, line, col) !== null) {
+      hide();
+      return state();
+    }
+
+    const match = extractMatchState(lines, line, col, deps.config);
+    if (match === null) {
+      // R3 — close-event taxonomy (both flavors stamp closeAt, neither
+      // suppresses): a trailing space/tab with no @// anywhere before the
+      // cursor is the close-on-space rule; any other no-fragment position
+      // is the plain "nothing to offer" close.
+      closeWith(now);
+      return state();
+    }
+
+    // R2 — startup gate: hold qualifying queries until settle or the
+    // 500 ms bound; the wake re-evaluates (armGate fires once).
+    if (!settled && (gateDeadline === null || now < gateDeadline)) {
+      armGate(now);
+      return state();
+    }
+
+    const matches = query(match.fragment);
+    if (matches.length === 0) {
+      // R4 — disqualification close: clears the set, NEVER suppresses
+      // (the next qualifying keystroke reopens).
+      closeWith(now);
+      return state();
+    }
+
+    // R4 — explicit-dismissal suppression: word-mode results show only
+    // at a NEW word start (line start / after a non-word char) — and a
+    // DIFFERENT one from the dismissed fragment's, so extending the
+    // same word stays hidden. Trigger mode bypasses entirely.
+    if (suppressed && match.mode !== "trigger") {
+      const start = col - match.fragment.length;
+      const atBoundary =
+        start <= 0 || !/[A-Za-z0-9_]/.test((lines[line] ?? "")[start - 1]!);
+      if (!atBoundary || start === suppressedFragmentStart) {
+        return state(); // stay suppressed — hidden, flag kept
+      }
+    }
+
+    const intent =
+      match.mode === "trigger" || (deps.isIntentBypass?.() ?? false);
+    // R7 — fresh-reopen hysteresis: a close < reopenMs ago means active
+    // editing — the reopen is immediate (hesitation bypassed) and FRESH
+    // (the set below is this tick's live query, never the old one).
+    const freshReopen = closeAt !== null && now - closeAt < reopenMs;
+    const sig = matches.map((m) => m.display).join("\u0000");
+
+    if (!visible) {
+      // R5 — hesitation gate: a CLOSED line opens on a word-mode set
+      // only when the tick gap ≥ menuDelayMs (0 = OFF → first paint is
+      // immediate). Trigger/intent/fresh-reopen bypass.
+      if (
+        !intent &&
+        !freshReopen &&
+        menuDelayMs > 0 &&
+        prev !== null &&
+        now - prev < menuDelayMs
+      ) {
+        return state(); // held — not a close event (the line never opened)
+      }
+      paint(matches, sig, now);
+      return state();
+    }
+
+    // R6 — swap debounce on the open line. Identical set → idempotent
+    // refresh (advances the window clock, cancels any stale pending).
+    if (sig === displayedSig) {
+      paint(matches, sig, now);
+      return state();
+    }
+    if (now - lastPaintAt >= debounceMs) {
+      paint(matches, sig, now);
+      return state();
+    }
+    // Inside the window: keep the OLD set on screen (flicker hysteresis
+    // — narrowing must not close+reopen); park the new one; a newer
+    // keystroke supersedes the pending swap. A disqualifying tick above
+    // already closed the line ("or the set empties").
+    parkSwap(matches);
+    return state();
+  }
+
+  return {
+    onInput(): VisibilityState {
+      // Rule 0 — bookkeeping FIRST, before any state read.
+      const now = Date.now();
+      const prev = lastTickAt;
+      lastTickAt = now;
+      const { lines, line, col } = deps.getEditorState();
+      // R7 — cursor move with unchanged text (a click / paste-reset that
+      // ticked the clock; arrow keys consumed by T3 never tick): close,
+      // no suppression.
+      const fingerprint = lines.join("\n");
+      const movedCursor =
+        lastFingerprint !== null &&
+        fingerprint === lastFingerprint &&
+        (line !== lastLine || col !== lastCol);
+      lastFingerprint = fingerprint;
+      lastLine = line;
+      lastCol = col;
+      if (movedCursor) {
+        closeWith(now);
+        return state();
+      }
+      return evaluate(now, prev, lines, line, col);
+    },
+
+    onDismissed(explicit: boolean): void {
+      const now = Date.now();
+      if (explicit) {
+        // T3 seam (Escape / boundary-Esc): suppress until a NEW word
+        // start or trigger char. Record the dismissed fragment's start
+        // so same-word continuation (same start) stays hidden.
+        const { lines, line, col } = deps.getEditorState();
+        const match = extractMatchState(lines, line, col, deps.config);
+        suppressed = true;
+        suppressedFragmentStart =
+          match !== null && match.mode === "threshold"
+            ? col - match.fragment.length
+            : col;
+      }
+      closeWith(now);
+    },
+
+    getState: state,
+
+    dispose(): void {
+      clearSwapTimer();
+      if (gateTimer !== null) {
+        widgetTimers.clearTimeout(gateTimer);
+        gateTimer = null;
+      }
+    },
+  };
+}
+
 /** Accent fallback for tests/environments without a pi EditorTheme
  *  (theme.selectList.selectedText is the real channel — editor.d.ts/
  *  select-list.d.ts). */
@@ -260,15 +700,63 @@ export function createWidgetEditorFactory(
   opts: WidgetLayerOptions,
 ): EditorFactory {
   const wrapped: EditorFactory = (tui, theme, keybindings) => {
-    const inner = createEnterSubmitEditor(
-      opts.inner(tui, theme, keybindings),
-      keybindings,
-      opts.onKeystroke,
-    );
-
     // Per-built-editor widget state: a new editor instance starts
     // empty/hidden; T2's visibility machine drives set/hide.
     const state = createWidgetState();
+
+    // T2/S1 — the visibility machine. Created per BUILT editor (fresh
+    // state per instance, mirroring the S2 state holder). Its editor
+    // reads go through the enter-submit proxy once it exists — reads
+    // only, bound methods, never a mutation; before that they
+    // degrade to an empty state (defensive ?.).
+    let editorRef: {
+      getLines?: () => string[];
+      getCursor?: () => { line: number; col: number };
+    } | null = null;
+    const machine = createVisibilityMachine({
+      store: opts.store,
+      config: opts.config,
+      restoreReady: opts.restoreReady,
+      getEditorState: () => ({
+        lines: editorRef?.getLines?.() ?? [],
+        line: editorRef?.getCursor?.().line ?? 0,
+        col: editorRef?.getCursor?.().col ?? 0,
+      }),
+    });
+
+    // Glue: push the machine's snapshot into the S2 state holder. set()
+    // resets the highlight, so it fires only on REAL set changes
+    // (signature-compared) — pending-swap ticks re-serve the displayed
+    // set without clobbering T3's highlight index.
+    let pushedSig: string | null = null;
+    const applyVisibility = (st: VisibilityState): void => {
+      if (!st.visible || st.currentSet.length === 0) {
+        if (!state.hidden) state.hide();
+        pushedSig = null;
+        return;
+      }
+      const sig = st.currentSet.map((i) => i.display).join("\u0000");
+      if (sig !== pushedSig) {
+        state.set(st.currentSet);
+        pushedSig = sig;
+      }
+    };
+
+    // Input clock composition: the SHARED clock ticks first (index.ts's
+    // hesitation timing source), then the machine consumes the same
+    // event. Both run for EVERY input event (rule 0 — hide/delegate
+    // ticks still count for the gap math).
+    const tick = (): void => {
+      opts.onKeystroke();
+      applyVisibility(machine.onInput());
+    };
+
+    const inner = createEnterSubmitEditor(
+      opts.inner(tui, theme, keybindings),
+      keybindings,
+      tick,
+    );
+    editorRef = inner as unknown as NonNullable<typeof editorRef>;
 
     // Accent = the theme's selected-text styler (the channel pi-tui
     // itself uses for highlighted select-list items). Structural probe
@@ -294,6 +782,7 @@ export function createWidgetEditorFactory(
     return new Proxy(inner as object, {
       get(_target, prop) {
         if (prop === WIDGET_STATE) return state;
+        if (prop === WIDGET_MACHINE) return machine;
         if (prop === "render") {
           // UNBOUND composing closure — fresh on EVERY read (r4 §2:
           // pi-tui must not see a cached identity; the inner's bound

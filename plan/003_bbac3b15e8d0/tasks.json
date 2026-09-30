@@ -355,14 +355,14 @@
               "type": "Task",
               "id": "P1.M3.T2",
               "title": "Widget visibility state machine (input-clock driven)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Per-keystroke visibility decisions on the input clock, not pi-tui request cadence: fragment extraction, stock-context hiding, candidate gates, and the carried-over timing gates (menuDelayMs, 100 ms swap debounce, flicker hysteresis, startup gate) plus the suppress-until-word-start state that boundary-Esc sets.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T2.S1",
                   "title": "Visibility machine: fragment extraction, hiding rules, timing carry-over, suppress state",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T1.S2"
