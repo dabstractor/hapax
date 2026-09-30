@@ -1378,3 +1378,284 @@ describe("widget acceptance resets the shared grant tracker (plan 004 T2.S2)", (
     expect(grant.reset).toHaveBeenCalledTimes(1); // FRESH grant, beside the arm
   });
 });
+
+// ── End-to-end composition — BUG-001 acceptance (PRD §Issue 1 repro) ────────
+// The full chain flows through the COMPOSED proxy: typed fragment → word
+// paint → Tab accept → T1 arming seam → T2.S1 consult paints the successor
+// offer → T2.S2 grant paces it to one word. statefulChain() lets a case
+// drive arming THROUGH the real Tab accept and read it back through the
+// consult branch; the buffer is advanced EXPLICITLY per keystroke (the
+// fake inner editor owns its buffer) and each forwarded press ticks the
+// machine (W1) against the live state.
+
+/** A stateful ChainMachine double: arm()/reset() mutate the armed word
+ *  exactly like the real machine, so state() reflects accepts without
+ *  hand-mocking — spiedChain() above stays stateless by design. */
+const statefulChain = (): ChainMachine & { arm: Mock; reset: Mock } => {
+  let word: string | null = null;
+  return {
+    state: vi.fn(() => (word === null ? null : { word })),
+    arm: vi.fn((w: string) => {
+      word = w;
+    }),
+    reset: vi.fn(() => {
+      word = null;
+    }),
+  } as unknown as ChainMachine & { arm: Mock; reset: Mock };
+};
+
+/** The seed the repro cases share: zorpwibble + Quuxblat, bigram run
+ *  twice → topSuccessors("zorpwibble") === [{ next: "quuxblat", count: 2 }]. */
+const reproStore = (): CandidateStore => {
+  const store = seedStore([
+    ["zorpwibble", "Zorpwibble"],
+    ["quuxblat", "Quuxblat"],
+  ]);
+  store.recordBigramRuns([["zorpwibble", "quuxblat"]]);
+  store.recordBigramRuns([["zorpwibble", "quuxblat"]]);
+  return store;
+};
+
+type Harness = ReturnType<typeof makeInsertHarness>;
+
+/** Model typing one character: advance the live buffer at the caret, then
+ *  press the char (forwarded → the W1 microtask evaluates the NEW state). */
+const typeChar = async (h: Harness, ch: string): Promise<void> => {
+  const row = h.buf.lines[h.buf.line] ?? "";
+  const lines = [...h.buf.lines];
+  lines[h.buf.line] = row.slice(0, h.buf.col) + ch + row.slice(h.buf.col);
+  h.buf.lines = lines;
+  h.buf.col += 1;
+  h.press(ch);
+  await flushPaint();
+};
+
+describe("widget chain end-to-end — BUG-001 acceptance (PRD §Issue 1 repro)", () => {
+  it("repro: type zorp → Tab arms zorpwibble → space offers Quuxblat at zero typed chars → Tab inserts exactly one word and re-arms", async () => {
+    const chain = statefulChain();
+    const store = reproStore();
+    // Seed sanity (the PRD's own precondition):
+    expect(store.topSuccessors("zorpwibble")).toEqual([
+      { next: "quuxblat", count: 2 },
+    ]);
+    const h = makeInsertHarness({ lines: [""], line: 0, col: 0 }, { chain, store });
+
+    for (const ch of "zorp") await typeChar(h, ch); // per-char typing
+    // Word-mode paint of the typed fragment — the widget line is live.
+    expect(h.state.hidden).toBe(false);
+    expect(h.machine.painted()[0]?.key).toBe("zorpwibble");
+
+    h.innerCalls.length = 0; // drop the typing keystrokes — assert the Tab itself
+    h.press("\t"); // consumed accept → insert + ARM (the T1 seam)
+    expect(h.buf.lines).toEqual(["Zorpwibble"]); // display inserted over "zorp"
+    expect(h.innerCalls).toEqual([]); // fully consumed
+    expect(chain.arm).toHaveBeenCalledTimes(1);
+    expect((chain.arm as Mock).mock.calls[0]![0]).toBe("zorpwibble"); // STORE key
+    expect(chain.state()).toEqual({ word: "zorpwibble" }); // the machine is armed
+
+    await typeChar(h, " "); // separating space — empty word start
+    // THE CONSULT (T2.S1): successor offered at ZERO typed chars…
+    expect(h.machine.getState().visible).toBe(true);
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+    ]);
+    const rec = h.machine.painted()[0]!;
+    expect(rec.description).toBe("chain"); // provenance marker
+    expect(rec.tier).toBeUndefined(); // shims omit tier → armable
+
+    h.innerCalls.length = 0;
+    h.press("\t"); // Tab on the offer — zero-typed-char acceptance
+    // Exactly ONE word inserted (the successor, not the successor twice):
+    expect(h.buf.lines).toEqual(["Zorpwibble Quuxblat"]);
+    expect(h.innerCalls).toEqual([]); // consumed
+    // Re-arm at the SUCCESSOR's plain store key:
+    expect(chain.arm).toHaveBeenCalledTimes(2);
+    expect((chain.arm as Mock).mock.calls[1]![0]).toBe("quuxblat");
+    expect(chain.state()).toEqual({ word: "quuxblat" });
+  });
+
+  it("one-shot grant: typing THROUGH the offer disarms at the next word boundary; the normal path answers; no successor pops later", async () => {
+    const chain = statefulChain();
+    const h = makeInsertHarness({ lines: [""], line: 0, col: 0 }, {
+      chain,
+      store: reproStore(), // real factory grant — S2's tracker exercised end-to-end
+    });
+
+    for (const ch of "zorp") await typeChar(h, ch);
+    h.press("\t"); // arm zorpwibble + fresh grant
+    await typeChar(h, " "); // the granted offer (grant tick: word 1)
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+    ]);
+
+    for (const ch of "quuxblat") await typeChar(h, ch); // type THROUGH the offer
+    // Fragment filtering kept the offer alive across the typed word…
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+    ]);
+    await typeChar(h, " "); // …and the boundary SPENDS the grant (word 2)
+    expect(chain.state()).toBeNull(); // disarmed exactly at the boundary
+    expect(h.machine.getState().visible).toBe(false); // no chain paint
+
+    // The normal gated path answers subsequent fragments with REAL records:
+    for (const ch of "zo") await typeChar(h, ch);
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Zorpwibble",
+    ]);
+    expect(h.machine.painted()[0]?.tier).toBe(3); // a word record, not a shim
+    // …and the next word start gets NO successor offer:
+    await typeChar(h, " ");
+    expect(h.machine.getState().visible).toBe(false);
+  });
+
+  it("stock contexts win over an armed chain: /cmd, @mention, and path never show the chain set (R1 ahead of the consult)", async () => {
+    const chain = statefulChain();
+    chain.arm("zorpwibble");
+    const h = makeInsertHarness({ lines: ["zorpwibble "], line: 0, col: 11 }, {
+      chain,
+      store: reproStore(),
+    });
+    h.press("x"); // the offer IS live in this fixture — the consult works…
+    await flushPaint();
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Quuxblat",
+    ]);
+
+    // …then a stock context owns the cursor: R1 hides BEFORE the consult.
+    h.buf.lines = ["/cmd"];
+    h.buf.col = 4;
+    h.press("d");
+    await flushPaint();
+    expect(h.machine.getState().visible).toBe(false);
+    expect(h.machine.getState().currentSet).toHaveLength(0);
+    // R1 hides WITHOUT touching the chain (no reset — the offer may return
+    // when the stock context ends); the pin: never offered HERE.
+    expect(chain.state()).toEqual({ word: "zorpwibble" });
+
+    h.buf.lines = ["@na"];
+    h.buf.col = 3;
+    h.press("a"); // mention context
+    await flushPaint();
+    expect(h.machine.getState().visible).toBe(false);
+
+    h.buf.lines = ["src/core/ro"];
+    h.buf.col = 11;
+    h.press("o"); // path context
+    await flushPaint();
+    expect(h.machine.getState().visible).toBe(false);
+  });
+
+  it("trigger char wins over a glued chain fragment: typing '#' mid-armed yields trigger mode, never the chain set", async () => {
+    const chain = statefulChain();
+    chain.arm("zorpwibble");
+    const h = makeInsertHarness({ lines: ["zorpwibble #"], line: 0, col: 12 }, {
+      chain,
+      store: reproStore(),
+    });
+
+    await typeChar(h, "z"); // "zorpwibble #z" — fragment GLUED to the trigger
+    // The consult disqualified (non-word-start fragment) → reset + fall
+    // through; the NORMAL path answered in trigger mode on the same tick:
+    expect(chain.state()).toBeNull();
+    expect(h.machine.getState().visible).toBe(true);
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Zorpwibble",
+    ]);
+    const rec = h.machine.painted()[0]!;
+    expect(rec.description).not.toBe("chain"); // trigger record, not a shim
+    expect(rec.tier).toBe(3);
+  });
+
+  it("enableChaining:false is inert end-to-end: no arm on Tab, no offer at the word start", async () => {
+    const chain = spiedChain();
+    const h = makeInsertHarness({ lines: [""], line: 0, col: 0 }, {
+      chain,
+      store: reproStore(),
+      config: cfg({ enableChaining: false }),
+    });
+
+    for (const ch of "zorp") await typeChar(h, ch); // word-mode still works
+    expect(h.machine.painted()[0]?.key).toBe("zorpwibble");
+    h.innerCalls.length = 0;
+    h.press("\t"); // consumed insert — the arm gate is CLOSED
+    expect(h.buf.lines).toEqual(["Zorpwibble"]);
+    expect(h.innerCalls).toEqual([]);
+    expect(chain.arm).not.toHaveBeenCalled(); // no arm on accept
+    expect(chain.state()).toBeNull();
+    await typeChar(h, " "); // word start — the consult is gated off too
+    expect(h.machine.getState().visible).toBe(false); // no offer
+    expect(chain.reset).not.toHaveBeenCalled(); // nothing to reset — inert
+  });
+
+  it("zero-candidate invariant: armed word with NO successors resets the chain, the line never renders — not even empty", async () => {
+    const chain = statefulChain();
+    chain.arm("lonelyword");
+    // Two words, NO bigrams: topSuccessors("lonelyword") is empty.
+    const store = seedStore([
+      ["lonelyword", "Lonelyword"],
+      ["unrelated", "Unrelated"],
+    ]);
+    const h = makeInsertHarness({ lines: ["lonelyword"], line: 0, col: 10 }, {
+      chain,
+      store,
+    });
+
+    await typeChar(h, " "); // empty word start — the consult finds nothing
+    expect(chain.state()).toBeNull(); // zero successors → reset + fall through
+    expect(h.state.hidden).toBe(true);
+    expect(h.machine.getState().visible).toBe(false); // never a zero-candidate line
+    // The render composes the inner output BYTE-IDENTICAL — no widget line:
+    expect(
+      (h.editor as unknown as { render: (w: number) => string[] }).render(80),
+    ).toEqual(["lonelyword "]);
+  });
+
+  it("multi-successor offers order count-descending and cap at maxSuggestions", async () => {
+    const mkStore = (): CandidateStore => {
+      const store = seedStore([
+        ["zorpwibble", "Zorpwibble"],
+        ["alphaword", "Alphaword"],
+        ["betaword", "Betaword"],
+        ["gammaword", "Gammaword"],
+      ]);
+      for (let i = 0; i < 3; i++) {
+        store.recordBigramRuns([["zorpwibble", "alphaword"]]);
+      }
+      for (let i = 0; i < 2; i++) {
+        store.recordBigramRuns([["zorpwibble", "betaword"]]);
+      }
+      store.recordBigramRuns([["zorpwibble", "gammaword"]]);
+      return store;
+    };
+
+    // Full ordering: 3 > 2 > 1, count-descending.
+    const chainA = statefulChain();
+    chainA.arm("zorpwibble");
+    const hA = makeInsertHarness({ lines: ["zorpwibble "], line: 0, col: 11 }, {
+      chain: chainA,
+      store: mkStore(),
+    });
+    hA.press("x");
+    await flushPaint();
+    expect(hA.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Alphaword",
+      "Betaword",
+      "Gammaword",
+    ]);
+
+    // The cap: maxSuggestions 2 → exactly the two best, still ordered.
+    const chainB = statefulChain();
+    chainB.arm("zorpwibble");
+    const hB = makeInsertHarness({ lines: ["zorpwibble "], line: 0, col: 11 }, {
+      chain: chainB,
+      store: mkStore(),
+      config: cfg({ maxSuggestions: 2 }),
+    });
+    hB.press("x");
+    await flushPaint();
+    expect(hB.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Alphaword",
+      "Betaword",
+    ]);
+  });
+});

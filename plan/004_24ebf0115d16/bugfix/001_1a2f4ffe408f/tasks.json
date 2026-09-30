@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "M2 chained completion live on the widget PRIMARY path (BUG-001)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Implement spec/07:437-476 (M2 chained completion) on the widget path: arm the shared ChainMachine on widget Tab acceptance, render zero-typed-char successor offers through the visibility machine's isIntentBypass seam with the one-shot grant, invert the plan-004 no-arm pin, and add the spec/07 clarifying clause. The fallback provider path (provider.ts) is the reference implementation and must not regress.",
           "tasks": [
             {
@@ -76,7 +76,7 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Render zero-typed-char successor offers on the widget line",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Wire the chain consult into createVisibilityMachine (the isIntentBypass seam, widget.ts ~415, is present but unwired by createWidgetEditorFactory ~995-1011): at an empty word start offer the armed word's top successors immediately; typed fragments filter via the anchored-fuzzy membership gate at threshold 0; port the one-shot grant tracker as a shared helper used by both display paths; pin end-to-end behavior and add the spec/07 clarifying clause.",
               "subtasks": [
                 {
@@ -118,7 +118,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S3",
                   "title": "End-to-end widget chain tests, live TTY verification, and spec/07 clarifying clause",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S2",

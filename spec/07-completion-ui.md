@@ -472,6 +472,9 @@ armed(W):
 - Chain offers render on the widget line (or fallback menu) like any
   result set — with the description column retired there is no `chain`
   marker; the offer is visually indistinguishable from a typed match.
+  On the widget path, arming happens at the widget's Tab-insert (the
+  applyCompletion equivalent) and successor offers publish through the
+  visibility machine's intent bypass.
 - The chain state resets on every `before_agent_start` (new user turn).
 - Trigger-char completions also arm the chain (they're whole-word
   insertions).
