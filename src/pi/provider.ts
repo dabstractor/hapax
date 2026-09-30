@@ -44,7 +44,7 @@
 
 import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
 
-import { rankMatches } from "../core/query.js";
+import { matchFragment, rankMatches } from "../core/query.js";
 import type { CandidateStore } from "../core/store.js";
 import type { RankedMatch, Successor } from "../core/types.js";
 import type { HapaxConfig } from "./config.js";
@@ -253,7 +253,9 @@ export type HapaxProvider = AutocompleteProvider & {
  * (a stock-context call delegates before the armed branch is reached —
  * BUG-001) — while armed it
  * swaps the suggestion set for the armed word's successors (zero-typed-
- * char word-start offer, then threshold-0 live fragment filtering) — and
+ * char word-start offer, then threshold-0 live fragment filtering — a
+ * fuzzy MEMBERSHIP gate through the shared anchored matcher, §07 h2.49;
+ * ranking stays successor-count-based) — and
  * applyCompletion arms through it as a side-effect BEFORE delegating
  * verbatim (never-hijack case (b) pins that pass-through).
  * Optional with a fresh idle default so direct 3-argument callers (the
@@ -340,8 +342,11 @@ export function createHapaxProvider(
       //       characters" means zero chars of the NEXT word.
       //   (b) TYPED FRAGMENT: a trailing [A-Za-z][A-Za-z0-9_]* AT A WORD
       //       START (line start or right after a space/tab) filters the
-      //       successor set live; typing never disarms while the fragment
-      //       still matches a successor. A fragment GLUED to the trigger
+      //       successor set live through the anchored-fuzzy MEMBERSHIP
+      //       gate (§07 h2.49: same matcher as the query path, threshold
+      //       0, successor-count order kept); typing never disarms while
+      //       the fragment still fuzzy-matches a successor. A fragment
+      //       GLUED to the trigger
       //       char or other punctuation ("#b", "!be") is NOT a chain
       //       fragment (BUG-005): pi-tui's applyCompletion deletes exactly
       //       prefix.length chars blindly, so answering at prefix "b" for
@@ -496,10 +501,12 @@ export function createHapaxProvider(
           chain.reset(); // no successors → idle; the normal path answers NOW
         }
 
-        // (b) Typed fragment — threshold-0 live filtering. `armed` may be
-        // stale after an (a) reset, but a word start never matches the
-        // fragment regex, so this only produces a menu for genuine
-        // fragments where `armed` is still current.
+        // (b) Typed fragment — threshold-0 live filtering through the
+        // SAME anchored fuzzy matcher as the query path, as a pure
+        // MEMBERSHIP gate (§07 h2.49). `armed` may be stale after an (a)
+        // reset, but a word start never matches the fragment regex, so
+        // this only produces a menu for genuine fragments where `armed`
+        // is still current.
         const frag = before.match(/[A-Za-z][A-Za-z0-9_]*$/)?.[0];
         // BUG-005 word-start guard: a fragment glued to the trigger char
         // ("#b") or any punctuation ("!be") is NOT a chain fragment —
@@ -519,7 +526,15 @@ export function createHapaxProvider(
             ? []
             : store
                 .topSuccessors(armed.word)
-                .filter((s) => s.next.startsWith(frag.toLowerCase()))
+                // §07 h2.49 membership gate: matchFragment(frag, s.next)
+                // returns a tier+score or null — ANY tier (3/2/1) passes
+                // at chain threshold 0 (fuzzThreshold is never consulted
+                // here), the score field is ignored, and NO re-sort
+                // happens: the menu keeps topSuccessors' successor-count
+                // order (the chain's ranking identity). matchFragment
+                // lowercases both arguments internally — frag goes in
+                // raw; the old explicit toLowerCase() is gone.
+                .filter((s) => matchFragment(frag, s.next) !== null)
                 .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
         if (frag === undefined || !fragAtWordStart || succ.length === 0) {
           // (c) Disqualify: punctuation, word-less non-start input, a

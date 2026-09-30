@@ -618,6 +618,103 @@ describe("chain machine — armed successor chaining (PRD §07 h2.43, plan 002 S
   });
 });
 
+// ── armed-chain fuzzy membership gate (§07 h2.49, plan 003 S1) ───────
+// The typed-fragment filter is the SAME anchored fuzzy matcher as the
+// query path (core/query.ts matchFragment), used as a pure MEMBERSHIP
+// gate: any tier (3/2/1) passes at chain threshold 0, scores/tiers never
+// reorder, and the menu keeps topSuccessors' successor-count order.
+
+/** Bigram seeding for alpha→zendesk(3), alpha→kappa(2) — count-desc menu
+ *  order [zendesk, kappa]. Both words are put() so menu values carry
+ *  store display casing. Fragment matrix: "zk" matches zendesk only
+ *  (tier-2 contiguous tail; kappa anchor-misses: z ≠ k); "zdk" matches
+ *  zendesk only (tier-1 gapped subsequence d…k); "q…" anchor-misses
+ *  both. */
+const seedZSuccessors = (s: CandidateStore): void => {
+  put(s, "zendesk", 3);
+  put(s, "kappa", 3);
+  for (let r = 0; r < 3; r++) s.recordBigramRuns([["alpha", "zendesk"]]);
+  for (let r = 0; r < 2; r++) s.recordBigramRuns([["alpha", "kappa"]]);
+};
+
+/** Bigram seeding for alpha→zaza(3), alpha→zaay(2) — count-desc order
+ *  [zaza, zaay]. Fragment "zaa" matches BOTH at different tiers — zaza
+ *  tier 1 (scattered a…a tail), zaay tier 3 (exact prefix, score 100) —
+ *  so any tier/score re-sort would flip the menu; count order must hold. */
+const seedTierOrderSuccessors = (s: CandidateStore): void => {
+  put(s, "zaza", 3);
+  put(s, "zaay", 3);
+  for (let r = 0; r < 3; r++) s.recordBigramRuns([["alpha", "zaza"]]);
+  for (let r = 0; r < 2; r++) s.recordBigramRuns([["alpha", "zaay"]]);
+};
+
+describe("armed-chain fuzzy membership gate (§07 h2.49, plan 003 S1)", () => {
+  it("tier-2 tail membership: 'zk' offers 'zendesk' (non-prefix contiguous tail; old startsWith missed it)", async () => {
+    const current = makeCurrent();
+    const store = seedStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alpha", "al", seedZSuccessors);
+
+    // "zk" is NOT a prefix of "zendesk" — under startsWith this disarmed.
+    // matchFragment: anchor z, contiguous tail "k" found at index 6 →
+    // tier 2 → membership passes at threshold 0. kappa is filtered by an
+    // ANCHOR miss (fragment z vs successor k).
+    const menu = await suggest(inner, ["alpha zk"], 0, 8);
+    expect(menu?.items.map((i) => i.value)).toEqual(["zendesk"]);
+    expect(menu?.prefix).toBe("zk");
+    expect(chain.state()).toEqual({ word: "alpha" }); // membership never disarms
+  });
+
+  it("tier-1 scattered membership: 'zdk' (anchored gapped subsequence) offers 'zendesk'", async () => {
+    const current = makeCurrent();
+    const store = seedStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alpha", "al", seedZSuccessors);
+
+    // anchor z; tail "dk" placed greedy-leftmost (d@3, k@6) with one gap
+    // run ("es") → tier 1, low score — but scores are NEVER consulted on
+    // this path (threshold 0; membership = !== null only).
+    const menu = await suggest(inner, ["alpha zdk"], 0, 9);
+    expect(menu?.items.map((i) => i.value)).toEqual(["zendesk"]);
+    expect(chain.state()).toEqual({ word: "alpha" });
+  });
+
+  it("anchor-miss on every successor (zero membership) → disarm + delegate on the SAME call", async () => {
+    const current = makeCurrent();
+    const store = seedStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alpha", "al", seedZSuccessors);
+
+    // "q" anchors on q — no successor starts with q (the h2.43
+    // disqualification shape, now via matchFragment's anchor rule):
+    // disarm on THIS keystroke, the normal path answers — at threshold 2
+    // a 1-char fragment has no match state → pi's stock delegate (mock
+    // null), arguments/options forwarded verbatim.
+    const options = opts();
+    const lines = ["alpha q"];
+    expect(await inner.getSuggestions(lines, 0, 7, options)).toBeNull();
+    expect(current.getSuggestions).toHaveBeenCalledOnce();
+    const call = current.getSuggestions.mock.calls[0]!;
+    expect(call[0]).toBe(lines); // verbatim array identity
+    expect(call[3]).toBe(options); // verbatim options identity
+    expect(chain.state()).toBeNull(); // disarmed THIS call
+  });
+
+  it("successor-count order survives different-tier matches (no tier/score re-sort)", async () => {
+    const current = makeCurrent();
+    const store = seedStore();
+    const { chain, inner } = makeStack(store, current);
+    await armViaTab(inner, chain, store, "alpha", "al", seedTierOrderSuccessors);
+
+    // "zaa": zaza → tier 1, zaay → tier 3 (score 100). A tier/score sort
+    // would hoist zaay; the chain keeps topSuccessors' count-desc order.
+    const menu = await suggest(inner, ["alpha zaa"], 0, 9);
+    expect(menu?.items.map((i) => i.value)).toEqual(["zaza", "zaay"]);
+    expect(menu?.prefix).toBe("zaa");
+    expect(chain.state()).toEqual({ word: "alpha" });
+  });
+});
+
 // ── NREL replay harness (real ingest; the PRD §09 item-7 route) ────────
 // Mirrors acceptance.test.ts's item-7 helpers (makeChainPipeline /
 // replayChain / editingCurrent): the REAL ingest pipeline with the bigram

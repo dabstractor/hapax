@@ -159,7 +159,7 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Core query: anchored fuzzy + frequency ranking (R3; spec 04 Query matching/ranking, M3 goals 8-9)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Rewrite src/core/query.ts from plain prefix + content-derived order to first-char-anchored fuzzy matching with tiers 3/2/1, admission scores gated by a new fuzzThreshold config (0-100, default 60 baked in the query module), and ranking tier desc -> sessionCount desc -> shorter key -> byte-lex. Generalize the store scan entry to a first-char range. Re-point the provider's armed-chain successor filter to the same matcher (threshold 0 for the chain duration). Depends on P1.M1 (paths are query candidates; single rewrite over final token classes).",
           "tasks": [
             {
@@ -273,14 +273,14 @@
               "type": "Task",
               "id": "P1.M2.T3",
               "title": "Provider chain membership gate re-point (fuzzy, threshold 0)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "The armed-chain typed-chars successor filter switches from startsWith to the shared fuzzy matcher as a membership gate; ranking within the chain stays successor-count-based; threshold stays 0 for the chain duration.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T3.S1",
                   "title": "Chain successor filter -> fuzzy membership gate (threshold 0, count ranking unchanged)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M2.T1.S1"
@@ -308,14 +308,14 @@
               "type": "Task",
               "id": "P1.M3.T1",
               "title": "Dual-path wiring + widget module rendering",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Capture the editor factory, branch session_start, and render the one-line widget below the input editor.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M3.T1.S1",
                   "title": "session_start dual-path branch + widget-primary wiring (no provider registration)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M2.T2.S1",
@@ -336,7 +336,7 @@
                   "type": "Subtask",
                   "id": "P1.M3.T1.S2",
                   "title": "Widget line rendering: join, caps, overflow, highlight, zero-never",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M3.T1.S1"
