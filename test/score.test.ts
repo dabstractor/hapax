@@ -296,6 +296,120 @@ describe("admit — conjugation guard (2026-09, 'deleted' leak)", () => {
   });
 });
 
+describe("conjugation guard rides R_eff(len(word)) — 2026-10", () => {
+  // spec/04 h2.26 (2026-10): BOTH guard tiers compare the stem quant
+  // against R_eff(len(WORD)) — the word being admitted, never the stem —
+  // so the guard's floor loosens with the table's gradient and moves with
+  // the rejectCommonness knob. The old tier-2 (MID_FREQ_THRESHOLD, absent
+  // words only) is subsumed by the shared comparison; the constant
+  // survives only as a compatibility export.
+
+  it("'uploads' (floor length, absent, stem upload q=38) still rejects", () => {
+    // 7 ≤ REJECT_LEN_FLOOR → guardAt = 12; 38 ≥ 12 → reject (unchanged).
+    expect(
+      admit(draft("uploads"), dict({ upload: MID_FREQ_THRESHOLD + 18 })),
+    ).toBe("reject");
+  });
+
+  it("'configurations' (ramp length, absent, stem q=26) ADMITS at group 0", () => {
+    // Was a flat-floor tier-1 reject (26 ≥ 12); the ramp pushes guardAt
+    // to rEff(12, 14) ≈ 184 for the 14-char word.
+    expect(admit(draft("configurations"), dict({ configuration: 26 }))).toBe(0);
+  });
+
+  it("floor lengths unchanged: 'caching' (stem cache=30) and 'deleted' (stem delete=51) reject", () => {
+    expect(admit(draft("caching"), dict({ cache: MID_FREQ_THRESHOLD + 10 }))).toBe(
+      "reject",
+    );
+    expect(admit(draft("deleted"), dict({ deleted: 45, delete: 51 }))).toBe(
+      "reject",
+    );
+  });
+
+  it("'typed' subword still guarded at the floor (stem type=12)", () => {
+    expect(
+      admit(draft("typed", true), dict({ type: REJECT_COMMON_THRESHOLD }), 2),
+    ).toBe("reject");
+  });
+
+  it("guard threshold rides the WORD's length, not the stem's", () => {
+    // Same stem quant (30): the 7-char word rejects at the floor
+    // (30 ≥ 12) while the 14-char 'configurations' admits
+    // (30 < rEff(12, 14)). Old code rejected BOTH via the flat floor.
+    expect(admit(draft("caching"), dict({ cache: 30 }))).toBe("reject");
+    expect(admit(draft("configurations"), dict({ configuration: 30 }))).toBe(0);
+  });
+
+  it("knob moves the guard floor with the curve", () => {
+    // rejectCommonness 40 → guardAt = rEff(40, 7) = 40: stem 38 spares
+    // the absent inflection; at the default 12 the same pair rejects.
+    expect(admit(draft("uploads"), dict({ upload: 38 }))).toBe("reject");
+    expect(
+      admit(draft("uploads"), dict({ upload: 38 }), undefined, {
+        rejectCommonness: 40,
+      }),
+    ).toBe(0);
+  });
+
+  it("properName skips the guard: 'Uploads' admits via the table (guard bypassed)", () => {
+    expect(
+      admit(
+        draft("uploads", false, { display: "Uploads", properName: true }),
+        dict({ upload: 38 }),
+      ),
+    ).toBe(0); // absent word → table group 0; lowercase twin rejects via the guard
+  });
+
+  it("len ≥ REJECT_LEN_FULL: guard can never reject (rEff sentinel 256 > any q)", () => {
+    // 21-char absent inflection of a maximally common stem (q=255):
+    // tier-1 rejected this under the flat floor; the sentinel subsumes
+    // it — the guard loosens with the table, exactly per spec.
+    expect(
+      admit(draft("internationalizations"), dict({ internationalization: 255 })),
+    ).toBe(0);
+  });
+
+  it("stem quant boundary is self-relative at a ramp length (ceil(rEff)±1)", () => {
+    // 15-char word, 14-char stem; the boundary is computed from the
+    // imported rEff — immune to arithmetic slips (spec-09 posture).
+    const word = "sensationalizes";
+    const stem = "sensationalize";
+    expect(word.length).toBe(15); // inside the ramp window
+    expect(stem.length).toBe(word.length - 1); // one-level -s strip
+    const at = rEff(REJECT_COMMON_THRESHOLD, word.length);
+    expect(admit(draft(word), dict({ [stem]: Math.ceil(at) })) ).toBe("reject");
+    expect(admit(draft(word), dict({ [stem]: Math.ceil(at) - 1 }))).toBe(0);
+  });
+});
+
+describe("proper-noun relief stays dead under the ramp (2026-10)", () => {
+  it("capitalized 9-char table-reject (q ≥ rEff(12,9)) does NOT relieve", () => {
+    // Relief requires q < PROPER_NOUN_ADMIT_CEILING (=12); a table-reject
+    // at 9 chars needs q ≥ ~82 — the domains are disjoint. The guard is
+    // skipped (properName), the TABLE rejects, relief stays dead.
+    expect(
+      admit(
+        draft("quizzical", false, { display: "Quizzical", properName: true }),
+        dict({ quizzical: 200 }),
+      ),
+    ).toBe("reject");
+  });
+
+  it("long capitalized word admits via the TABLE at group 1, not the relief (group 2)", () => {
+    // 14-char properName, q=100 < rEff(12, 14): the table admits flat
+    // group 1; a live relief would have returned 2.
+    expect(
+      admit(
+        draft("sensationalize", false, {
+          display: "Sensationalize",
+          properName: true,
+        }),
+        dict({ sensationalize: 100 }),
+      ),
+    ).toBe(1);
+  });
+});
+
 describe("admit — whole-token bands (PRD §04 h2.24)", () => {
   it("dictionary-absent word (q === null) → group 0, rare-by-default", () => {
     expect(admit(draft("zzqv"), dict({}))).toBe(0);

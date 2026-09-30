@@ -120,9 +120,11 @@ export const REJECT_COMMON_THRESHOLD = 12 as const;
  *
  *  2026-10: the table's MID demotion row is DELETED outright (the R_eff
  *  gradient has no group-2 path; every attested admission is flat group
- *  1). This constant survives ONLY for the guard's tier-2 comparison
- *  and tools/calibrate-bands.mjs; its retiral/repointing is the next
- *  subtask's (S2's) business. */
+ *  1), and S2 retires the guard's tier-2 too — both guard tiers now ride
+ *  R_eff(len(word)), subsuming the MID comparison. RETIRED compatibility
+ *  constant: value and export unchanged (pinned === 20 in
+ *  test/score.test.ts) for tools/calibrate-bands.mjs (R_eff-aware in S3)
+ *  and test/helpers/bench-fixtures.ts. Do not use in new code. */
 export const MID_FREQ_THRESHOLD = 20 as const;
 
 /** Relief ceiling for capitalized whole tokens — **RETIRED-IN-PLACE
@@ -314,26 +316,38 @@ export function admit(
     result = 2;
   }
 
-  // Conjugation guard (2026-09, "deleted" leak): an inflection whose
-  // STEM is reject-common rejects too, whatever its own q — the corpus
-  // ranks inflections separately (delete=51, deleted=45) and the
-  // rare-by-default hole admitted absent forms outright (deletes,
-  // caching, uploads → group 0 + rarity bonus). Hapax is for proper
-  // nouns and identifiers, not verb/adverb/plural morphology: skip the
-  // guard when properName is set (casing evidence — "Andrews",
-  // "Sanders" — outranks morphology, mirroring the relief's philosophy).
-  // ONE stripping level, no recursion; subwords are guarded as well
-  // ("typedFlag" → subword "typed" is still a conjugation). Two tiers:
-  //   - stem ≥ rejectAt → reject (conjugation of a COMMON word), any q;
-  //   - word ABSENT (q = null) + stem ≥ MID_FREQ_THRESHOLD → reject
-  //     ("uploads": upload=38, "caching": cache=30 — absent inflections
-  //     of attested mid-band stems are the same noise class).
-  // The rejectCommonness knob governs the stem comparisons too.
+  // Conjugation guard (2026-09, "deleted" leak; 2026-10 R_eff alignment):
+  // an inflection whose STEM is reject-common rejects too, whatever its
+  // own q — the corpus ranks inflections separately (delete=51,
+  // deleted=45) and the rare-by-default hole admitted absent forms
+  // outright (deletes, caching, uploads → group 0 + rarity bonus). Hapax
+  // is for proper nouns and identifiers, not verb/adverb/plural
+  // morphology: skip the guard when properName is set (casing evidence —
+  // "Andrews", "Sanders" — outranks morphology, mirroring the relief's
+  // philosophy). ONE stripping level, no recursion; subwords are guarded
+  // as well ("typedFlag" → subword "typed" is still a conjugation).
+  //
+  // 2026-10 (spec h2.26): BOTH former tiers ride ONE threshold —
+  // R_eff(len(WORD)), the same length-conditioned curve the table uses —
+  // so long absent inflections of attested stems ("configurations":
+  // configuration=26 at 14 chars) loosen with the gradient instead of
+  // hitting the flat floor, while floor-length words are unchanged
+  // ("uploads": upload=38 ≥ rEff(12,7)=12 still rejects; "caching":
+  // cache=30; "deleted": delete=51). The stem's length is irrelevant —
+  // only the word's drives the threshold. At len ≥ REJECT_LEN_FULL the
+  // 256 sentinel means the guard can never reject there either (qs ≤ 255
+  // < 256): it loosens with the table, no special case. The old tier-2
+  // (absent word + stem ≥ MID_FREQ_THRESHOLD=20) is subsumed; that
+  // constant is now a retired compatibility export. The
+  // rejectCommonness knob governs the guard through the same resolved
+  // rejectAt the table uses. Float compare qs >= guardAt directly — no
+  // rounding (rounding shifts ramp boundaries).
   if (result !== "reject" && !draft.properName) {
+    const guardAt = rEff(rejectAt, draft.key.length); // the WORD's length
     for (const stem of inflectionStems(draft.key)) {
       const qs = dictionary.lookup(stem);
       if (qs === null) continue;
-      if (qs >= rejectAt || (q === null && qs >= MID_FREQ_THRESHOLD)) {
+      if (qs >= guardAt) {
         result = "reject";
         break;
       }
