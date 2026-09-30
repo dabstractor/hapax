@@ -580,8 +580,11 @@ export function createHapaxProvider(
       }
       // 3. Synchronous store query — PRD §07 rule 1: zero awaits, zero
       // I/O before this point; the menu data exists when we return.
+      // fuzzThreshold (PRD §08 h2.52, plan 003 S3): the config knob flows
+      // into the admission gate — clamped to 0–100 by the config layer.
       const matches = rankMatches(store, state.fragment, {
         limit: config.maxSuggestions,
+        fuzzThreshold: config.fuzzThreshold,
       });
       if (matches.length === 0) {
         // Zero candidates never render a menu: drop the live cache so

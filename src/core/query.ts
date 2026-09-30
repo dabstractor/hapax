@@ -64,7 +64,15 @@ export const DEFAULT_LIMIT = 8;
  *  protocol). Tunable constants; the tier BOUNDARIES (prefix / contiguous
  *  tail / scattered) are semantics, never tunable. Consumed by
  *  matchFragment's score arithmetic (single-sourced — no inline literals)
- *  and by the threshold tests. */
+ *  and by the threshold tests.
+ *
+ *  Knob relationship (plan 003 P1.M2.T1.S3): the fuzzThreshold config key
+ *  (0–100, clamped in config.ts) gates a candidate's score against these
+ *  tiers — 100 = exact-prefix-only (only TIER3_SCORE survives the strict-<
+ *  gate, TIER2_BASE_SCORE (85) and TIER1_BASE_SCORE (50) sit below it),
+ *  and TIER1_BASE_SCORE < DEFAULT_FUZZ_THRESHOLD (60) keeps scattered
+ *  matches invisible at the default. §09 tuning protocol: the knob is a
+ *  runtime tuning surface; these tier boundaries are not. */
 export const TIER3_SCORE = 100 as const;
 export const TIER2_BASE_SCORE = 85 as const;
 export const TIER2_SKIP_FACTOR = 40 as const;
@@ -77,7 +85,14 @@ export const TIER1_GAPCHAR_CAP = 15 as const;
  *  and strong contiguous tails, gates out ALL scattered matches (tier-1
  *  max = TIER1_BASE_SCORE = 50). Higher = stricter; 100 =
  *  exact-prefix-only; 0 = admit all. config.ts auto-imports this as the
- *  schema default (the rejectCommonness pattern, P1.M2.T1.S3). */
+ *  schema default (the rejectCommonness pattern, P1.M2.T1.S3).
+ *
+ *  Runtime knob (PRD §08 h2.52, wired by P1.M2.T1.S3): the `fuzzThreshold`
+ *  config key (HapaxConfig.fuzzThreshold) overrides this default per
+ *  config file — clamped to 0–100 (silent round-then-clamp; wrong types
+ *  repair with one warning) — and the provider forwards it into every
+ *  rankMatches call. RankOptions.fuzzThreshold absent here still means
+ *  THIS constant, so the seam stays honest for direct callers. */
 export const DEFAULT_FUZZ_THRESHOLD = 60 as const;
 
 /** Options for rankMatches. Everything is optional; {} means defaults. */

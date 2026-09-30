@@ -150,6 +150,39 @@ const expectUntouchedArgs = (
 
 // ── cases ───────────────────────────────────────────────────────────────────
 
+// ── fuzzThreshold config pass-through (plan 003 P1.M2.T1.S3) ──────────────
+
+describe("fuzzThreshold config reaches the provider's query (plan 003 P1.M2.T1.S3)", () => {
+  it("config fuzzThreshold: 100 → exact-prefix-only mode end-to-end: prefix probes render, non-prefix fragments delegate", async () => {
+    // SCAN-SEQUENCING REALITY (see test/query.test.ts's S2 note): the
+    // rankMatches scan is prefix-only until P1.M2.T2.S2 generalizes it,
+    // so every provider-reachable candidate scores exactly 100 and ANY
+    // configured threshold ≤ 100 renders it (strict <). Provable
+    // end-to-end TODAY — and pinned here — is the mode's full-stack
+    // behavior: the clamped knob (config {fuzzThreshold: 100}) flows
+    // through provider.getSuggestions without breaking the prefix-only
+    // contract; observable tier-2/1 filtering activates with T2.S2.
+    const store = new CandidateStore();
+    put(store, "zendesk", 2);
+    const current = makeCurrent({
+      getSuggestions: vi.fn(async () => PATH_SENTINEL),
+    });
+    const provider = createHapaxProvider(store, cfg({ fuzzThreshold: 100 }), current);
+
+    // Exact-prefix probe at the knob's prefix-only setting: renders.
+    const hit = await suggest(provider, ["zen"], 0, 3);
+    expect(hit?.items.map((i) => i.value)).toEqual(["zendesk"]);
+    expect(hit?.prefix).toBe("zen");
+    expect(current.getSuggestions).not.toHaveBeenCalled();
+
+    // A fragment with no exact prefix in the store: zero candidates →
+    // delegate untouched (never-hijack discipline holds in this mode).
+    const miss = await suggest(provider, ["zsk"], 0, 3);
+    expect(miss).toBe(PATH_SENTINEL);
+    expect(current.getSuggestions).toHaveBeenCalledOnce();
+  });
+});
+
 describe("never-hijack acceptance (PRD §07)", () => {
   describe("case (a) — no fragment → untouched delegation", () => {
     it("empty line, col 0 → match state null → delegates with identical arguments, sentinel returned as-is", async () => {

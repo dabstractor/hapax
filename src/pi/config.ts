@@ -24,9 +24,10 @@
  * transitional mirror field was removed by P1.M3.T1.S2, which re-pointed
  * the last gate reads).
  *
- * This module imports only node builtins plus one pure constant
- * (REJECT_COMMON_THRESHOLD from ../core/score.js — the config default
- * and the baked band stay one number, never two) — zero pi imports —
+ * This module imports only node builtins plus pure constants
+ * (REJECT_COMMON_THRESHOLD from ../core/score.js and
+ * DEFAULT_FUZZ_THRESHOLD from ../core/query.js — each config default and
+ * its baked constant stay one number, never two) — zero pi imports —
  * so the loader is trivially unit-testable: notify, cwd, projectTrusted
  * and homeDir are all injected. src/pi/index.ts (P1.M3.T5) wires them
  * to ctx.ui.notify(...) and ctx.isProjectTrusted().
@@ -37,6 +38,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { REJECT_COMMON_THRESHOLD } from "../core/score.js";
+import { DEFAULT_FUZZ_THRESHOLD } from "../core/query.js";
 
 /**
  * Extension settings — deliberately tiny (PRD §08). Never extend this
@@ -62,6 +64,13 @@ export interface HapaxConfig {
    * one notch below the default, so setting 49 rejects it. Probe any
    * word's q with: node tools/calibrate-bands.mjs <word...> */
   rejectCommonness: number;
+  /** Minimum anchored-fuzzy match score (§04) for a candidate to enter a
+   *  result set (PRD §08 h2.52): 0–100; higher = stricter, 100 =
+   *  exact-prefix-only mode, 0 admits every match. Default: the baked
+   *  DEFAULT_FUZZ_THRESHOLD in src/core/query.ts (the rejectCommonness
+   *  pattern — one number, never two). Out-of-range values clamp
+   *  silently; wrong types repair with one warning. */
+  fuzzThreshold: number;
   /** Hesitation gate for the menu's first appearance (ms; 0–2000).
    *  **Default 0 (OFF, 2026-09 final):** the gate was introduced to
    *  stop constant popping, but that symptom was actually caused by the
@@ -89,6 +98,7 @@ export const DEFAULT_CONFIG: HapaxConfig = {
   threshold: 2,
   maxSuggestions: 8,
   rejectCommonness: REJECT_COMMON_THRESHOLD,
+  fuzzThreshold: DEFAULT_FUZZ_THRESHOLD,
   menuDelayMs: 0,
   enableChaining: true,
   debug: false,
@@ -243,6 +253,18 @@ function applyLayer(
     } else {
       notify(
         `hapax: invalid rejectCommonness in ${filePath}, using ${formatValue(current.rejectCommonness)}`,
+        "warning",
+      );
+    }
+  }
+
+  if ("fuzzThreshold" in raw) {
+    const v = raw.fuzzThreshold;
+    if (typeof v === "number") {
+      next.fuzzThreshold = clampNumber(v, 0, 100); // round-then-clamp, silent
+    } else {
+      notify(
+        `hapax: invalid fuzzThreshold in ${filePath}, using ${formatValue(current.fuzzThreshold)}`,
         "warning",
       );
     }

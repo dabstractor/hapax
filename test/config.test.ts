@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_FUZZ_THRESHOLD } from "../src/core/query.js";
 import {
   clampNumber,
   DEFAULT_CONFIG,
@@ -94,6 +95,7 @@ describe("defaults — no config files (PRD §08)", () => {
       threshold: 2,
       maxSuggestions: 8,
       rejectCommonness: DEFAULT_CONFIG.rejectCommonness,
+      fuzzThreshold: DEFAULT_CONFIG.fuzzThreshold,
       menuDelayMs: DEFAULT_CONFIG.menuDelayMs,
       enableChaining: true,
       debug: false,
@@ -132,6 +134,7 @@ describe("layer precedence — defaults → user → project, later wins", () =>
     threshold: 3,
     maxSuggestions: 20,
     rejectCommonness: 49,
+    fuzzThreshold: 90,
     menuDelayMs: 200,
     // Written under the deprecated alias KEY — still accepted, mapped
     // onto enableChaining with one deprecation notify (h2.46). The
@@ -145,6 +148,7 @@ describe("layer precedence — defaults → user → project, later wins", () =>
     threshold: 3,
     maxSuggestions: 20,
     rejectCommonness: 49,
+    fuzzThreshold: 90,
     menuDelayMs: 200,
     enableChaining: false,
     debug: true,
@@ -341,6 +345,63 @@ describe("threshold / maxSuggestions — clamp in range, repair on type", () => 
     writeUserConfig({ maxSuggestions: 99 });
     expect(loadConfig(loadOpts()).maxSuggestions).toBe(20);
     expect(h.warnings).toEqual([]);
+  });
+});
+
+describe("fuzzThreshold — clamp in range, repair on type (PRD §08 h2.52, plan 003 P1.M2.T1.S3)", () => {
+  it("the default is query.ts's DEFAULT_FUZZ_THRESHOLD — one number, never two", () => {
+    // The rejectCommonness invariant: config.ts auto-imports the baked
+    // constant; a literal default here (or in config.ts) would fork it.
+    expect(DEFAULT_CONFIG.fuzzThreshold).toBe(DEFAULT_FUZZ_THRESHOLD);
+    expect(DEFAULT_CONFIG.fuzzThreshold).toBe(60); // the §08 h2.52 schema default
+  });
+
+  it("override round-trips: { fuzzThreshold: 100 } → 100, silently", () => {
+    writeUserConfig({ fuzzThreshold: 100 });
+    expect(loadConfig(loadOpts()).fuzzThreshold).toBe(100);
+    expect(h.warnings).toEqual([]);
+  });
+
+  it("out-of-range numbers clamp silently: -5 → 0, 150 → 100", () => {
+    writeUserConfig({ fuzzThreshold: -5 });
+    expect(loadConfig(loadOpts()).fuzzThreshold).toBe(0);
+    h.warnings.length = 0;
+    writeUserConfig({ fuzzThreshold: 150 });
+    expect(loadConfig(loadOpts()).fuzzThreshold).toBe(100);
+    expect(h.warnings).toEqual([]); // clamping is normalization, never a repair
+  });
+
+  it("rounds THEN clamps: 100.7 → 100 (not 101), 60.4 → 60", () => {
+    writeUserConfig({ fuzzThreshold: 100.7 });
+    expect(loadConfig(loadOpts()).fuzzThreshold).toBe(100);
+    h.warnings.length = 0;
+    writeUserConfig({ fuzzThreshold: 60.4 });
+    expect(loadConfig(loadOpts()).fuzzThreshold).toBe(60);
+    expect(h.warnings).toEqual([]);
+  });
+
+  it.each(["80", null, true])(
+    "invalid fuzzThreshold %p repairs to the previous value with exactly one warning",
+    (bad) => {
+      writeUserConfig({ fuzzThreshold: bad as unknown });
+      const p = userPath();
+      expect(loadConfig(loadOpts()).fuzzThreshold).toBe(60); // repaired to the default
+      expect(h.warnings).toHaveLength(1);
+      expect(h.warnings[0]!.msg).toContain("fuzzThreshold");
+      expect(h.warnings[0]!.msg).toContain(p);
+      expect(h.warnings[0]!.msg).toContain("using 60");
+    },
+  );
+
+  it("repair target is the PREVIOUS layer's value, not the default: user 90, project \"bad\" → 90", () => {
+    writeUserConfig({ fuzzThreshold: 90 });
+    writeProjectConfig({ fuzzThreshold: "bad" });
+    const cfg = loadConfig(loadOpts());
+    expect(cfg.fuzzThreshold).toBe(90);
+    expect(h.warnings).toHaveLength(1);
+    expect(h.warnings[0]!.msg).toContain("fuzzThreshold");
+    expect(h.warnings[0]!.msg).toContain(projectPath());
+    expect(h.warnings[0]!.msg).toContain("using 90");
   });
 });
 
