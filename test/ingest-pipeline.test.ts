@@ -3,8 +3,9 @@
  * (h2.29), chunked core chain with an awaited yield between ≤chunkBytes
  * slices (h2.30, §02 h2.15), IngestStats accounting for /acwords (§08),
  * subword admission independence + parent-group clamp (§04), the M2
- * whole-token hook, and handler purity (h2.34 — void return, no message
- * mutation, no text retention).
+ * whole-token hook, handler purity (h2.34 — void return, no message
+ * mutation, no text retention), and the BUG-004 chunk-boundary token-carry
+ * regression battery (final describe block).
  *
  * Timer strategy: vi.useFakeTimers() for debounce timing; the inter-slice
  * yield is ALWAYS injected (an async counter) so fake timers never meet
@@ -781,5 +782,170 @@ describe("trailing-'_' literals store once — no duplicate candidates (BUG-002,
     const userMatches = rankMatches(h.store, "user_2");
     expect(userMatches.map((m) => m.key)).toEqual(["user_2_token_"]);
     expect(userMatches[0]!.display).toBe("USER_2_TOKEN_");
+  });
+});
+
+// The BUG-004 regression battery (P1.M2.T3.S2): a token straddling a chunk
+// boundary used to be shredded into two junk halves; the S1 fix (PRD §04
+// h3.3, r4-chunk-stitching.md) carries each non-final slice's trailing
+// token-class run — TOKEN_CHAR_RE = /[A-Za-z0-9._@:+/~=-], capped at
+// MAX_CARRY = 1024 — into the next slice to be tokenized exactly once, and
+// the final slice carries nothing. These tests pin every seam class:
+// in-token seams (real 64KB scale + small-chunk analogue), non-class seams
+// (space/comma/newline → no carry, no double count), junctions inside
+// hyphen/filename tokens (stitch to ONE token), a final slice ending
+// mid-token (admitted whole), and the seam×secret interplay. Every test
+// asserts the yield count FIRST — a seam that didn't happen must not pass
+// vacuously. All use direct processText (no debounce), like BUG-002 above.
+describe("chunk-boundary token carry (BUG-004, PRD h3.3)", () => {
+  it("REAL 64KB scale: a token at offset 65536-5 is admitted whole — no junk half, bigram chains", async () => {
+    const calls: string[][][] = [];
+    // The PRD repro shape: 'Zorpwibble quuxblat ' starts 5 bytes before the
+    // 65536 seam ("Zorpw" ends slice 1, "ibble" starts slice 2), followed by
+    // 70000 filler bytes. The LEFT filler is SPACES, deliberately: the token
+    // class includes letters/digits, so a class-char filler longer than
+    // MAX_CARRY would merge into the carried run and trip the documented
+    // >1KB degradation (r4 §risks 1) — spaces are not in TOKEN_CHAR_RE, so
+    // the seam carries exactly "Zorpw". The b-run tail exercises the capped
+    // carry: its 64-char shreds all die at the entropy gate (H = 0).
+    const text =
+      " ".repeat(65536 - 5) + "Zorpwibble quuxblat " + "b".repeat(70000);
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    await h.pipeline.processText(text, true);
+    expect(h.counts.yields).toBe(3); // 135551 bytes → 3 slices, 3 yields
+    // The straddled token is admitted WHOLE, once; no junk halves exist.
+    expect(h.store.get("zorpwibble")?.sessionCount).toBe(1);
+    expect(h.store.get("ibble")).toBeUndefined();
+    expect(h.store.get("zorpw")).toBeUndefined();
+    expect(h.store.get("quuxblat")).toBeDefined();
+    // The stitched line forms ONE adjacency run spanning the boundary.
+    expect(calls).toEqual([[["zorpwibble", "quuxblat"]]]);
+    h.store.recordBigramRuns(calls[0]!);
+    expect(h.store.topSuccessors("zorpwibble")).toEqual([
+      { next: "quuxblat", count: 1 },
+    ]);
+  });
+
+  it("small-chunk analogue: seam inside 'Zor|pwibble' stitches to one token (fast pin, independent of the 64KB constant)", async () => {
+    const calls: string[][][] = [];
+    // 27 chars at chunkBytes 8: slice 1 = "zzqv Zor" (seam carries "Zor"),
+    // slice 2 processes "Zorpwibble ", slice 3 = "quuxblat" (final, carries
+    // nothing). Same seam CLASS as the 64KB repro, different cut point than
+    // the S1 repro test above ("Zorpw|ibble" at chunkBytes 12).
+    const h = makePipeline({
+      chunkBytes: 8,
+      onAdmittedTokens: (runs) => calls.push(runs),
+    });
+    await h.pipeline.processText("zzqv Zorpwibble quuxblat", true);
+    expect(h.counts.yields).toBe(3); // the seams really happened
+    expect(h.store.get("zorpwibble")?.sessionCount).toBe(1);
+    expect(h.store.get("ibble")).toBeUndefined();
+    expect(h.store.get("pwibble")).toBeUndefined();
+    expect(calls).toEqual([[["zzqv", "zorpwibble", "quuxblat"]]]);
+    h.store.recordBigramRuns(calls[0]!);
+    expect(h.store.topSuccessors("zorpwibble")).toEqual([
+      { next: "quuxblat", count: 1 },
+    ]);
+  });
+
+  it("seam ON a space → no carry, token admitted exactly once with exact sessionCount (candidate side of :523)", async () => {
+    // 'granite marble' at chunkBytes 8: slice 1 ends at the space; a space
+    // is NOT in TOKEN_CHAR_RE, so the trailing run is empty — nothing is
+    // carried, and each token must be admitted exactly once (no double
+    // count, no junk halves). This pins the CANDIDATE side; :523 pins runs.
+    const h = makePipeline({ chunkBytes: 8 });
+    await h.pipeline.processText("granite marble", true);
+    expect(h.counts.yields).toBe(2); // the seam really happened
+    expect(h.store.get("granite")?.sessionCount).toBe(1);
+    expect(h.store.get("marble")?.sessionCount).toBe(1);
+    expect(h.store.get("granit")).toBeUndefined();
+    expect(h.store.get("e")).toBeUndefined();
+  });
+
+  it("seam ON a comma → no carry (',' is not a class char), no double count", async () => {
+    // 'ferrule, garnet' at chunkBytes 8: slice 1 ends right after the
+    // comma — not a class char, so nothing carries (candidate side of :541).
+    const h = makePipeline({ chunkBytes: 8 });
+    await h.pipeline.processText("ferrule, garnet", true);
+    expect(h.counts.yields).toBe(2);
+    expect(h.store.get("ferrule")?.sessionCount).toBe(1);
+    expect(h.store.get("garnet")?.sessionCount).toBe(1);
+  });
+
+  it("seam ON a newline → no carry, and the two lines stay separate runs", async () => {
+    // 'zionite\\nmarble' at chunkBytes 8: slice 1 ends with the newline —
+    // not a class char, so nothing carries; the newline still structurally
+    // splits the runs (candidate + run-side view of :554's rule).
+    const calls: string[][][] = [];
+    const h = makePipeline({
+      chunkBytes: 8,
+      onAdmittedTokens: (runs) => calls.push(runs),
+    });
+    await h.pipeline.processText("zionite\nmarble", true);
+    expect(h.counts.yields).toBe(2);
+    expect(h.store.get("zionite")?.sessionCount).toBe(1);
+    expect(h.store.get("marble")?.sessionCount).toBe(1);
+    expect(calls).toEqual([[["zionite"], ["marble"]]]);
+  });
+
+  it("seam inside a HYPHEN token: 'well-known-path' stitches to ONE whole token ('-' IS a class char)", async () => {
+    // 29 chars at chunkBytes 12: slice 1 = "skarn well-k" (trailing class
+    // run "well-k" carried), slice 2 processes "well-known-path ", slice 3
+    // = "zircon". The whole hyphenated token must exist once; the SEAM-cut
+    // fragments must not ("well"/"known" as deliberate sub-words would be
+    // fine — none appear here at all).
+    const h = makePipeline({ chunkBytes: 12 });
+    await h.pipeline.processText("skarn well-known-path zircon", true);
+    expect(h.counts.yields).toBe(3);
+    expect(h.store.get("well-known-path")?.sessionCount).toBe(1);
+    expect(h.store.get("well-k")).toBeUndefined();
+    expect(h.store.get("nown-path")).toBeUndefined();
+  });
+
+  it("seam inside a FILENAME token: 'src/core/segment.ts' stitches to ONE whole token ('.' and '/' are class chars)", async () => {
+    // 28 chars at chunkBytes 16: slice 1 = "read src/core/se" (trailing
+    // run "src/core/se" carried), final slice reassembles the whole path.
+    // Assert the path-shaped literal token once; no seam-cut fragments.
+    const h = makePipeline({ chunkBytes: 16 });
+    await h.pipeline.processText("read src/core/segment.ts now", true);
+    expect(h.counts.yields).toBe(2);
+    expect(h.store.get("src/core/segment.ts")?.sessionCount).toBe(1);
+    expect(h.store.get("src/cor")).toBeUndefined();
+    expect(h.store.get("egment")).toBeUndefined();
+  });
+
+  it("FINAL slice ending mid-token admits the token whole — no carry out of the last slice", async () => {
+    // 'zzqv obsidian granit' at chunkBytes 8: the text ENDS mid-token
+    // ("granit"). S1 contract: the final slice carries nothing (k = 0),
+    // restoring single-slice semantics — "granit" is admitted WHOLE, and
+    // never confused with the stub-dictionary word "granite".
+    const h = makePipeline({ chunkBytes: 8 });
+    await h.pipeline.processText("zzqv obsidian granit", true);
+    expect(h.counts.yields).toBe(3);
+    expect(h.store.get("granit")?.sessionCount).toBe(1);
+    expect(h.store.get("granite")).toBeUndefined();
+    expect(h.store.get("gra")).toBeUndefined();
+    expect(h.store.get("nit")).toBeUndefined();
+  });
+
+  it("LIMITATION PIN: a secret straddling ONE seam is reassembled by the carry and masked — no halves admitted", async () => {
+    // CURRENT behavior, pinned knowingly (r4 §risks 6): maskSecrets runs
+    // per-SEGMENT, but the token carry reassembles a single-seam secret
+    // into one segment of the next slice, so the xoxb prefix is seen and
+    // the whole secret is masked — pre-fix, the junk halves leaked.
+    // NOT a security guarantee: a secret spanning ≥2 full slices (>1MB-scale
+    // vs chunkBytes) still fragments mid-secret; hardening that (e.g.
+    // masking before slicing) would keep this green but should extend
+    // coverage in the same stroke.
+    // 'auth xoxb-…' (31 chars) at chunkBytes 16: the seam at 16 falls
+    // inside the secret; the carry moves "xoxb-aaaaZZ0" into slice 2.
+    const h = makePipeline({ chunkBytes: 16 });
+    await h.pipeline.processText("auth xoxb-aaaaZZ001928374655zqx", true);
+    expect(h.counts.yields).toBe(2);
+    expect(h.store.get("auth")?.sessionCount).toBe(1);
+    expect(h.store.get("xoxb")).toBeUndefined();
+    expect(h.store.get("aaaa")).toBeUndefined();
+    expect(h.store.get("zqx")).toBeUndefined();
+    expect(h.store.size).toBe(1); // the secret left NO residue
   });
 });
