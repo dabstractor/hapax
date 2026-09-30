@@ -67,6 +67,130 @@ export interface RankOptions {
   limit?: number;
 }
 
+/** Fuzzy match result (PRD §04 h2.28): `tier` is the strictness class
+ *  (3 = exact prefix, 2 = contiguous tail, 1 = scattered subsequence);
+ *  `score` is the admission score 0–100 — threshold-gated before ranking
+ *  (the discard lives in rankMatches, P1.M2.T1.S2), NEVER order-
+ *  determining: menu position stays content-derived
+ *  (compareRankedMatches). */
+export interface MatchResult {
+  tier: 1 | 2 | 3;
+  score: number;
+}
+
+/** Clamp a computed admission score into [0, 100] (defensive — the
+ *  formulas stay in range for sane inputs; the floor guard makes
+ *  pathological traces safe). */
+const clampScore = (n: number): number => (n < 0 ? 0 : n > 100 ? 100 : n);
+
+/**
+ * Anchored-fuzzy match of one fragment against one candidate key
+ * (PRD §04 h2.28, 2026-10 owner rule — this RETIRES plain prefix as the
+ * only match mode; wiring into rankMatches is P1.M2.T2.S2, so the
+ * function is exported-but-unconsumed until then).
+ *
+ * Rules:
+ *  - ANCHOR: the fragment's first char must equal the candidate's first
+ *    char (case-insensitive) — 'esk' NEVER matches 'zendesk'. This is
+ *    load-bearing for performance: only the store's first-char bucket is
+ *    fuzzy-scanned per query (T2.S2), keeping the < 1 ms keystroke
+ *    budget. Mid-identifier entry stays available through sub-word
+ *    candidates (§04), not anchor-less fuzzy.
+ *  - Tier 3 (score 100): exact prefix — 'roun' → 'rounding'; also a
+ *    1-char fragment whose anchor char matches (the provider's 1-char
+ *    auto-open contract).
+ *  - Tier 2: the fragment's tail (everything after the anchor) occurs
+ *    CONTIGUOUSLY anywhere from index 1 — 'zsk' → 'zendesk',
+ *    'zlock' → 'z_lwlock' (separators like '_' before the run are fine).
+ *  - Tier 1: scattered — the tail is a subsequence of c[1..] under a
+ *    GREEDY-LEFTMOST two-pointer scan (each tail char takes the earliest
+ *    possible position). 'hrp' → 'handleResponseProxy'. Exhausting the
+ *    candidate → null.
+ *
+ * Score formulas (§04 h2.28 verbatim, integer via Math.round, clamped
+ * to [0, 100]): tier 3 → 100; tier 2 → 85 − 40·(charsSkippedBeforeRun /
+ * len(c)) where skipped = runStart − 1 (the anchor consumes c[0]);
+ * tier 1 → 50 − 5·gapRuns − min(gapChars, 15). gapRuns/gapChars count
+ * ONLY the gap stretches BETWEEN consecutive matched tail chars — the
+ * stretch between the anchor and the FIRST tail char is not a gap (the
+ * anchor is not gapped). The constants are calibration starting points
+ * (§09 tuning protocol); the tier BOUNDARIES are semantics, never
+ * tunable. Score is admission-only: ≥ fuzzThreshold keeps a candidate
+ * in the result set, and the value never influences order.
+ *
+ * '/' and '.' are ordinary characters on both sides — rule-4d path keys
+ * ('src/core/query.ts') flow through the same first-char scan; 'sr'
+ * → tier 3, 'sr/co' → tier 1.
+ *
+ * Both arguments are lowercased INTERNALLY: the matcher is self-
+ * contained and case-insensitive by itself — callers (T3.S1's chain
+ * gate, tests) may pass raw casing.
+ *
+ * Pure and allocation-light: one O(len(c)) pass (plus one indexOf for
+ * the tier-2 shortcut — also a single scan), no regex, no allocation
+ * beyond the result object. Runs per candidate per keystroke inside
+ * the < 1 ms budget (PRD §02 h3.1).
+ *
+ * @param f the user's fragment, any casing; empty → null (the zero-char
+ *   menu listing is rankMatches' own special case, never the matcher's)
+ * @param c the candidate key (lowercase by store contract, but
+ *   lowercased here anyway — never assume the caller pre-lowercased)
+ * @returns the tier + admission score, or null when no anchored match
+ */
+export function matchFragment(f: string, c: string): MatchResult | null {
+  const fl = f.toLowerCase();
+  const cl = c.toLowerCase();
+  if (fl.length === 0 || fl.length > cl.length) return null;
+  if (fl[0] !== cl[0]) return null; // ANCHOR (§04 h2.28 rule 1)
+  if (fl.length === 1 || cl.startsWith(fl)) return { tier: 3, score: 100 };
+
+  const tail = fl.slice(1);
+
+  // Tier-2 shortcut: the tail as one contiguous run, anywhere from
+  // index 1 (a single indexOf = a single scan; agrees with the tier-1
+  // pass, whose zero-gap trace is exactly this case).
+  const runStart = cl.indexOf(tail, 1);
+  if (runStart !== -1) {
+    const skipped = runStart - 1; // c[0] is consumed by the anchor
+    return {
+      tier: 2,
+      score: clampScore(Math.round(85 - (40 * skipped) / cl.length)),
+    };
+  }
+
+  // Tier 1: greedy-leftmost anchored subsequence in ONE two-pointer
+  // pass over cl. Gap accounting per the spec: skipped chars BEFORE the
+  // first matched tail char are free (the anchor is not gapped); each
+  // skipped stretch BETWEEN consecutive tail matches is one gapRun, and
+  // its length accumulates into gapChars.
+  let i = 1; // next cl index to scan (c[0] consumed by the anchor)
+  let gapRuns = 0;
+  let gapChars = 0;
+  let inGap = false; // inside a between-matches gap stretch
+  let matched = false; // at least one tail char placed (lastMatch exists)
+  for (let t = 0; t < tail.length; t++) {
+    const ch = tail[t];
+    while (i < cl.length && cl[i] !== ch) {
+      if (matched) {
+        if (!inGap) {
+          inGap = true;
+          gapRuns++;
+        }
+        gapChars++;
+      }
+      i++;
+    }
+    if (i >= cl.length) return null; // tail char never found → no match
+    inGap = false; // cl[i] === ch: the gap (if any) ends here
+    matched = true;
+    i++;
+  }
+  return {
+    tier: 1,
+    score: clampScore(Math.round(50 - 5 * gapRuns - Math.min(gapChars, 15))),
+  };
+}
+
 /** Total order over the result list — CONTENT-DERIVED (2026-09
  * redesign): shorter key first, then byte-lex. Deliberately ignores
  * salience (see module doc: salience governs membership/eviction only,

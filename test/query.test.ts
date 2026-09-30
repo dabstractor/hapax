@@ -18,6 +18,12 @@
  * truth) as a brute-force oracle. The one-word invariant suite is the
  * deliberate exception: it feeds a REAL IngestPipeline, because its
  * claim is that no pipeline stage can ever produce a multi-word display.
+ *
+ * The matchFragment describe (plan 003 P1.M2.T1.S1, PRD §04 h2.28) is
+ * pure-function only — no store. Expected scores are computed by the
+ * §04 formulas with hand-traced gapRuns/gapChars; where the PRD prose's
+ * ≈-approximations disagree with its own formulas, the FORMULA wins
+ * (noted inline at the drifted cases).
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -30,6 +36,7 @@ import { compareCandidates, salience } from "../src/core/score.js";
 import {
   compareRankedMatches,
   DEFAULT_LIMIT,
+  matchFragment,
   rankMatches,
 } from "../src/core/query.js";
 import { IngestPipeline } from "../src/pi/ingest.js";
@@ -491,5 +498,117 @@ describe("path candidates under the prefix matcher (rule 4d, pre-fuzzy baseline)
     const s = pathStore();
     put(s, "coreutils", 1, 2); // a genuine word sharing the component prefix
     expect(rankMatches(s, "core").map((m) => m.key)).toEqual(["coreutils"]);
+  });
+});
+
+describe("matchFragment — anchored fuzzy (PRD §04 h2.28, plan 003)", () => {
+  it("ANCHOR: a fragment not starting with the candidate's first char never matches", () => {
+    // 'esk' inside 'zendesk' is exactly what plain-substring matching
+    // would wrongly admit; mid-identifier entry is sub-word candidates'
+    // job, never anchor-less fuzzy.
+    expect(matchFragment("esk", "zendesk")).toBeNull();
+    expect(matchFragment("e", "zendesk")).toBeNull(); // 1-char anchor miss too
+  });
+
+  it("tier 3 — exact prefix ('roun' → 'rounding'), always score 100", () => {
+    expect(matchFragment("roun", "rounding")).toEqual({ tier: 3, score: 100 });
+    expect(matchFragment("zendesk", "zendesk")).toEqual({ tier: 3, score: 100 }); // f === c
+  });
+
+  it("tier 2 — contiguous tail ('zsk' → 'zendesk'); score = 85 − 40·skipped/len", () => {
+    // 'sk' first occurs at index 5 → skipped = 5 − 1 = 4 (c[0] is the
+    // anchor): 85 − 40·4/7 = 62.14 → 62. (The PRD prose's "≈62" matches
+    // the formula; the PRP gotcha's "≈68" miscounted the skipped run —
+    // formula wins either way.)
+    expect(matchFragment("zsk", "zendesk")).toEqual({ tier: 2, score: 62 });
+  });
+
+  it("tier 2 — contiguous past separators ('zlock' → 'z_lwlock') = 70", () => {
+    // 'lock' first occurs at index 4 → skipped 3: 85 − 40·3/8 = 70 exact.
+    expect(matchFragment("zlock", "z_lwlock")).toEqual({ tier: 2, score: 70 });
+  });
+
+  it("tier 2 — 'hr' → 'handleResponse' = 71 by the formula (drift documented)", () => {
+    // 'r' first occurs at index 6 → skipped 5; len('handleresponse') = 14:
+    // 85 − 40·5/14 = 70.71 → 71. The PRD prose's "≈ 69" AND the PRP
+    // gotcha's "exactly 85 (contiguous from c[1], skip 0)" both miscount
+    // — 'handleResponse' is 'ha…', so the run is NOT at c[1]. The formula
+    // is the spec.
+    expect(matchFragment("hr", "handleResponse")).toEqual({ tier: 2, score: 71 });
+  });
+
+  it("tier 1 — scattered subsequence ('hrp' → 'handleResponseProxy'), greedy leftmost", () => {
+    // Greedy-leftmost trace over 'andleresponseproxy' (after the h
+    // anchor): r@6 — the anchor→first-tail stretch is NOT a gap (the
+    // anchor is not gapped) — then p@9: one gap run of 2 chars ('es').
+    // gapRuns=1, gapChars=2 → 50 − 5 − 2 = 43. (The PRP's "r@1, p@7, one
+    // gap" trace miscounted the string; the landed trace is this one.)
+    expect(matchFragment("hrp", "handleResponseProxy")).toEqual({
+      tier: 1,
+      score: 43,
+    });
+  });
+
+  it("tier 1 — leading stretch never counts as a gap ('zds' → 'zendesk') = 44", () => {
+    // d@3 (skips 'en' BEFORE the first tail char — free), s@5 (one gap
+    // run of 1 char 'e'). gapRuns=1, gapChars=1 → 50 − 5 − 1 = 44.
+    expect(matchFragment("zds", "zendesk")).toEqual({ tier: 1, score: 44 });
+  });
+
+  it("tier 1 — gapChars saturates at 15 and the score stays within [0, 100]", () => {
+    // 'a' matches at 1 (no gap), 'y' at 18: one gap run of 16 chars →
+    // min(16, 15) = 15 → 50 − 5 − 15 = 30. Saturation, not the raw 16.
+    const c = "ha" + "x".repeat(16) + "y";
+    const r = matchFragment("hay", c);
+    expect(r).toEqual({ tier: 1, score: 30 });
+    expect(r!.score).toBeGreaterThanOrEqual(0);
+    expect(r!.score).toBeLessThanOrEqual(100);
+  });
+
+  it("tier 1 — '/ and .' are ordinary characters (path keys, rule 4d)", () => {
+    expect(matchFragment("sr", "src/core/query.ts")).toEqual({ tier: 3, score: 100 });
+    // 'r/co' is not contiguous in 'rc/core/query.ts' (cl[1..] = 'rc/…'):
+    // greedy trace r@1 (free), '/'@3 (gap 1: 'c'), c@4, o@5 →
+    // gapRuns=1, gapChars=1 → 50 − 5 − 1 = 44.
+    expect(matchFragment("sr/co", "src/core/query.ts")).toEqual({
+      tier: 1,
+      score: 44,
+    });
+  });
+
+  it("case-insensitive on BOTH sides, inside the matcher", () => {
+    expect(matchFragment("ZSK", "zendesk")).toEqual({ tier: 2, score: 62 });
+    expect(matchFragment("zsk", "ZENDESK")).toEqual({ tier: 2, score: 62 });
+    expect(matchFragment("ROUN", "Rounding")).toEqual({ tier: 3, score: 100 });
+  });
+
+  it("boundaries: empty fragment → null; 1-char anchor hit → {3,100}; too-long → null", () => {
+    expect(matchFragment("", "zendesk")).toBeNull(); // zero-fragment listing is rankMatches' case
+    expect(matchFragment("z", "zendesk")).toEqual({ tier: 3, score: 100 });
+    expect(matchFragment("zendesklonger", "zendesk")).toBeNull();
+  });
+
+  it("null when the tail cannot be consumed at all", () => {
+    // 'zendesk' contains no 'p': scattered scan exhausts → null. (The
+    // PRP's "'zp' vs 'zendesk' → 41" worked example used a candidate
+    // that contains no 'p' at all — correct answer is null.)
+    expect(matchFragment("zp", "zendesk")).toBeNull();
+    // Partial consumption is not enough: 'zz' needs TWO z's.
+    expect(matchFragment("zz", "zendesk")).toBeNull();
+  });
+
+  it("tier scores respect their bands: tier 3 = 100, tier 1 ≤ 50", () => {
+    expect(matchFragment("z", "zendesk")!.score).toBe(100);
+    for (const [f, c] of [
+      ["hrp", "handleResponseProxy"],
+      ["zds", "zendesk"],
+      ["sr/co", "src/core/query.ts"],
+      ["hay", "ha" + "x".repeat(16) + "y"],
+    ] as const) {
+      const r = matchFragment(f, c)!;
+      expect(r.tier).toBe(1);
+      expect(r.score).toBeLessThanOrEqual(50);
+      expect(r.score).toBeGreaterThanOrEqual(0);
+    }
   });
 });

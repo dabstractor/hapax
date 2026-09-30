@@ -173,7 +173,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "matchFragment: first-char anchor + greedy subsequence + tiers 3/2/1",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S1"
