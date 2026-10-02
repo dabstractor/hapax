@@ -504,74 +504,78 @@ describe("widget key handling — navigation (spec §07 h3.9: arrows move the hi
     expect(h.innerCalls).toEqual([]);
   });
 
-  it("highlight moves within the RENDERED list: at width 16 only 2 of 3 items render → →/↓ clamps at 1", () => {
+  it("highlight moves within the RENDERED list: at width 16 only 2 of 3 render → the carousel wraps within the rendered 2 (v2)", () => {
     const h = makeKeyHarness();
     h.show(["Zendesk", "zephyr", "zlock"]); // joined: 16 | 24 cols
     expect((h.editor.render as (w: number) => string[])(16)).toEqual([
       "hello",
       "Zendesk | zephyr",
     ]);
-    h.press(RIGHT);
-    expect(h.state.highlightIndex).toBe(1); // last RENDERED word
-    h.press(RIGHT);
-    expect(h.state.highlightIndex).toBe(1); // clamped to the rendered end
-    h.press(DOWN);
-    expect(h.state.highlightIndex).toBe(1); // down≡right at the boundary
-    h.press(LEFT);
+    h.press(RIGHT); // enters the list: 0 → 1 (rendered count 2)
+    expect(h.state.highlightIndex).toBe(1);
+    h.press(RIGHT); // interacted edge at the rendered end → WRAPS to 0
+    expect(h.state.highlightIndex).toBe(0);
+    h.press(DOWN); // 0 → 1
+    expect(h.state.highlightIndex).toBe(1);
+    h.press(LEFT); // 1 → 0 (interior, either generation)
     expect(h.state.highlightIndex).toBe(0);
     expect(h.state.hidden).toBe(false);
   });
 });
 
-describe("widget key handling — boundary-Esc (spec §07 h3.9: ↑/← on the FIRST word dismisses, consumed)", () => {
-  it("↑ and ← on the first word: press CONSUMED (no inner call — caret unmoved), line hidden, suppressed", () => {
+describe("widget key handling — boundary pass-through (spec §07 h3.9 v2: un-entered ↑/← on the FIRST word dismisses AND forwards)", () => {
+  it("↑ and ← on the first word: line hidden + suppressed AND the press FORWARDS (one-press plain-pi parity — the caret moves)", () => {
     for (const key of [UP, LEFT]) {
       const h = makeKeyHarness();
       h.show(["alpha", "beta", "gamma"]);
       h.press(key);
-      expect(h.innerCalls, `key ${JSON.stringify(key)}`).toEqual([]);
       expect(h.state.hidden, `key ${JSON.stringify(key)}`).toBe(true);
       expect(h.state.highlightIndex, `key ${JSON.stringify(key)}`).toBe(0);
       expect(
         h.machine.getState().suppressUntilWordStart,
         `key ${JSON.stringify(key)}`,
-      ).toBe(true); // explicit dismissal → suppress until the next word
+      ).toBe(true); // a pass-through press IS an explicit dismissal
+      expect(h.innerCalls, `key ${JSON.stringify(key)}`).toEqual([key]); // forwarded verbatim — exactly once (guard seam)
     }
   });
 
-  it("a single-item list: ↑/← is boundary-Esc (first === last, left branch wins), →/↓ is clamp", () => {
+  it("a single-item list: ↑/← pass-through-dismiss; →/↓ forwards (nothing to enter, no consumption, no dismissal)", () => {
     const up = makeKeyHarness();
     up.show(["solo"]);
     up.press(UP);
     expect(up.state.hidden).toBe(true);
     expect(up.machine.getState().suppressUntilWordStart).toBe(true);
+    expect(up.innerCalls).toEqual([UP]);
 
     const down = makeKeyHarness();
     down.show(["solo"]);
     down.press(DOWN);
-    expect(down.state.hidden).toBe(false); // clamp — NOT a dismissal
+    expect(down.state.hidden).toBe(false); // forward — NOT a dismissal
     expect(down.state.highlightIndex).toBe(0);
     expect(down.machine.getState().suppressUntilWordStart).toBe(false);
+    expect(down.innerCalls).toEqual([DOWN]); // forwarded verbatim
   });
 });
 
-describe("widget key handling — clamp (spec §07 h3.9: →/↓ on the LAST word consumes, no movement)", () => {
-  it("→ and ↓ on the last word: consumed, highlight unchanged, no dismissal, no suppression", () => {
-    for (const key of [RIGHT, DOWN]) {
-      const h = makeKeyHarness();
-      h.show(["alpha", "beta", "gamma"]);
-      h.press(RIGHT);
-      h.press(RIGHT); // → index 2 (last)
-      h.innerCalls.length = 0;
-      h.press(key);
-      expect(h.state.highlightIndex, `key ${JSON.stringify(key)}`).toBe(2);
-      expect(h.state.hidden, `key ${JSON.stringify(key)}`).toBe(false);
-      expect(
-        h.machine.getState().suppressUntilWordStart,
-        `key ${JSON.stringify(key)}`,
-      ).toBe(false);
-      expect(h.innerCalls, `key ${JSON.stringify(key)}`).toEqual([]);
-    }
+describe("widget key handling — carousel wrap (spec §07 h3.9 v2: interacted edges wrap end-to-end)", () => {
+  it("→/↓ on the last word (after navigation) wraps to the FIRST; ↑/← on the first (after navigation) wraps to the LAST", () => {
+    const h = makeKeyHarness();
+    h.show(["alpha", "beta", "gamma"]);
+    h.press(RIGHT); // 0 → 1 (enters the generation)
+    h.press(RIGHT); // 1 → 2 (last)
+    h.innerCalls.length = 0;
+    h.press(RIGHT); // interacted edge → wrap to 0
+    expect(h.state.highlightIndex, "→ wrap to first").toBe(0);
+    h.press(DOWN); // 0 → 1
+    expect(h.state.highlightIndex).toBe(1);
+    h.press(LEFT);
+    h.press(LEFT); // 1 → 0 → wrap to 2 (last)
+    expect(h.state.highlightIndex, "↑ wrap to last").toBe(2);
+    expect(h.state.hidden).toBe(false); // captured cluster — no dismissal
+    expect(
+      h.machine.getState().suppressUntilWordStart,
+    ).toBe(false);
+    expect(h.innerCalls).toEqual([]); // interacted arrows stay consumed
   });
 });
 
@@ -630,11 +634,12 @@ describe("widget key handling — input clock (exactly one tick per keypress)", 
   it("consumed keys tick via the widget layer (the guard's seam only fires on delegation) and never tick the machine", () => {
     const h = makeKeyHarness();
     h.show(["alpha", "beta", "gamma"]);
-    h.press(RIGHT); // consumed → widget layer ticks
+    h.press(RIGHT); // consumed (enters the generation) → widget layer ticks
     expect(h.onKeystroke).toHaveBeenCalledTimes(1);
     expect(h.state.hidden).toBe(false); // machine NOT ticked: an empty-store
     // tick would have closed the line — navigation must keep it open.
-    h.press(DOWN); // clamp at last — still a consumed input event
+    h.press(DOWN); // interacted navigate to last — still a consumed input event
+    expect(h.state.highlightIndex).toBe(2);
     expect(h.onKeystroke).toHaveBeenCalledTimes(2);
     expect(h.state.hidden).toBe(false);
     h.press(ESC); // consumed dismissal
@@ -966,60 +971,115 @@ describe("widget key handling — Enter dismiss-then-forward (spec §07 h2.48, S
 });
 
 describe("widget key handling — never-mutate pin (v1 recursion-crash regression)", () => {
-  it("zero set-trap hits across a full scenario: navigate, clamp, forward, re-show, Esc, boundary-Esc, render", () => {
+  it("zero set-trap hits across a full scenario: navigate, wrap, forward, re-show, Esc, boundary pass-through, render", () => {
     const h = makeKeyHarness();
     h.show(["alpha", "beta", "gamma"]);
     h.press(RIGHT);
     h.press(LEFT);
-    h.press(DOWN); // clamp
+    h.press(DOWN); // interacted navigate
     h.press("x"); // forward (the machine closes the line)
-    h.show(["Zendesk", "zephyr"]); // re-show via the seam
+    h.show(["Zendesk", "zephyr"]); // re-show via the seam (fresh generation)
     h.press(ESC); // dismiss + suppress
     h.show(["alpha"]);
-    h.press(UP); // boundary-Esc
+    h.press(UP); // boundary pass-through: dismiss + suppress + FORWARD
     (h.editor.render as (w: number) => string[])(40);
     expect(h.setHits()).toBe(0); // the inner instance was NEVER written to
     expect(h.innerCalls.length).toBeGreaterThan(0); // and forwarding lived
   });
 });
 
-describe("decideWidgetKey — pure decision table (no editor access)", () => {
+describe("WidgetState.interacted — generation flag (2026-10 model v2)", () => {
+  it("set() resets interacted to false (a genuinely-new result set starts a fresh generation); hide() resets it defensively", () => {
+    const h = makeKeyHarness();
+    h.show(["alpha", "beta", "gamma"]);
+    expect(h.state.interacted).toBe(false);
+    h.press(RIGHT); // a landing navigate interacts the generation
+    expect(h.state.interacted).toBe(true);
+    h.show(["Zendesk", "zephyr"]); // set() IS the generation boundary
+    expect(h.state.interacted).toBe(false);
+    h.press(DOWN);
+    expect(h.state.interacted).toBe(true);
+    h.state.hide();
+    expect(h.state.interacted).toBe(false);
+  });
+
+  it("pass-through and Escape never set the flag (only a landing navigate does)", () => {
+    const h = makeKeyHarness();
+    h.show(["alpha", "beta", "gamma"]);
+    h.press(UP); // boundary pass-through at index 0
+    expect(h.state.interacted).toBe(false);
+    h.show(["alpha", "beta", "gamma"]);
+    h.press(ESC);
+    expect(h.state.interacted).toBe(false);
+  });
+});
+
+describe("decideWidgetKey — pure decision table v2 (2026-10 arrow model, no editor access)", () => {
   it("hidden → forward; visible-but-empty → forward (arrows, Escape, Tab, Enter included)", () => {
     for (const key of [UP, DOWN, LEFT, RIGHT, ESC, "a", "\t", "\r"]) {
-      expect(decideWidgetKey(key, false, 3, 0), `hidden ${JSON.stringify(key)}`).toEqual({
+      expect(decideWidgetKey(key, false, 3, 0, false), `hidden ${JSON.stringify(key)}`).toEqual({
         action: "forward",
       });
-      expect(decideWidgetKey(key, true, 0, 0), `empty ${JSON.stringify(key)}`).toEqual({
+      expect(decideWidgetKey(key, true, 0, 0, false), `empty ${JSON.stringify(key)}`).toEqual({
         action: "forward",
       });
     }
   });
 
-  it("up/left walk left (boundary-esc at index 0); down/right walk right (clamp at count-1)", () => {
-    expect(decideWidgetKey(LEFT, true, 3, 2)).toEqual({ action: "navigate", delta: -1 });
-    expect(decideWidgetKey(UP, true, 3, 2)).toEqual({ action: "navigate", delta: -1 });
-    expect(decideWidgetKey(LEFT, true, 3, 1)).toEqual({ action: "navigate", delta: -1 });
-    expect(decideWidgetKey(UP, true, 3, 0)).toEqual({ action: "boundary-esc" });
-    expect(decideWidgetKey(LEFT, true, 3, 0)).toEqual({ action: "boundary-esc" });
-    expect(decideWidgetKey(RIGHT, true, 3, 0)).toEqual({ action: "navigate", delta: 1 });
-    expect(decideWidgetKey(DOWN, true, 3, 1)).toEqual({ action: "navigate", delta: 1 });
-    expect(decideWidgetKey(RIGHT, true, 3, 2)).toEqual({ action: "clamp" });
-    expect(decideWidgetKey(DOWN, true, 3, 2)).toEqual({ action: "clamp" });
+  it("row 2 — un-entered ↑/← at the FIRST word → boundary-pass-through (dismiss + suppress + FORWARD)", () => {
+    expect(decideWidgetKey(UP, true, 3, 0, false)).toEqual({ action: "boundary-pass-through" });
+    expect(decideWidgetKey(LEFT, true, 3, 0, false)).toEqual({ action: "boundary-pass-through" });
   });
 
-  it("Escape → escape from any index", () => {
+  it("row 3 — un-entered →/↓ on a ONE-word line → forward (no arrow is ever consumed pre-entry)", () => {
+    expect(decideWidgetKey(DOWN, true, 1, 0, false)).toEqual({ action: "forward" });
+    expect(decideWidgetKey(RIGHT, true, 1, 0, false)).toEqual({ action: "forward" });
+  });
+
+  it("row 4 — un-entered →/↓ on a multi-word line ENTERS the list (navigate +1)", () => {
+    expect(decideWidgetKey(DOWN, true, 3, 0, false)).toEqual({ action: "navigate", delta: 1 });
+    expect(decideWidgetKey(RIGHT, true, 3, 0, false)).toEqual({ action: "navigate", delta: 1 });
+  });
+
+  it("rows 5/6 — interacted edges WRAP end-to-end (carousel; the clamp is retired as unreachable)", () => {
+    // Wrap = plain ±1: the wiring applies it MODULARLY, so −1 from the
+    // first lands at the last and +1 from the last lands at the first
+    // (the design sketch's ±(count−1) deltas land at the wrong index).
+    expect(decideWidgetKey(UP, true, 3, 0, true)).toEqual({ action: "navigate", delta: -1 }); // modular → index 2 (last)
+    expect(decideWidgetKey(LEFT, true, 3, 0, true)).toEqual({ action: "navigate", delta: -1 });
+    expect(decideWidgetKey(RIGHT, true, 3, 2, true)).toEqual({ action: "navigate", delta: 1 }); // modular → index 0 (first)
+    expect(decideWidgetKey(DOWN, true, 3, 2, true)).toEqual({ action: "navigate", delta: 1 });
+  });
+
+  it("row 7 — interior arrows navigate ±1 in either generation", () => {
+    expect(decideWidgetKey(LEFT, true, 3, 2, true)).toEqual({ action: "navigate", delta: -1 });
+    expect(decideWidgetKey(UP, true, 3, 2, true)).toEqual({ action: "navigate", delta: -1 });
+    expect(decideWidgetKey(RIGHT, true, 3, 0, true)).toEqual({ action: "navigate", delta: 1 });
+    expect(decideWidgetKey(DOWN, true, 3, 1, true)).toEqual({ action: "navigate", delta: 1 });
+  });
+
+  it("row 8 — un-entered arrow with a stale/high index DEGRADES to navigate, never forward", () => {
+    expect(decideWidgetKey(UP, true, 3, 2, false)).toEqual({ action: "navigate", delta: -1 });
+    expect(decideWidgetKey(LEFT, true, 3, 2, false)).toEqual({ action: "navigate", delta: -1 });
+    expect(decideWidgetKey(DOWN, true, 3, 99, false)).toEqual({ action: "navigate", delta: 1 });
+  });
+
+  it("Escape → escape from any index, either generation", () => {
     for (const i of [0, 1, 5]) {
-      expect(decideWidgetKey(ESC, true, 3, i)).toEqual({ action: "escape" });
+      for (const entered of [false, true]) {
+        expect(decideWidgetKey(ESC, true, 3, i, entered)).toEqual({ action: "escape" });
+      }
     }
   });
 
-  it("Tab → tab-insert and Enter → enter-submit while visible+non-empty (S2)", () => {
-    expect(decideWidgetKey("\t", true, 3, 1)).toEqual({ action: "tab-insert" });
+  it("Tab → tab-insert and Enter → enter-submit while visible+non-empty (either generation)", () => {
+    expect(decideWidgetKey("\t", true, 3, 1, false)).toEqual({ action: "tab-insert" });
+    expect(decideWidgetKey("\t", true, 3, 1, true)).toEqual({ action: "tab-insert" });
     // No keybindings → isSubmitKey's raw "\r" fallback decides.
-    expect(decideWidgetKey("\r", true, 3, 1)).toEqual({ action: "enter-submit" });
+    expect(decideWidgetKey("\r", true, 3, 1, false)).toEqual({ action: "enter-submit" });
     // With a keybindings stub: same decision via the shared submit test.
     expect(
-      decideWidgetKey("\r", true, 3, 1, {
+      decideWidgetKey("\r", true, 3, 1, true, {
         matches: (data, action) => action === "tui.input.submit" && data === "\r",
       }),
     ).toEqual({ action: "enter-submit" });
@@ -1030,30 +1090,32 @@ describe("decideWidgetKey — pure decision table (no editor access)", () => {
       matches: (data: string, action: string) =>
         action === "tui.input.submit" && data === "\x0a",
     };
-    expect(decideWidgetKey("\x0a", true, 3, 1, ctrlJ)).toEqual({ action: "enter-submit" });
-    expect(decideWidgetKey("\r", true, 3, 1, ctrlJ)).toEqual({ action: "forward" });
+    expect(decideWidgetKey("\x0a", true, 3, 1, false, ctrlJ)).toEqual({ action: "enter-submit" });
+    expect(decideWidgetKey("\r", true, 3, 1, false, ctrlJ)).toEqual({ action: "forward" });
   });
 
   it("everything else forwards — text, space, backspace, Ctrl-chars, other ANSI sequences", () => {
     for (const key of ["a", " ", "\x7f", "\x03", "\x1b[H", "\x1b[5~"]) {
-      expect(decideWidgetKey(key, true, 3, 1), `key ${JSON.stringify(key)}`).toEqual({
+      expect(decideWidgetKey(key, true, 3, 1, false), `key ${JSON.stringify(key)}`).toEqual({
         action: "forward",
       });
     }
   });
 
-  it("a stale highlightIndex clamps into [0, count-1] BEFORE the boundary checks", () => {
-    expect(decideWidgetKey(DOWN, true, 3, 99)).toEqual({ action: "clamp" }); // 99 → 2 = last
-    expect(decideWidgetKey(UP, true, 3, 99)).toEqual({ action: "navigate", delta: -1 });
-    expect(decideWidgetKey(UP, true, 3, -5)).toEqual({ action: "boundary-esc" }); // -5 → 0 = first
-    expect(decideWidgetKey(DOWN, true, 3, -5)).toEqual({ action: "navigate", delta: 1 });
+  it("single-item list: ↑/← boundary-pass-through, →/↓ forward (never navigate-to-self)", () => {
+    expect(decideWidgetKey(UP, true, 1, 0, false)).toEqual({ action: "boundary-pass-through" });
+    expect(decideWidgetKey(LEFT, true, 1, 0, false)).toEqual({ action: "boundary-pass-through" });
+    expect(decideWidgetKey(DOWN, true, 1, 0, false)).toEqual({ action: "forward" });
+    expect(decideWidgetKey(RIGHT, true, 1, 0, false)).toEqual({ action: "forward" });
   });
 
-  it("single-item list: up/left boundary-esc, down/right clamp", () => {
-    expect(decideWidgetKey(UP, true, 1, 0)).toEqual({ action: "boundary-esc" });
-    expect(decideWidgetKey(LEFT, true, 1, 0)).toEqual({ action: "boundary-esc" });
-    expect(decideWidgetKey(DOWN, true, 1, 0)).toEqual({ action: "clamp" });
-    expect(decideWidgetKey(RIGHT, true, 1, 0)).toEqual({ action: "clamp" });
+  it("success-criteria cells — the spec §07 h3.9 exemplars verbatim", () => {
+    expect(decideWidgetKey(LEFT, true, 3, 0, false)).toEqual({ action: "boundary-pass-through" });
+    expect(decideWidgetKey(DOWN, true, 1, 0, false)).toEqual({ action: "forward" });
+    expect(decideWidgetKey(DOWN, true, 3, 0, false)).toEqual({ action: "navigate", delta: 1 });
+    expect(decideWidgetKey(UP, true, 3, 0, true)).toEqual({ action: "navigate", delta: -1 }); // wrap → index 2 (last, modular)
+    expect(decideWidgetKey(RIGHT, true, 3, 2, true)).toEqual({ action: "navigate", delta: 1 }); // wrap → index 0 (first, modular)
+    expect(decideWidgetKey(UP, true, 3, 2, false)).toEqual({ action: "navigate", delta: -1 }); // row 8 — NOT forward
   });
 });
 

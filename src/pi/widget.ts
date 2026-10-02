@@ -53,17 +53,24 @@
  *     decides show/hide/suppress per input tick; the factory glues its
  *     VisibilityState into the S2 state holder (set/hide below) and is
  *     ticked through the enter-submit guard's onKeystroke seam.
- *   - P1.M3.T3.S1  LANDED: the widget key layer (spec §07 h3.9). While
- *     the line is visible the composed handleInput decides BEFORE the
- *     enter-submit guard: ←/→/↑/↓ navigate the highlight (up≡left,
- *     down≡right); ↑/← on the FIRST word is boundary-Esc (line hides,
- *     press CONSUMED — caret unmoved — and suppressed via
- *     machine.onDismissed(true)); →/↓ on the LAST word clamps (consumed,
- *     no movement, no dismissal); Escape dismisses + suppresses. Every
- *     other key — Tab and Enter included until S2 — forwards verbatim
- *     to the enter-submit proxy; while hidden or empty NOTHING is
- *     captured (invariant 1 amendment). Suppression is ONLY ever set
- *     through the machine's onDismissed seam — never directly.
+ *   - P1.M3.T3.S1  LANDED: the widget key layer (spec §07 h3.9, 2026-10
+ *     model v2). While the line is visible the composed handleInput
+ *     decides BEFORE the enter-submit guard: →/↓ ENTER the list
+ *     (navigate +1) — unless the line holds a single word, in which
+ *     case the press forwards verbatim (no arrow is ever consumed
+ *     pre-entry); un-entered ↑/← on the FIRST word PASS THROUGH (line
+ *     hides, suppressed via machine.onDismissed(true), press FORWARDED
+ *     — the caret moves on that same keypress; one-press plain-pi
+ *     parity). After the first highlight-moving arrow the generation is
+ *     `interacted` (WidgetState.interacted; reset by set() — a
+ *     genuinely-new result set — and defensively by hide()) and the
+ *     arrow cluster is captured with CAROUSEL WRAP at both edges
+ *     (applied modularly in the wiring; the old clamp is retired as
+ *     unreachable). Escape dismisses + suppresses. Every other key —
+ *     Tab and Enter included — forwards verbatim to the enter-submit
+ *     proxy; while hidden or empty NOTHING is captured (invariant 1
+ *     amendment). Suppression is ONLY ever set through the machine's
+ *     onDismissed seam — never directly.
  *   - P1.M3.T3.S2  LANDED: replaces the Tab/Enter forward branches —
  *     Tab (visible, non-empty) synchronously inserts the highlighted
  *     word (insertHighlighted); Enter dismisses the line then forwards
@@ -272,17 +279,31 @@ export function renderWidgetLine(
 
 /** Minimal seam over the per-editor widget state. `set` replaces the
  *  result set and RESETS highlightIndex to 0 (spec h3.8: "resets to
- *  [leftmost] on every result-set change"); `hide` renders nothing
- *  (dismiss/suppress/zero — invariant 3). Highlight MOVEMENT (arrows)
- *  is T3's API — a plain mutable `highlightIndex` field suffices. */
+ *  [leftmost] on every result-set change") and `interacted` to false
+ *  (2026-10 model v2: a genuinely-new result set starts a fresh
+ *  generation — the signature compare upstream means set() fires
+ *  exactly at set changes, so set() IS the generation boundary);
+ *  `hide` renders nothing (dismiss/suppress/zero — invariant 3) and
+ *  defensively resets `interacted` too. Highlight MOVEMENT (arrows) is
+ *  T3's API — a plain mutable `highlightIndex` field suffices. */
 export interface WidgetState {
-  /** Replace the result set (resets highlightIndex to 0, clears the
-   *  hidden flag — the visibility machine owns the show/hide policy). */
+  /** Replace the result set (resets highlightIndex to 0 and interacted
+   *  to false, clears the hidden flag — the visibility machine owns the
+   *  show/hide policy). */
   set(items: readonly { display: string }[]): void;
   /** Hide the line (dismiss/suppress/zero) — renders nothing. */
   hide(): void;
   /** 0-based highlight index within the CURRENT rendered list. */
   highlightIndex: number;
+  /** True once an arrow has MOVED the highlight in the CURRENT
+   *  generation (2026-10 model v2): un-entered boundary ↑/← pass
+   *  through (one-press plain-pi parity) while interacted edges wrap
+   *  end-to-end (carousel). Reset by set() — a genuinely-new result set
+   *  — and defensively by hide(). A pass-through press, Tab, Enter, and
+   *  Escape NEVER set it; a one-word line therefore never becomes
+   *  interacted (its →/↓ forwards pre-entry). The WIRING sets it when a
+   *  navigate decision lands — the decision itself stays pure. */
+  interacted: boolean;
 }
 
 /** Internal view: the proxy also needs the items and the hidden flag. */
@@ -299,14 +320,17 @@ function createWidgetState(): WidgetStateInternal {
     items: [],
     hidden: false,
     highlightIndex: 0,
+    interacted: false,
     set(items: readonly { display: string }[]): void {
       state.items = [...items];
       state.highlightIndex = 0; // spec h3.8: reset to leftmost on set change
+      state.interacted = false; // v2: a new result set starts a fresh generation
       state.hidden = false;
     },
     hide(): void {
       state.hidden = true;
       state.items = [];
+      state.interacted = false; // defensive — a hidden line has no generation
     },
   };
   return state;
@@ -328,7 +352,8 @@ export function widgetStateOf(editor: unknown): WidgetState | undefined {
 export interface VisibilityState {
   /** Should the widget line render right now? */
   visible: boolean;
-  /** Explicit dismissal (Escape/boundary-Esc, set via onDismissed(true))
+  /** Explicit dismissal (Escape/boundary-pass-through, set via
+   *  onDismissed(true))
    *  — the line stays hidden until the next word start or trigger char. */
   suppressUntilWordStart: boolean;
   /** The current (post-debounce/hysteresis) result set to render —
@@ -398,7 +423,7 @@ export interface VisibilityMachine {
    *  reads live editor state + the pure helpers, decides show/hide/
    *  suppress, and returns the fresh snapshot. */
   onInput(): VisibilityState;
-  /** T3 key-handler seam: explicit=true (Escape/boundary-Esc) sets
+  /** T3 key-handler seam: explicit=true (Escape/boundary-pass-through) sets
    *  suppressUntilWordStart and hides; explicit=false (disqualification-
    *  style close) hides only. */
   onDismissed(explicit: boolean): void;
@@ -931,7 +956,7 @@ export function createVisibilityMachine(
     onDismissed(explicit: boolean): void {
       const now = Date.now();
       if (explicit) {
-        // T3 seam (Escape / boundary-Esc / Tab-accept / Enter-submit):
+        // T3 seam (Escape / boundary pass-through / Tab-accept / Enter-submit):
         // suppress until a NEW word start or trigger char. Record the
         // dismissed fragment's start (the word-start half of the release
         // test) AND the dismissed buffer's fingerprint (the same-word
@@ -967,16 +992,19 @@ export function createVisibilityMachine(
 
 // ── T3/S1: the widget key layer (spec §07 h3.9) ─────────────────────────────
 
-/** Decision of the widget key layer for one input event. Consumed
- *  decisions never reach the enter-submit guard; "forward" delegates
- *  verbatim. S2 (P1.M3.T3.S2) adds the two while-visible completion
- *  keys: "tab-insert" (synchronously insert the highlighted word) and
+/** Decision of the widget key layer for one input event (2026-10 model
+ *  v2, spec §07 h3.9). Consumed decisions never reach the enter-submit
+ *  guard; "forward" delegates verbatim. The completion keys:
+ *  "tab-insert" (synchronously insert the highlighted word) and
  *  "enter-submit" (dismiss the line, THEN forward so the inner editor
- *  still submits — the guard itself stays in the chain). */
+ *  still submits — the guard itself stays in the chain). "boundary-
+ *  pass-through" is the v2 one-press plain-pi parity arm: an un-entered
+ *  ↑/← on the first word dismisses+suppresses AND forwards. The retired
+ *  "clamp" arm is gone — interacted edges wrap end-to-end (carousel),
+ *  so reaching an edge at all implies an interacted generation. */
 export type WidgetKeyDecision =
-  | { action: "navigate"; delta: -1 | 1 } // move the highlight
-  | { action: "boundary-esc" } // first word + ←/↑: dismiss+consume+suppress
-  | { action: "clamp" } // last word + →/↓: consume, no movement
+  | { action: "navigate"; delta: -1 | 1 } // move the highlight; wraps emerge from the wiring's modular application
+  | { action: "boundary-pass-through" } // un-entered first word + ↑/←: dismiss+suppress+FORWARD (caret moves)
   | { action: "escape" } // plain Escape: dismiss+consume+suppress
   | { action: "tab-insert" } // Tab: insert highlighted word, consume
   | { action: "enter-submit" } // Enter: dismiss, then forward (still submits)
@@ -984,33 +1012,75 @@ export type WidgetKeyDecision =
 
 /**
  * Pure decision — no editor access, trivially table-testable (the
- * wiring below owns every state mutation). While the line is hidden or
- * the rendered list is empty NOTHING is captured (invariant 1
- * amendment: the capture window exists only while the line is visible;
- * zero candidates never render — invariant 3). Keys are matched via
- * pi-tui's matchesKey so custom keybindings and the kitty protocol
- * keep working (never raw ANSI byte matching).
+ * wiring below owns every state mutation, including the `interacted`
+ * generation flag). While the line is hidden or the rendered list is
+ * empty NOTHING is captured (invariant 1 amendment: the capture window
+ * exists only while the line is visible; zero candidates never render —
+ * invariant 3). Keys are matched via pi-tui's matchesKey so custom
+ * keybindings and the kitty protocol keep working (never raw ANSI byte
+ * matching).
  *
- * `highlightIndex` is clamped into [0, count-1] BEFORE the first/last
- * checks — the list can shrink between paints (width truncation,
- * result-set changes), and a stale index must not turn a boundary
- * press into an out-of-range move.
+ * The v2 table (2026-10, spec §07 h3.9 — all index math on the RENDERED
+ * count; `highlightIndex` is clamped into [0, count-1] BEFORE the
+ * boundary checks — the list can shrink between paints):
+ *
+ *   0. !visible || count ≤ 0                      → forward
+ *   1. Escape (any state, any index)              → escape (consumed)
+ *   2. ↑/←, un-entered, i = 0                     → boundary-pass-through
+ *      (dismiss + suppress + FORWARD — the caret moves on this press)
+ *   3. →/↓, un-entered, count = 1                 → forward (nothing to enter)
+ *   4. →/↓, un-entered, multi-word                → navigate +1 (enters the
+ *      list — the wiring sets interacted)
+ *   5. ↑/←, interacted, i = 0                     → navigate −1 (wrap:
+ *      the wiring's modular step lands at LAST)
+ *   6. →/↓, interacted, i = count−1               → navigate +1 (wrap:
+ *      lands at FIRST)
+ *   7. interior arrows                            → navigate ±1
+ *   8. un-entered arrow with i > 0 (theoretically
+ *      unreachable — a stale index)               → navigate (DEGRADE,
+ *      never forward: hapax's highlight must not disagree with the caret)
+ *   9. Tab                                        → tab-insert
+ *  10. submit key                                 → enter-submit
+ *
+ * Row order is load-bearing: the `interacted` checks precede the
+ * boundary checks (rows 2–5 would invert), and the count=1 forward
+ * (row 3) precedes the generic navigate arm (a one-word line must never
+ * navigate to itself — that would be a consumed arrow pre-entry).
+ * Wrap representation: plain ±1 — the WIRING applies it modularly
+ * (((i + delta) % count + count) % count), which makes an interacted
+ * edge step wrap end-to-end; the old clamping application would have
+ * eaten the step at the edges instead. The stale-index clamp into
+ * [0, count−1] stays (a stale index must not produce out-of-range
+ * moves); only the clamp ACTION variant is retired.
  */
 export function decideWidgetKey(
   data: string,
   visible: boolean,
   count: number,
   highlightIndex: number,
+  interacted: boolean,
   keybindings?: KeybindingsLike,
 ): WidgetKeyDecision {
   if (!visible || count <= 0) return { action: "forward" };
   const i = Math.min(Math.max(highlightIndex, 0), count - 1);
   if (matchesKey(data, "escape")) return { action: "escape" };
   if (matchesKey(data, "up") || matchesKey(data, "left")) {
-    return i === 0 ? { action: "boundary-esc" } : { action: "navigate", delta: -1 };
+    if (!interacted && i === 0) return { action: "boundary-pass-through" };
+    // Interior move; an interacted i = 0 (row 5) is ALSO −1 — the WRAP
+    // emerges from the wiring's modular application (0 − 1 ≡ count−1).
+    // (The design sketch's ±(count−1) deltas land at the wrong index:
+    // (0 − (count−1)) mod count = 1, not count−1. Plain ±1 is the
+    // representation whose modular landing matches the spec outcomes.)
+    return { action: "navigate", delta: -1 };
   }
   if (matchesKey(data, "down") || matchesKey(data, "right")) {
-    return i === count - 1 ? { action: "clamp" } : { action: "navigate", delta: 1 };
+    if (!interacted) {
+      if (count === 1) return { action: "forward" }; // row 3: nothing to enter
+      return { action: "navigate", delta: 1 }; // row 4: entering the list
+    }
+    // Interior move; an interacted i = count−1 (row 6) is ALSO +1 — the
+    // wrap emerges modularly ((count−1) + 1 ≡ 0).
+    return { action: "navigate", delta: 1 };
   }
   // S2 — the completion keys, only while a non-empty line is visible
   // (hidden/empty falls through to forward: literal Tab, plain Enter).
@@ -1362,10 +1432,11 @@ export function createWidgetEditorFactory(
       (tui as { requestRender?: () => void } | undefined)?.requestRender?.();
     };
 
-    // T3/S1 — the widget key handler (spec §07 h3.9): decides BEFORE
-    // the enter-submit guard. Consumed = RETURN WITHOUT delegating (the
-    // caret must not move on boundary-Esc/clamp); forwarded keys reach
-    // the guard verbatim, exactly once.
+    // T3/S1 — the widget key handler (spec §07 h3.9, 2026-10 model v2):
+    // decides BEFORE the enter-submit guard. Consumed = RETURN WITHOUT
+    // delegating (navigate/Escape only — the pass-through arm forwards,
+    // so the caret moves); forwarded keys reach the guard verbatim,
+    // exactly once.
     const widgetHandleInput = (data: string): unknown => {
       let decision: WidgetKeyDecision;
       try {
@@ -1374,6 +1445,7 @@ export function createWidgetEditorFactory(
           !state.hidden,
           renderedCount(),
           state.highlightIndex,
+          state.interacted,
           keybindings,
         );
       } catch {
@@ -1397,6 +1469,21 @@ export function createWidgetEditorFactory(
         }
         return forwardInput(data);
       }
+      if (decision.action === "boundary-pass-through") {
+        // v2 row 2 — one-press plain-pi parity: the un-entered ↑/← at the
+        // first word dismisses AND forwards. Same shape as enter-submit:
+        // the explicit dismissal (suppress until the next word start)
+        // lands first via the machine's seam, then the key is FORWARDED
+        // (the caret moves on this press) BEFORE the consumed-tick block
+        // — exactly one tick via the guard's seam, never double-ticked.
+        try {
+          state.hide();
+          machine.onDismissed(true);
+        } catch {
+          /* dismissal hiccups never break the pass-through */
+        }
+        return forwardInput(data);
+      }
       // Consumed keys never reach the guard, whose clock seam fires
       // only on delegation — tick the shared clock HERE so arrows/Esc
       // count as input activity (hesitation timing). The visibility
@@ -1412,17 +1499,19 @@ export function createWidgetEditorFactory(
       }
       try {
         if (decision.action === "navigate") {
-          state.highlightIndex = Math.max(
-            0,
-            Math.min(
-              state.highlightIndex + decision.delta,
-              renderedCount() - 1,
-            ),
-          );
-        } else if (
-          decision.action === "escape" ||
-          decision.action === "boundary-esc"
-        ) {
+          // v2 carousel: apply the delta MODULARLY — a wrap delta
+          // ±(count−1) through the old clamping application would null
+          // out (the CRITICAL pitfall). count is the RENDERED count
+          // (width truncation shrinks the list; the decision used the
+          // same number). A landing navigate interacts the generation —
+          // the ONLY setter (pass-through, Tab, Enter, Escape never do).
+          const n = renderedCount();
+          if (n > 0) {
+            state.highlightIndex =
+              (((state.highlightIndex + decision.delta) % n) + n) % n;
+            state.interacted = true;
+          }
+        } else if (decision.action === "escape") {
           state.hide(); // immediate visual dismissal…
           machine.onDismissed(true); // …+ suppression until the next word
           // start — set ONLY via the machine's seam (it owns the flag).
@@ -1477,7 +1566,6 @@ export function createWidgetEditorFactory(
             chainGrant.reset();
           }
         }
-        // clamp: consumed, no movement, no dismissal.
       } catch {
         /* state/machine failures never break input */
       }
