@@ -313,7 +313,8 @@ flips, nothing below 11 chars); **sqrt 8→20 adopted** (≈10.5k flips).
 Measured effect against the shipped artifact (sqrt 8→20): ≈10.5k
 corpus words flip vs the flat band — nothing below 9 chars changes; at
 9 chars admits q≤82 (`R_eff(9)` ≈ 82.15, float compare — q=83 is the
-first reject), 10 → q<110 (`government` yes; `everything` q=139 no),
+first reject), 10 → q≤111 (`R_eff(10)` ≈ 111.2; `government` q=101
+yes; `everything` q=139 no),
 11 → q<133 (`information`, `development`), 12 → q<152
 (`organization`, `relationship`), 14 → q<184 (`characteristics`,
 `infrastructure`, `responsibility`); admit-all from 20. The 2026-09
@@ -368,7 +369,7 @@ being admitted — `R_eff(len(word))` (2026-10):
 The fixed mid-band stem threshold (20, MID) is retired (2026-10) —
 both tiers ride R_eff; it survives only as a compatibility constant.
 At ramp lengths the guard loosens with the table: `configurations`
-(15c, stem `configuration` q=26 < R_eff(15) ≈ 198) admits; a 9-char
+(14c, stem `configuration` q=26 < R_eff(14) ≈ 184) admits; a 9-char
 absent inflection of a mid-common stem admits at group 0 — an accepted
 consequence of the owner-chosen curve. Capitalized (properName) candidates skip the guard — casing
 evidence outranks morphology (a relief-restoring change would need this

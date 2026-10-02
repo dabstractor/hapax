@@ -1079,3 +1079,65 @@ describe("R4 — fingerprint release (BUG-003)", () => {
     ]);
   });
 });
+
+// ── 1-char ambient open — the live-editor threshold clamp (spec §07: word
+//    matching is effective from 1 typed char; config.threshold is RETAINED
+//    BUT INERT here — spec invariant 2: the menu opens on the 1st char) ──
+
+describe("1-char ambient open (live-editor threshold clamp)", () => {
+  it("the 1st char of a matching word opens the line under DEFAULT_CONFIG (threshold 2 stays inert)", async () => {
+    // DEFAULT_CONFIG unmodified (threshold: 2) — the exact shape that
+    // shipped the drift: the widget's extractMatchState call must clamp
+    // internally, never inherit the raw schema default.
+    const query = vi.fn(
+      canned({ l: [rm("lwlock")], lw: [rm("lwlock")], z: [rm("Zendesk")] }),
+    );
+    const { machine, editor } = await build({ query });
+
+    editor.set("l", 1);
+    const st = machine.onInput();
+    expect(st.visible).toBe(true);
+    expect(st.currentSet).toEqual([{ display: "lwlock" }]);
+    expect(query).toHaveBeenCalledWith("l", "ambient");
+
+    editor.set("z", 1);
+    machine.onInput();
+    expect(query).toHaveBeenLastCalledWith("z", "ambient");
+
+    // The reported repro's backspace leg: 'lw' → backspace to 'l' must
+    // STAY open (a 1-char fragment still qualifies), not close.
+    await vi.advanceTimersByTime(100); // past the swap window for a clean re-paint
+    editor.set("lw", 2);
+    expect(machine.onInput().visible).toBe(true);
+    await vi.advanceTimersByTime(100); // past the swap window: the set paints immediately
+    editor.set("l", 1);
+    const back = machine.onInput();
+    expect(back.visible).toBe(true);
+    expect(back.currentSet).toEqual([{ display: "lwlock" }]);
+  });
+
+  it("Escape at a 1-char fragment records the fragment start: extending the same word stays hidden", async () => {
+    // The dismissal bookkeeping must run the same clamp, or the recorded
+    // suppressedFragmentStart is the cursor (not col − fragment.length)
+    // and the R4 release test re-opens mid-word on the next keystroke.
+    const { machine, editor } = await build({
+      query: canned({ l: [rm("lwlock")], lw: [rm("lwlock")] }),
+    });
+    editor.set("l", 1);
+    expect(machine.onInput().visible).toBe(true); // opens at 1 char
+
+    machine.onDismissed(true); // Escape: fragment 'l' starts at 0, fingerprint "l"
+    expect(machine.getState()).toMatchObject({
+      visible: false,
+      suppressUntilWordStart: true,
+    });
+
+    // Extending the SAME word (start 0, buffer continues the dismissed
+    // one): stays suppressed — release needs a NEW word start (BUG-003).
+    await vi.advanceTimersByTime(10);
+    editor.set("lw", 2);
+    const st = machine.onInput();
+    expect(st.visible).toBe(false);
+    expect(st.suppressUntilWordStart).toBe(true);
+  });
+});

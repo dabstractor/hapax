@@ -826,7 +826,15 @@ export function createVisibilityMachine(
       } // if (!grantSpent) — the whole offer half is grant-gated
     }
 
-    const match = extractMatchState(lines, line, col, deps.config);
+    // Threshold clamp (spec §07 trigger modes: word matching is effective
+    // from 1 typed char — config.threshold is RETAINED BUT INERT in the
+    // live editor). Same clamp as the fallback path (provider.ts
+    // getSuggestions); without it a 1-char ambient fragment returns null
+    // and the line never opens on the first keystroke (spec invariant 2).
+    const match = extractMatchState(lines, line, col, {
+      ...deps.config,
+      threshold: 1,
+    });
     if (match === null) {
       // R3 — close-event taxonomy (both flavors stamp closeAt, neither
       // suppresses): a trailing space/tab with no @// anywhere before the
@@ -964,7 +972,14 @@ export function createVisibilityMachine(
         // start AND a non-continuation buffer. An empty buffer records
         // null — context-free, any boundary releases.
         const { lines, line, col } = deps.getEditorState();
-        const match = extractMatchState(lines, line, col, deps.config);
+        // Same 1-char clamp as the evaluate path: the dismissed
+        // fragment's start must be recorded identically to how the
+        // visibility machine saw it, or the R4 release test (new word
+        // start) mis-fires after dismissing a 1-char fragment.
+        const match = extractMatchState(lines, line, col, {
+          ...deps.config,
+          threshold: 1,
+        });
         suppressed = true;
         suppressedFragmentStart =
           match !== null && match.mode === "threshold"

@@ -38,7 +38,7 @@ let keepAlive = 0; // sink for gate-d cycle results (bench fns return void)
 console.log(
   "[PRD §09 budgets] (a) query p99 <1ms  (t0) tier-0 anchorless fallback p99 <3ms  " +
     "(b) dict load + 20k sweep <60ms  " +
-    "(c) 800KB ingest <60ms + yield ≤64KB  (d) steady-state heap delta <6MB " +
+    "(c) 800KB ingest <180ms CI bound + yield ≤64KB  (d) steady-state heap delta <6MB " +
     "— CI hard-fails at 3× via test/perf-gates.test.ts",
 );
 
@@ -108,7 +108,7 @@ describe("PRD §09 core gates — measured actuals (hard bounds: test/perf-gates
   );
 
   bench(
-    "gate c: ingest 800 KB synthetic session text (13 ≤64KB slices) [budget <60ms]",
+    "gate c: ingest 800 KB synthetic session text (13 ≤64KB slices) [budget <180ms]",
     async () => {
       await gateCPipeline.processText(gateCText, true); // direct — no debounce
     },

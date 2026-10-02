@@ -1,0 +1,5 @@
+{
+  "hasIssues": true,
+  "issueCount": 3,
+  "summary": "1 major: widget path opens the result line only at the 2nd typed char (spec invariant 2: open on 1st char; widget.ts uses raw config.threshold=2 unlike provider.ts's clamp to 1) — live-reproduced; 2 minor: stale 60ms bench label vs operative 180ms bound, and two numeric drifts in spec §04 prose. All 1,126 tests, typecheck, perf gates, dictionary reproducibility, calibration, and 14/15 live TTY scenarios green."
+}
