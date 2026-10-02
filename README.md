@@ -317,10 +317,11 @@ file is authoritative; the text below is verbatim.
 
 1. **Never hijack typing.** No key is ever captured, consumed, or altered except
    Tab while a suggestion is selected — plus, on the one-line widget display
-   (M3), the four arrow keys and Escape while the result line is visible; ↑/←
-   on the first word act as Escape (boundary-Esc), dismissing the line and
-   returning every key to the user. The user's typing experience is
-   otherwise unchanged; the result line is strictly take-it-or-leave.
+   (M3), the arrow keys and Escape once the result line has been ENTERED; on
+   an un-entered line ↑/← on the first word dismiss the line AND forward the
+   press (the caret moves — one press, plain-pi parity). The user's typing
+   experience is otherwise unchanged; the result line is strictly
+   take-it-or-leave.
 2. **Tab is never delayed by UI — and Tab only ever completes.** The top
    suggestion is computed synchronously on every keystroke; the popup may be
    debounced, but a single Tab keypress always resolves the current top or
@@ -542,8 +543,11 @@ Verified 2026-09-07 (P1.M3.T5.S2): `pi -e` starts with zero extension-load
 errors; sending a message containing a distinctive word (`quokkatestword`)
 and then typing `#quok` in the input box shows a hapax result. The M3
 widget path was additionally live-verified 2026-09-08 against the real
-pi + split-editor stack (widget visibility, arrow/Escape/Tab key capture,
-Enter submits — spec 09 live-verification technique).
+pi + split-editor stack (widget visibility; arrow/Escape/Tab key
+handling — arrows and Escape are captured only once the list is
+entered, with one-press boundary pass-through on an un-entered line
+(spec 07, 2026-10 v2 model); Enter submits — spec 09 live-verification
+technique).
 
 #### jiti and the dictionary path
 
