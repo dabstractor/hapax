@@ -1,0 +1,51 @@
+# cursor: x=18 y=46 mode=INSERT
+
+
+ This looks like a word-review task — nonsense words and why they do/don't complete. Load the skill.
+
+
+ [skill] word-review (ctrl+o to expand)
+
+
+ Run the pipeline on the string.
+
+
+ $ node -e '
+ const { createJiti } = require("./node_modules/@earendil-works/pi-coding-agent/node_modules/jiti");
+ const jiti = createJiti(process.cwd() + "/");
+ const { tokenize, expandCandidates } = jiti("./src/core/segment.ts");
+ const { passesShape } = jiti("./src/core/shapeGate.ts");
+ for (const tok of tokenize(process.argv[1]))
+   for (const d of expandCandidates(tok)) console.log(JSON.stringify(d), JSON.stringify(passesShape(d)));
+ ' "The zendesk lwlock zephyr verdigris kestrel scribe unsaidlock thread - note zendesk zorvex zendral twice."
+
+ ... (9 earlier lines, ctrl+o to expand)
+ {"key":"note","display":"note","properName":false,"isSubword":false} {"ok":true}
+ {"key":"zendesk","display":"zendesk","properName":false,"isSubword":false} {"ok":true}
+ {"key":"zorvex","display":"zorvex","properName":false,"isSubword":false} {"ok":true}
+ {"key":"zendral","display":"zendral","properName":false,"isSubword":false} {"ok":true}
+ {"key":"twice","display":"twice","properName":false,"isSubword":false} {"ok":true}
+
+ Took 0.1s
+
+
+
+ $ node tools/calibrate-bands.mjs the zendesk lwlock zephyr verdigris kestrel scribe unsaidlock thread note zorvex zendral twice
+
+ ... (9 earlier lines, ctrl+o to expand)
+   thread           len=6 q=56     R_eff=12  REJECT | Cap: REJECT
+   note             len=4 q=91     R_eff=12  REJECT | Cap: REJECT
+   zorvex           len=6 q=absent R_eff=12  g0     | Cap: g0
+   zendral          len=7 q=absent R_eff=12  g0     | Cap: g0
+   twice            len=5 q=94     R_eff=12  REJECT | Cap: REJECT
+
+ Took 0.1s
+
+
+ Operation aborted
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+zendesk zorvex, ze
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── INSERT
+zendesk | zendral | zorvex
+glm-5.3  ❯  low  ❯  1.9% / 1.0M  ❯  🔌 MCP: 2 servers enabled  ❯  📡 local (17)  ❯  🟢 relay

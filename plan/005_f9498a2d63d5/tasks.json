@@ -156,7 +156,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S3",
                   "title": "Live smoke in tmux (4 scenarios) with capture-pane evidence — BINDING",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",

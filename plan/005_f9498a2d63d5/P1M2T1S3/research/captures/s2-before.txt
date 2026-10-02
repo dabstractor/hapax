@@ -1,0 +1,51 @@
+# cursor: x=2 y=46
+
+ ▀▀█  v1.0.0
+ █▀ █ escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more
+ Press ctrl+o to show full startup help and loaded resources.
+
+ Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.
+
+
+[Context]
+  AGENTS.md
+
+[Skills]
+  agent-browser, agent-network, council-mode, mdsel, pi-subagents, word-review
+
+[Prompts]
+  /council, /gather-context-and-clarify, /loadplan, /parallel-cleanup, /parallel-research, /parallel-review, /plan, /review-loop
+
+[Extensions]
+  @carlosgtrz/pi-terminal-bell:src, @pithos-kit/squiggle, dabstractor/split-editor, file-injector.ts, pi, pi-bar:status-footer.ts, pi-chrome:chrome-profile-bridge, pi-lsp:pi-lsp, pi-mcp-adapter,
+pi-mulligan/src, pi-nvim-bridge.ts, pi-patty-bg-tasks, pi-structured-interrogation/src, pi-subagents, pi-vim, remote-pi:dist
+
+[Extension issues]
+  ~/.pi/agent/npm/node_modules/remote-pi/package.json
+    Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies: @earendil-works/pi-coding-agent, @earendil-works/pi-tui, typebox. Installed copies can
+bypass the extension loader and create duplicate runtime modules.
+
+
+ Warning: /home/dustin/.pi/agent/mcp.json: pi-mcp-adapter does not read settings in this file; move them into /home/dustin/.pi/agent/mcp-adapter.json. Ignored settings (details in /mcp-adapter):
+ "web_search": directTools; "zread": directTools.
+
+ Warning: Extension package "/home/dustin/.pi/agent/npm/node_modules/remote-pi/package.json": Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies:
+ @earendil-works/pi-coding-agent, @earendil-works/pi-tui, typebox. Installed copies can bypass the extension loader and create duplicate runtime modules.
+
+ [remote-pi]
+   🟢 Local mesh: connected as "pi-autocomplete#5" (17 peers)
+   🟢 Relay: on, waiting for an app to connect (http://localhost:4940)
+
+
+ The zendesk lwlock zephyr verdigris kestrel scribe unsaidlock thread - note zendesk zorvex zendral twice.
+
+
+ Operation aborted
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+lw
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── INSERT
+lwlock
+glm-5.3  ❯  low  ❯  1.6% / 1.0M  ❯  🔌 MCP: 2 servers enabled  ❯  📡 local (17)  ❯  🟢 relay

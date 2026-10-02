@@ -1,0 +1,50 @@
+
+ Admission results (per word)
+
+ The pipeline (tokenize → shape gate → admission) traces cleanly; every token passes the shape gate. Admission (src/core/score.ts, q = dictionary.lookup, rejectCommonness R=12) is where they split:
+
+ ┌──────────────────────────────────────────┬──────────────────────────────┬─────────────────┐
+ │ Word                                     │ q                            │ Fate            │
+ ├──────────────────────────────────────────┼──────────────────────────────┼─────────────────┤
+ │ zendesk (×2)                             │ absent                       │ admit, group 0  │
+ ├──────────────────────────────────────────┼──────────────────────────────┼─────────────────┤
+ │ lwlock                                   │ absent                       │ admit, g0       │
+ ├──────────────────────────────────────────┼──────────────────────────────┼─────────────────┤
+ │ verdigris                                │ absent                       │ admit, g0       │
+ ├──────────────────────────────────────────┼──────────────────────────────┼─────────────────┤
+ │ kestrel                                  │ absent                       │ admit, g0       │
+ ├──────────────────────────────────────────┼──────────────────────────────┼─────────────────┤
+ │ unsaidlock                               │ absent                       │ admit, g0       │
+ ├──────────────────────────────────────────┼──────────────────────────────┼─────────────────┤
+ │ zorvex                                   │ absent                       │ admit, g0       │
+ ├──────────────────────────────────────────┼──────────────────────────────┼─────────────────┤
+ │ zendral                                  │ absent                       │ admit, g0       │
+ ├──────────────────────────────────────────┼──────────────────────────────┼─────────────────┤
+ │ the, zephyr, scribe, thread, note, twice │ 240 / 22 / 22 / 56 / 91 / 94 │ REJECT (q ≥ 12) │
+ └──────────────────────────────────────────┴──────────────────────────────┴─────────────────┘
+
+ All seven keepers are dictionary-absent — exactly the value class (spec/SPEC.md "purpose"): product/jargon words (zendesk, lwlock), English-but-rare (verdigris, kestrel), and coined strings (zorvex,
+ zendral, unsaidlock). The dictionary words — including the borderline-sounding zephyr (q=22) and scribe (q=22) — are rejected; that's the commonness retighten at work, and note the value-class
+ asymmetry: kestrel is in but zephyr is out purely because the corpus draws the line at q=12 between them.
+
+ The ze menu
+
+ Typing ze yields three matches from the seven stored. I ran the real CandidateStore + rankMatches:
+
+ 1. zendesk — session x2
+ 2. zendral — session x1
+ 3. zorvex — session x1
+
+ Two things worth naming:
+
+ - zendesk's second sighting matters — for ordering, not admission. The 2026-10 owner rule (spec §04 h2.29, src/core/query.ts:323) is a 4-key total order: tier → sessionCount desc → shorter →
+   byte-lex. It replaced the old pure content order (shortest-first → byte order). So the twice-seen zendesk outranks the once-seen zendral/zorvex despite being longer than zorvex. (The skill's
+   memory of "shortest-first, never reshuffled by session stats" is stale — sessionCount is now a sort key below tier.)
+ - zendral beats zorvex on the tier key (tier reflects match-fragment quality; zend* shares more typed-prefix structure than zor*), before the shorter/byte-lex tiebreakers would even engage.
+
+ Also: the store dedupes by lowercase key, so "zendesk twice" is one candidate with sessionCount: 2 and display casing from the most recent sighting — one menu entry, not two.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── INSERT
+glm-5.3  ❯  low  ❯  2.2% / 1.0M  ❯  🔌 MCP: 2 servers enabled  ❯  📡 local (17)  ❯  🟢 relay
