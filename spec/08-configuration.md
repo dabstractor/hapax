@@ -99,7 +99,9 @@ not a rejection.
   proper-noun relief ceiling (12, retired-in-place), the
   length-gradient curve shape (sqrt, 8-char floor hold, 20-char
   admit-all — 2026-10), shape-gate secret rules, the conjugation-guard
-  suffix set, eviction cap, debounce intervals, popup timing, and the
+  suffix set, eviction cap, debounce intervals, popup timing, the
+  widget line-claim lifecycle (07 — release events are semantics), and
+  the
   fuzzy scorer's tier constants (04 — tier BOUNDARIES are semantics,
   not tuning). These are
   internal tuning constants — the tuning protocol lives in 09, not in

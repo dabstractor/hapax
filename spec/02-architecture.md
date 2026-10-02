@@ -60,7 +60,8 @@ hapax/
 │       │                     #   hysteresis, chaining M2)
 │       ├── widget.ts         # one-line result widget — PRIMARY display
 │       │                     #   path: rendering, key handling,
-│       │                     #   visibility state machine (M3, 07)
+│       │                     #   visibility state machine + per-prompt
+│       │                     #   line claim (M3, 07)
 │       ├── editor.ts         # enter-submits-while-autocompleting guard
 │       │                     #   (07: Enter accepts the menu instead)
 │       ├── debug.ts          # /acwords read-only store+stats dump

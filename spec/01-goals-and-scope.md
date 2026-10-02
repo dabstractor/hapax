@@ -59,7 +59,9 @@ matching word (or the 1st character after the trigger char, default `#`).
 10. One-line horizontal result display: words joined `" | "`, no
     frequency column, hapax-rendered widget with arrow selection and
     one-press boundary pass-through on un-entered lists (07); the
-    vertical stock menu retained as fallback.
+    vertical stock menu retained as fallback. The suggestion row is
+    CLAIMED for the prompt's duration once first shown — blank when
+    empty, so the input area never jumps mid-prompt (07).
 
 ## Non-goals (explicit)
 
@@ -105,5 +107,9 @@ matching word (or the 1st character after the trigger char, default `#`).
   cluster is consumed only after the list is entered — boundary
   pass-through returns control instantly, one press (07); never any
   typing key.
+- The input area never moves vertically mid-prompt. Once the
+  suggestion row has appeared, hapax owns it until the prompt is
+  submitted (or the tree resets): no suggestions means a blank row,
+  not a missing one (07).
 - Suggestions that would embarrass (secrets, garbage tokens) must never appear;
   the shape gate is load-bearing for the absent-from-dictionary class.

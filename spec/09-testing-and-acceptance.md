@@ -134,7 +134,16 @@
 **widget.test.ts (primary path, M3)**
 - Visibility machine: word-start fragment + candidates → line shows;
   trailing space (no `@`/`/`) → hides; path/slash/`@` contexts never
-  show; zero candidates never render.
+  show; zero candidates never render content (unclaimed: no row;
+  claimed: blank row — Line claim below).
+- Line claim (2026-10, spec 07): the first non-empty display claims the
+  row; from then on zero-candidate queries, disqualification and
+  trailing-space closes, Escape/boundary dismissal, rest-of-word
+  suppression, and stock-context hides render the row BLANK (present,
+  empty) — never back to byte-identical inner lines while claimed;
+  release fires on submit / `before_agent_start` / session rebind,
+  after which no row renders until the next first-show; a prompt that
+  never shows a result set never grows a row.
 - Key handling (editor-proxy double): ←/→/↑/↓ all navigate once the
   list is entered; ↑/← on the first word of an UN-interacted
   generation FORWARDS to the editor — the line dismisses +
@@ -190,6 +199,14 @@
    the whole path; an absolute path inserts with its leading `/`. Once a
    `/` precedes the cursor, stock pi file completion owns the rest
    (item 6 unchanged).
+8. **Line claim (2026-10):** within one prompt, type a word whose
+   suggestions show, then one with none, press Escape, keep typing —
+   the input box never moves (tmux capture-pane: the editor's screen
+   row is stable; the suggestion row goes blank, never away). Submit →
+   the row is released; a suggestion-free stretch of the next prompt
+   shows no row at all. Live verification mandatory — this is a
+   layout behavior, invisible to unit doubles (§Live verification
+   technique).
 
 ## Live verification technique (binding)
 

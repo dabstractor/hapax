@@ -50,9 +50,56 @@ own-rendered line.
   else.
 - Line cap = `maxSuggestions` AND terminal width: overflow drops the
   lowest-ranked (rightmost) items first.
-- Zero candidates → the line never renders (invariant 3).
+- Zero candidates never render content (invariant 3). UNCLAIMED (never
+  shown this prompt — Line claim below), zero candidates mean no row at
+  all; once the row is CLAIMED, zero candidates render the row blank.
 - The highlight (theme accent) sits on the leftmost/top item by
   default and resets to it on every result-set change.
+
+### Line claim — the row is owned for the prompt's duration (2026-10 owner rule; status: adopted ahead of implementation — code lands with this spec)
+
+**Problem.** Every hide verdict (zero candidates, disqualification,
+trailing space, dismissal, stock context) removes the row below the
+editor, and the next show re-adds it — the entire input area bounces
+up and down by one line while the user types. The stock vertical menu
+never had this problem: pi-tui reserves the menu's space until the
+interface reflows (e.g. submit). The widget must do the same, for one
+line.
+
+**Rule.** The moment the line first renders a NON-EMPTY result set
+during a prompt, hapax CLAIMS the row directly below the input
+editor. From that instant until release, the row exists
+unconditionally: every state that would otherwise hide the line —
+zero candidates, disqualification, trailing-space close, Escape or
+boundary-pass-through dismissal, the rest-of-word suppression window,
+stock-owned path/slash/`@` contexts — renders the row BLANK (empty
+content: no words, no separators, no highlight) instead of removing
+it. Layout is frozen for the rest of the prompt; appearance and
+disappearance of suggestions become content-only changes, never
+layout changes.
+
+**Arming.** Only a first non-empty display claims. A prompt that never
+produces a visible result set never grows a row — no pre-emptive
+blank line for every prompt; minimal height for never-suggesting
+prompts is kept.
+
+**Release.** The claim releases — the row is removed until some later
+first-show re-claims it — exactly on the interface-reflow events:
+prompt submission (the Enter that actually submits, not a
+newline-inserting one; the same keystroke the Enter-submits proxy
+forwards), `before_agent_start` (the same turn boundary that resets
+the chain state), `session_start` re-fire (rebind — never leave a
+claimed row serving a dead session), and `session_shutdown`.
+Terminal resize and stock-UI reflow re-render the layout but do NOT
+release the claim — the row returns blank or with content per current
+state; the claim is widget-layer logical state, not a property of any
+one render.
+
+**Invariant interplay.** A claimed blank row is reserved whitespace,
+never a zero-candidate render: invariant 3 governs candidate CONTENT,
+and no content is ever painted without candidates. The fallback path
+is untouched (pi-tui's vertical menu manages its own space
+reservation).
 
 ### Widget key handling (amends the never-hijack invariant; 2026-10)
 
@@ -100,7 +147,9 @@ inner editor sees them:
   line for
   the REST OF THE WORD.** Re-open only at the next word start or
   trigger char. A disqualification close (candidates hit zero) does
-  not suppress — the next qualifying keystroke reopens.
+  not suppress — the next qualifying keystroke reopens. Suppression
+  hides CONTENT only: a claimed row renders blank through the
+  suppression window (Line claim above).
 - **Tab inserts the highlighted word** (leftmost if none
   highlighted), synchronously against the live query — never gated by
   the display debounce (invariant 2). Insertion replaces the live
@@ -140,6 +189,11 @@ on each keystroke:
    hidden (flicker hysteresis carried over: narrowing must not
    close-and-reopen).
 5. The startup restore gate (below) applies identically.
+
+Throughout this machine, "hidden" is a CONTENT verdict: while the row
+is claimed (Line claim above), every hidden state renders the row
+blank rather than removing it; only an unclaimed hidden state renders
+no row at all.
 
 ## Provider integration (fallback path only)
 
@@ -304,6 +358,8 @@ Four interacting rules, implemented in the provider:
 3. **Flicker hysteresis.**
    - **Empty = invisible.** Zero candidates → return empty/delegate; the menu
      never renders. (Inherited from built-in behavior; assert in tests.)
+     Widget path: empty means no CONTENT — no row while unclaimed, a
+     blank CLAIMED row otherwise (Line claim above).
    - Once visible, the set only ever **narrows, replaces, or closes** — a
      narrowing keystroke (`zend` → `zendk`) must not close-and-reopen.
    - Close events: disqualification (no candidates), cursor move, escape,
