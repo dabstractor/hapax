@@ -1259,3 +1259,312 @@ Post-delta baseline: `npm run check` exit 0 · `npm test` green (1109
 passed / 1 skipped). The Mode B doc sweep (README chained-completion
 blurb + status paragraph, this note) is P1.M2.T4.S1; the spec/04 + spec/09
 text-drift corrections follow in P1.M2.T4.S2.
+
+Everything above this line — through the bugfix-changeset-001 post-delta
+note (2026-09-30) — is untouched (append-only); this section is the next
+dated record.
+
+## Arrow-model-v2 changeset (widget boundary pass-through + interaction carousel) — post-changeset re-verification (P1.M2.T1.S4, 2026-10-02)
+
+- **Sweep date:** 2026-10-02 · **Head commit:** `a2e9470`
+  (full: `a2e94703d1488191f32db10a50aaa9c961ffeeeb` — "docs(pi): re-mirror
+  README invariant 1 to spec v2", the changeset's last commit). At append
+  time HEAD is `394d153` (the gauntlet-record commit, research/docs only;
+  `git diff --stat a2e9470..394d153 -- src test spec` is empty, so the
+  swept tree is the changeset unchanged).
+- **Changeset:** `a5c815d` (v2 decision core) · `816048e` (v2 wiring +
+  tick/flag seams) · `97a840e` (the rewritten v2 widget key battery) ·
+  `a2e9470` (P1.M2.T1.S1's README sync — the invariant-1 mirror
+  re-mirrored verbatim from spec/SPEC.md:38–43).
+- **Environment:** Linux x64 · Node v26.10.0 · vitest 4.1.11
+- **Working-tree note:** unlike the M3 sweep, `README.md` is clean here —
+  S1's docs deliverable LANDED as `a2e9470` before this sweep. The only
+  in-flight tree changes are `plan/` research artifacts plus this append;
+  zero files under `src/`, `test/`, or `spec/`.
+- **Verdict: changeset DONE.** Gauntlet items 1–5 PASS, live smoke 4/4
+  PASS, drift report: NONE FOUND (9/9 AGREE — one citation-path
+  correction and one tolerated line-shift recorded below; neither is
+  drift).
+
+## Gauntlet item 1 — type check clean: PASS
+
+```
+$ npm run check        # tsc --noEmit, strict
+```
+- 2026-10-02 @ `a2e9470`: exit 0, zero errors.
+
+## Gauntlet item 2 — all tests green: PASS
+
+```
+$ npm test             # vitest --run, whole suite
+```
+- 2026-10-02 @ `a2e9470`: exit 0 — **38 test files, 1126 passed / 1
+  skipped** (the one skip is the pre-existing gc-dependent
+  `dictionary.test.ts` case, same as every prior record; no new skips).
+- Includes the changeset's own suite: the rewritten `test/widget.test.ts`
+  v2 key battery — 80 cases, re-verified green standalone this sweep
+  (`npx vitest --run test/widget.test.ts` → **80 passed (80)**), with the
+  decision-table rows and pins named under item 4.
+
+## Gauntlet item 3 — performance gates: PASS
+
+```
+$ npx vitest --run test/perf-gates.test.ts --disable-console-intercept
+$ npm run bench
+```
+Hard CI gate — exit 0, **9/9 PASS** (2026-10-02 @ `a2e9470`), green
+inside `npm test`. Reporting bench (`npm run bench`, exit 0, same
+fixtures, tinybench) vs the five spec/09 h2.58 budgets (transcribed from
+the bench table):
+
+| Gate (h2.58) | Budget | Measured (bench) | vs budget | CI bound | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| a. anchored-fuzzy query — 20k store, first-char bucket 'p' (~913 range) + rank + top 8 | < 1 ms p99 | p99 0.4521 ms (mean 0.2313; 3 848 samples) | 0.45× | < 3 ms | PASS |
+| t0. tier-0 anchorless fallback — full-store pass, probed fragment | < 3 ms p99 | p99 0.8035 ms (mean 0.3736; 2 356 samples) | 0.27× | < 9 ms | PASS |
+| b. dict load + full 20k-word lookup sweep | < 60 ms | p99 3.2640 ms (mean 1.6621; 1 113 samples) | 0.05× | < 180 ms | PASS |
+| c. ingest 800 KB synthetic session text (13 ≤64 KB slices) | < 60 ms headline; **180 ms CI bound is operative** (h2.58 Issue-4 note — 174–187 ms actuals are NOT drift) | p99 115.87 ms (mean 99.7998; 20 samples) | 0.64× of the operative bound | < 180 ms | PASS (watch — inherited calibration, inside bound) |
+| d. steady-state cycle — dict load + 20k store fill + query | heap < 6 MB (hard gate asserted in perf-gates: **7.37 MB** settled low-water, CI < 18 MB — green) | 38.7345 ms/cycle (p99 58.5176; 70 samples) | heap 1.23× of the 6 MB ideal | < 18 MB | PASS (watch — inherited, inside bound) |
+
+Honesty notes (carried honestly, unchanged): gate c's 60 ms headline is
+superseded by the operative 180 ms CI bound per spec/09 h2.58's own
+Issue-4 note; gates c and d sit above the 1× ideal like the inherited
+watch flags the M3 record carries — no budget was loosened and no gate is
+a hard regression; gate d's 7.37 MB heap low-water is asserted against
+the CI bound (< 18 MB), green.
+
+## Gauntlet item 4 — widget battery (the rewritten v2 key battery): PASS
+
+```
+$ npx vitest --run test/widget.test.ts
+```
+- 2026-10-02 @ `a2e9470`: exit 0 — **80 passed (80)**, zero skipped. The
+  v2 model's named cases, quoted verbatim from the battery:
+  - "↑ and ← on the first word: line hidden + suppressed AND the press FORWARDS (one-press plain-pi parity — the caret moves)" (boundary pass-through, one press)
+  - "row 3 — un-entered →/↓ on a ONE-word line → forward (no arrow is ever consumed pre-entry)" (one-word forward)
+  - "rows 5/6 — interacted edges WRAP end-to-end (carousel over the modular ±1)" (carousel wrap, both edges)
+  - "a fresh generation re-arms pass-through: after navigating (flag set), show(new) resets the generation and ↑ passes through again" (generation reset)
+  - "synchronous: the insert lands with ZERO timer advancement — never debounce-gated (fake timers)" (Tab-insert synchronous)
+  - "Enter while visible: dismiss + suppress recorded FIRST, then forwarded EXACTLY once so the inner editor submits" (Enter submits)
+  - "inner never mutated; forwarder intact; render closure is fresh per read" (the inner-instance-never-mutated pin)
+
+## Gauntlet item 5 — live smoke (spec/09 h2.57, BINDING): PASS
+
+Technique per spec/09 h2.57: ephemeral `pi --no-session` in a tmux 3.7c
+pane (200×50); store seeded by submitting one user message whose
+vocabulary yields `ze` → a 3-word menu (`zendesk | zendral | zorvex`, the
+2026-10 owner rank order) and `lw` → exactly one item (`lwlock`), then
+cancelling the turn. Probes typed ONE CHARACTER AT A TIME, each
+keystroke verified landed (cursor-position handshake) before the next —
+strictly slower than the sanctioned 0.10–0.12 s floor, so the anti-burst
+rule holds with margin (this build's pty-backlog stall is why the
+handshake replaced plain 0.12 s pacing — honesty notes below). Arrows /
+Tab / Enter / Escape were single events with 0.4–0.5 s settle; captures
+~0.6 s after the final keystroke; highlight read via `capture-pane -p -e`
+(`<acc>` = the theme accent). Zero instrumentation — no probe was ever
+added. Every capture carries its `# cursor:` header (cursor_y dropping
+46→47 is itself dismissal evidence).
+
+**Scenario (i) — un-entered ← mid-word: one-press boundary pass-through: PASS**
+(pacing as above; `ze` typed char-by-char)
+
+```
+# cursor: x=2 y=46
+ze                                          ← input line
+──────────────────────────────────────────
+INSERT
+zendesk | zendral | zorvex                  ← widget line (3 items, ≥2 as required)
+```
+
+ONE `Left`:
+
+```
+# cursor: x=1 y=47
+ze                                          ← caret moved 2→1
+──────────────────────────────────────────
+INSERT                                      ← NO widget line: dismissed
+```
+
+Reading: BOTH pass conditions hold on the SINGLE press — the caret moved
+one char left AND the widget line dismissed (y 46→47: the widget row left
+the layout). One press, both effects — v2 row 2 (boundary
+pass-through), no carousel entry. The second `Left` stayed plain movement
+(suppression held), and the line re-offered at a fresh word start
+(`ze ze`) with a FRESH generation — suppression released, pass-through
+armed again.
+
+**Scenario (ii) — → on a one-word line passes through: PASS**
+(pacing as above; `lw` typed char-by-char)
+
+```
+# cursor: x=2 y=46
+lw
+──────────────────────────────────────────
+INSERT
+lwlock                                      ← EXACTLY 1 item
+```
+
+ONE `Right`:
+
+```
+# cursor: x=2 y=46
+lw                                          ← caret unchanged (→ at EOL is plain-pi no-op parity)
+──────────────────────────────────────────
+INSERT
+lwlock                                      ← line STAYS visible, un-interacted
+```
+
+Reading: the one-word line never becomes interacted — Right is FORWARDED
+verbatim (row 3: count=1 → forward, nothing to enter). A following `Left`
+dismissed AND moved the caret — boundary pass-through, never a
+wrap-to-itself navigate; the one-word line never entered the carousel.
+
+**Scenario (iii) — multi-word line: enter, carousel both edges, Escape, re-offer: PASS**
+(pacing as above; arrows/Escape single events, 0.5 s settle; styled captures)
+
+```
+<acc>zendesk | zendral | zorvex             ← BEFORE: accent on word 1 (un-entered)
+```
+
+ONE `Right` enters the carousel (accent → word 2); ONE `Left` returns to
+word 1; ONE more `Left` WRAPS to the LAST word:
+
+```
+zendesk | zendral | <acc>zorvex             ← (0−1) mod 3 → LAST word
+```
+
+ONE `Right` WRAPS back to the FIRST (`(2+1) mod 3`). `Escape` then
+dismissed with suppression — the mode tag stayed verbatim INSERT
+(pi-vim never saw the consumed press) — and a fresh word (`ze ze`)
+re-offered a fresh generation whose one `Left` was boundary pass-through
+again (caret 5→4, dismissed).
+
+Reading: after interaction the carousel wraps BOTH edges; Escape is
+CONSUMED (dismiss + suppress, mode stays INSERT); the fresh generation is
+un-interacted — pass-through restored. The full lifecycle (un-entered →
+interacted → wrapped both edges → Escape → suppressed → re-offered fresh
+→ pass-through restored) is evidenced end-to-end.
+
+**Scenario (iv) — Tab inserts and Enter submits while visible: PASS**
+(pacing as above; Tab/Enter single events, 0.5 s settle)
+
+```
+# cursor: x=2 y=46                          BEFORE (un-interacted)
+ze
+──────────────────────────────────────────
+INSERT
+zendesk | zendral | zorvex
+```
+
+```
+# cursor: x=7 y=47                          AFTER ONE Tab
+zendesk                                     ← fragment replaced by the TOP word
+──────────────────────────────────────────
+INSERT                                      ← dismissed after accept
+```
+
+Reading: Tab inserted the top-ranked `zendesk`, consuming the typed
+fragment; the line dismissed on accept. (Documented side effect,
+verified live: a Tab accept ARMS the chain — the next word's widget then
+offered the single chain successor; a comma reset it to reach beat (b).
+Shipped P1.M1.T2 chain behavior, noted so reproducers expect it.)
+
+On an INTERACTED line (one `Right`, accent on word 2 of
+`zendesk zorvex, ze`), ONE Tab inserted `zendesk zorvex, zendral` — the
+HIGHLIGHTED word, not the top; the caret advanced 18→23, exactly the
+inserted word's length. And `Enter` on a visible 3-item line
+(`zendesk zorvex, zendral, ze`) dismissed the line and SUBMITTED:
+
+```
+# cursor: x=0 y=47                          AFTER ONE Enter — mode=INSERT
+ ⠋ Working                                  ← input cleared; message SUBMITTED
+──────────────────────────────────────────
+INSERT                                      ← line dismissed, nothing inserted
+```
+
+Reading: Enter never inserts — dismiss-then-forward per v2 row 10; the
+input cleared (x 27→0) and a model turn started on the submitted text.
+
+### Live-smoke honesty notes (carried from S3's record)
+
+- **Handshake pacing:** two early capture sessions were discarded after a
+  pty input backlog discovery (keystrokes replaying late); every scenario
+  was re-run with each keystroke observed landed before the next.
+- **Interrupt keybind (matches the M1 precedent):** `Ctrl+C` did not
+  cancel a working turn on this build; the live-cancel is Escape ×2
+  (pi-vim INSERT→NORMAL, then abort). Seed finalization worked as the
+  spec describes regardless.
+- **Re-offer threshold precision:** with the shipped `threshold: 2` a
+  1-char fragment produces no match state at all; the re-offer rendered
+  at the fresh word's SECOND char (`ze`) — the PASS rests on the
+  suppression-release observable (the line returns for a fresh word and
+  pass-through works again), not a 1-char offer (a config choice, not a
+  widget behavior).
+
+## Drift report (spec read-only this run): NONE FOUND
+
+The 9-row §1a verification read pass (2026-10-02, zero edits; one
+citation-path correction and one tolerated line-shift — neither is
+drift):
+
+1. **rule-4c containment deferral** — src/core/segment.ts:575–580:
+   additive-only defer comment + trailing-`_` straddle note verbatim at
+   the cited lines. ✅
+2. **chunk-boundary token carry** — src/pi/ingest.ts:402–428: BUG-004
+   carry comment verbatim; `let carry = ""` at :425. ✅
+3. **R_eff(9) float-compare + boundary probes** — test/score.test.ts:129:
+   it-line exact; `toBeCloseTo(82.147, 2)`; q=82 admits / q=83 rejects. ✅
+4. **reserved triggerChar advisory, notify "warning"** —
+   src/pi/config.ts:135–162, 237, 246+: `validateTriggerChar` (schema
+   unchanged — reserved ≠ invalid); `"warning"` at :237 and :246+. ✅
+5. **ingest gate CI bound 180 ms** — test/perf-gates.test.ts:309: it-line
+   exact ("3× the 60 ms budget"). ✅
+6. **eviction ONE pass / full 256-victim batch** — test/store.test.ts:431:
+   it-line exact; caps pinned at :427–428. ✅
+7. **Zorp/Zephra re-theme** — test/acceptance.test.ts:838 it-line exact
+   on `zephyr-chain.jsonl`; RESULTS.md:127–131 documents the retheme. ✅
+8. **ASCII `x` in session descriptions** — src/core/query.ts:480 and
+   :530 exact (the citation's `src/pi/query.ts` was a path typo — query
+   is a core stage; content verified in the real file, never U+00D7). ✅
+9. **BUG-001 chain arming at Tab-insert** — src/pi/widget.ts: the arming
+   gate now lives at **:1569–1572** (cited :1443–1460 shifted when the v2
+   wiring edits landed): tier-0 exclusion, `chain.arm(rec.key)` at the
+   store key, `chainGrant.reset()` per acceptance — content verified. ✅
+
+Verdict: **9/9 AGREE** — no spec-vs-repo mismatch surfaced; `spec/*.md`
+untouched. Residuals: none new this sweep; the M3 record's README-cosmetic
+"these three gates" prose (the table now carries five rows) persists —
+non-functional, left per don't-blanket-rewrite, outside S1's invariant-1
+scope.
+
+## Tree cleanliness (post-smoke)
+
+- Zero instrumentation: no `appendFileSync` probe was ever added; the
+  sanctioned `HAPAX_SMOKE_LOG` seam was never used (grep proof in S3's
+  record: no matches in `src/pi/provider.ts` / `src/pi/widget.ts`).
+- At smoke time `git status --porcelain src/ test/ spec/ README.md docs/`
+  was empty; at append time the only tree changes are `plan/` research
+  artifacts plus this docs append — zero files under `src/`, `test/`, or
+  `spec/`.
+- The tmux session `hapax-smoke` was killed after the captures; nothing
+  persists.
+
+## Reproduction
+
+```bash
+git rev-parse HEAD                                # a2e9470… (or later; re-capture counts if src/ or test/ moved)
+npm run check                                     # exit 0
+npm test                                          # 38 files / 1126 passed / 1 skipped
+npx vitest --run test/perf-gates.test.ts --disable-console-intercept   # 9/9 gates
+npm run bench                                     # reporting numbers (the five gate rows)
+npx vitest --run test/widget.test.ts              # 80-case v2 key battery
+# Live smoke (spec/09 h2.57): tmux 200×50 + pi --no-session; seed a message
+# whose vocabulary yields `ze` → zendesk/zendral/zorvex and `lw` → lwlock;
+# Enter; cancel the turn (Escape ×2 on this build); then ONE KEY AT A TIME
+# (handshake pacing — each keystroke observed landed before the next):
+#   z e + Left        → line dismissed AND caret moved (one press)
+#   l w + Right       → one-word line forwarded, stays un-interacted
+#   z e + Right/Left  → enter carousel; edges WRAP both ways; Escape
+#                       dismisses (mode stays INSERT); fresh word re-offers
+#   Tab               → inserts top (un-interacted) / highlighted (interacted)
+#   Enter             → submits the message, never inserts
+```
