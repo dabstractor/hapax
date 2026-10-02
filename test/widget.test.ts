@@ -10,16 +10,21 @@
  *    pins over the composed proxy editor (patterns from
  *    test/editor-enter.test.ts).
  *
- * 2. Key handling (spec §07 h3.9, plan 003 P1.M3.T3.S1 + S2): while
- *    the line is visible the composed handleInput consumes ←/→/↑/↓
- *    (navigate; up≡left, down≡right), ↑/← on the FIRST word
- *    (boundary-Esc: consumed + hidden + suppressed), →/↓ on the LAST
- *    word (clamp: consumed, no movement) and Escape (dismiss +
- *    suppress). S2 (P1.M3.T3.S2) adds the completion keys: Tab
- *    SYNCHRONOUSLY inserts the highlighted candidate's display string
- *    over the word/#fragment span (consumed — never delegated, never
- *    debounce-gated, never menu-opening) and Enter dismisses the line
- *    then forwards so the inner editor still submits. Every other key
+ * 2. Key handling (spec §07 h3.9, 2026-10 arrow model v2; plan 003
+ *    P1.M3.T3.S1 + S2 wiring, plan 005 P1.M1.T1.S3 battery): while the
+ *    line is visible the composed handleInput consumes the four arrows
+ *    and Escape — but arrows are consumed only once the list is ENTERED
+ *    (the first highlight-moving press marks the generation `interacted`;
+ *    from then on the edges wrap carousel-style over the RENDERED
+ *    count). On an un-entered line ↑/← at the FIRST word passes through
+ *    verbatim (dismiss + suppress + the caret moves on that same press
+ *    — one-press plain-pi parity) and →/↓ with nothing to navigate (a
+ *    one-word list) forwards with the line staying. Escape dismisses +
+ *    suppresses; Tab SYNCHRONOUSLY inserts the highlighted candidate's
+ *    display string over the word/#fragment span (consumed — never
+ *    delegated, never debounce-gated, never menu-opening) and Enter
+ *    dismisses the line then forwards so the inner editor still
+ *    submits. Every other key
  *    — and EVERY key while hidden or empty — forwards verbatim,
  *    exactly once. The pure
  *    decision table (decideWidgetKey) is tested directly; consumption,
@@ -485,8 +490,10 @@ describe("widget key handling — navigation (spec §07 h3.9: arrows move the hi
     h.show(["alpha", "beta", "gamma"]);
     h.press(RIGHT);
     expect(h.state.highlightIndex).toBe(1);
+    expect(h.state.interacted).toBe(true); // the entry press starts the generation
     h.press(DOWN);
     expect(h.state.highlightIndex).toBe(2);
+    expect(h.state.interacted).toBe(true); // …and it stays set across navigates
     expect(h.state.hidden).toBe(false); // navigation never dismisses
     expect(h.innerCalls).toEqual([]); // consumed — the caret cannot move
   });
@@ -512,14 +519,18 @@ describe("widget key handling — navigation (spec §07 h3.9: arrows move the hi
       "Zendesk | zephyr",
     ]);
     h.press(RIGHT); // enters the list: 0 → 1 (rendered count 2)
-    expect(h.state.highlightIndex).toBe(1);
+    expect(h.state.highlightIndex).toBe(1); // the RENDERED end — entry lands there
+    expect(h.state.interacted).toBe(true); // entry sets the generation flag
     h.press(RIGHT); // interacted edge at the rendered end → WRAPS to 0
     expect(h.state.highlightIndex).toBe(0);
     h.press(DOWN); // 0 → 1
     expect(h.state.highlightIndex).toBe(1);
     h.press(LEFT); // 1 → 0 (interior, either generation)
     expect(h.state.highlightIndex).toBe(0);
-    expect(h.state.hidden).toBe(false);
+    h.press(UP); // interacted edge at 0 → wraps BACK to the rendered last (1)
+    expect(h.state.highlightIndex).toBe(1);
+    expect(h.state.hidden).toBe(false); // never dismissed
+    expect(h.innerCalls).toEqual([]); // all wrap presses are consumed
   });
 });
 
@@ -536,24 +547,69 @@ describe("widget key handling — boundary pass-through (spec §07 h3.9 v2: un-e
         `key ${JSON.stringify(key)}`,
       ).toBe(true); // a pass-through press IS an explicit dismissal
       expect(h.innerCalls, `key ${JSON.stringify(key)}`).toEqual([key]); // forwarded verbatim — exactly once (guard seam)
+      // Pass-through never ENTERS the generation, and the press ticks
+      // the input clock exactly ONCE (the guard's delegation seam — the
+      // wiring hides + forwards BEFORE any consumed-tick block).
+      expect(h.state.interacted, `key ${JSON.stringify(key)}`).toBe(false);
+      expect(h.onKeystroke, `key ${JSON.stringify(key)}`).toHaveBeenCalledTimes(1);
     }
   });
 
   it("a single-item list: ↑/← pass-through-dismiss; →/↓ forwards (nothing to enter, no consumption, no dismissal)", () => {
-    const up = makeKeyHarness();
-    up.show(["solo"]);
-    up.press(UP);
-    expect(up.state.hidden).toBe(true);
-    expect(up.machine.getState().suppressUntilWordStart).toBe(true);
-    expect(up.innerCalls).toEqual([UP]);
+    for (const key of [UP, LEFT]) {
+      const up = makeKeyHarness();
+      up.show(["solo"]);
+      const out = up.press(key);
+      expect(out, `key ${JSON.stringify(key)}`).toBe(`inner:${key}`);
+      expect(up.state.hidden, `key ${JSON.stringify(key)}`).toBe(true);
+      expect(
+        up.machine.getState().suppressUntilWordStart,
+        `key ${JSON.stringify(key)}`,
+      ).toBe(true);
+      expect(up.innerCalls, `key ${JSON.stringify(key)}`).toEqual([key]);
+    }
 
-    const down = makeKeyHarness();
-    down.show(["solo"]);
-    down.press(DOWN);
-    expect(down.state.hidden).toBe(false); // forward — NOT a dismissal
-    expect(down.state.highlightIndex).toBe(0);
-    expect(down.machine.getState().suppressUntilWordStart).toBe(false);
-    expect(down.innerCalls).toEqual([DOWN]); // forwarded verbatim
+    for (const key of [RIGHT, DOWN]) {
+      const down = makeKeyHarness();
+      down.show(["solo"]);
+      const out = down.press(key);
+      expect(out, `key ${JSON.stringify(key)}`).toBe(`inner:${key}`); // return value passes through
+      expect(down.state.hidden, `key ${JSON.stringify(key)}`).toBe(false); // forward — NOT a dismissal
+      expect(down.state.highlightIndex, `key ${JSON.stringify(key)}`).toBe(0);
+      expect(
+        down.machine.getState().suppressUntilWordStart,
+        `key ${JSON.stringify(key)}`,
+      ).toBe(false);
+      expect(down.innerCalls, `key ${JSON.stringify(key)}`).toEqual([key]); // forwarded verbatim
+      // The one-word generation NEVER becomes interacted: a forward is
+      // not an entry, so the flag stays false.
+      expect(down.state.interacted, `key ${JSON.stringify(key)}`).toBe(false);
+    }
+
+    // …and because that generation never entered, ↑ on the same one-word
+    // line STILL boundary-passes-through (dismiss + suppress + forward).
+    const neverEntered = makeKeyHarness();
+    neverEntered.show(["solo"]);
+    neverEntered.press(DOWN); // forwarded — no entry
+    expect(neverEntered.state.interacted).toBe(false);
+    neverEntered.press(UP);
+    expect(neverEntered.state.hidden).toBe(true);
+    expect(neverEntered.machine.getState().suppressUntilWordStart).toBe(true);
+    expect(neverEntered.innerCalls).toEqual([DOWN, UP]);
+  });
+
+  it("a fresh generation re-arms pass-through: after navigating (flag set), show(new) resets the generation and ↑ passes through again", () => {
+    const h = makeKeyHarness();
+    h.show(["alpha", "beta", "gamma"]);
+    h.press(RIGHT); // enter the generation
+    expect(h.state.interacted).toBe(true);
+    h.show(["xray", "yankee"]); // a genuinely-new result set — fresh generation
+    expect(h.state.highlightIndex).toBe(0); // set() resets the highlight…
+    expect(h.state.interacted).toBe(false); // …and the flag
+    h.press(UP); // un-entered first word again → pass-through fires
+    expect(h.innerCalls).toEqual([UP]); // forwarded verbatim on the same press
+    expect(h.state.hidden).toBe(true);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(true);
   });
 });
 
@@ -637,7 +693,7 @@ describe("widget key handling — v2 wiring observables (S2: tick accounting + i
 });
 
 describe("widget key handling — Escape and suppression taxonomy (spec §07 h3.9)", () => {
-  it("Escape: line hides + suppressed (explicit dismissal), press consumed from any highlight index", () => {
+  it("Escape: line hides + suppressed (explicit dismissal), consumed from any highlight index", () => {
     const h = makeKeyHarness();
     h.show(["alpha", "beta", "gamma"]);
     h.press(RIGHT); // mid-list — Escape dismisses from anywhere
@@ -645,6 +701,40 @@ describe("widget key handling — Escape and suppression taxonomy (spec §07 h3.
     expect(h.state.hidden).toBe(true);
     expect(h.machine.getState().suppressUntilWordStart).toBe(true);
     expect(h.innerCalls).toEqual([]); // consumed
+  });
+
+  it("Escape at EVERY state: un-interacted, interacted, interior, single-word — hides, suppresses, consumed", () => {
+    const expectEscaped = (
+      h: ReturnType<typeof makeKeyHarness>,
+      label: string,
+    ): void => {
+      expect(h.state.hidden, label).toBe(true);
+      expect(h.machine.getState().suppressUntilWordStart, label).toBe(true);
+      expect(h.innerCalls, label).toEqual([]); // consumed
+    };
+    const unentered = makeKeyHarness();
+    unentered.show(["alpha", "beta", "gamma"]);
+    unentered.press(ESC);
+    expectEscaped(unentered, "un-interacted");
+
+    const interacted = makeKeyHarness();
+    interacted.show(["alpha", "beta", "gamma"]);
+    interacted.press(RIGHT); // enter the generation
+    expect(interacted.state.interacted).toBe(true);
+    interacted.press(ESC);
+    expectEscaped(interacted, "interacted (index 1)");
+
+    const interior = makeKeyHarness();
+    interior.show(["alpha", "beta", "gamma"]);
+    interior.press(DOWN);
+    interior.press(DOWN); // index 2
+    interior.press(ESC);
+    expectEscaped(interior, "interior index 2");
+
+    const single = makeKeyHarness();
+    single.show(["solo"]);
+    single.press(ESC);
+    expectEscaped(single, "single-word");
   });
 
   it("a close WITHOUT explicit dismissal (forwarded key → machine closes) never suppresses; onDismissed(false) neither", async () => {
@@ -703,6 +793,23 @@ describe("widget key handling — input clock (exactly one tick per keypress)", 
     expect(h.onKeystroke).toHaveBeenCalledTimes(3);
     h.press("x"); // forwarded → the guard's clock seam (its normal path)
     expect(h.onKeystroke).toHaveBeenCalledTimes(4);
+  });
+
+  it("one-word forward + mixed sequence: total ticks equal total presses (no double-tick in any class)", () => {
+    const h = makeKeyHarness();
+    h.show(["solo"]);
+    h.press(DOWN); // one-word un-entered forward — the guard's seam
+    expect(h.onKeystroke).toHaveBeenCalledTimes(1);
+    expect(h.innerCalls).toEqual([DOWN]);
+
+    h.show(["alpha", "beta", "gamma"]); // fresh generation
+    h.press(RIGHT); // consumed entry — widget layer
+    h.press(ESC); // consumed dismissal
+    h.show(["alpha", "beta", "gamma"]); // re-arm pass-through
+    h.press(UP); // boundary pass-through — ONE total (the double-tick trap)
+    h.press("x"); // forwarded text — the guard's seam
+    expect(h.onKeystroke).toHaveBeenCalledTimes(5); // 5 presses, 5 ticks
+    expect(h.innerCalls).toEqual([DOWN, UP, "x"]); // verbatim evidence
   });
 });
 
@@ -848,6 +955,29 @@ describe("widget key handling — Tab inserts the highlighted word (spec §07 h2
     expect(h.calls).toEqual([`setText:${JSON.stringify("zephyr")}`, "caret:6"]);
     // Typed fragment was lowercase "ze"; the insert is the display string.
     expect(h.buf.lines).toEqual(["zephyr"]);
+  });
+
+  it("Tab/Enter ignore the interaction state: navigating to index 1 (interacted) then Tab inserts THAT word; Enter still dismiss-then-forwards", () => {
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
+    h.show(["Zendesk", "zephyr"]);
+    h.press(RIGHT); // consumed navigate: 0 → 1, generation entered
+    expect(h.state.highlightIndex).toBe(1);
+    expect(h.state.interacted).toBe(true);
+
+    h.press("\t");
+
+    expect(h.buf.lines).toEqual(["zephyr"]); // the INTERACTED index's word
+    expect(h.innerCalls).toEqual([]); // still consumed — the flag changes nothing
+
+    // Enter likewise ignores the flag: from an interacted state it
+    // dismiss-then-forwards exactly as un-interacted.
+    const hEnter = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
+    hEnter.show(["Zendesk", "zephyr"]);
+    hEnter.press(RIGHT);
+    expect(hEnter.state.interacted).toBe(true);
+    hEnter.press("\r");
+    expect(hEnter.state.hidden).toBe(true); // dismissed
+    expect(hEnter.innerCalls).toEqual(["\r"]); // forwarded to submit
   });
 
   it("trigger span: 'foo #ze' → 'foo Zendesk' — the trigger char is consumed together with the fragment", () => {
@@ -1098,7 +1228,7 @@ describe("decideWidgetKey — pure decision table v2 (2026-10 arrow model, no ed
     expect(decideWidgetKey(RIGHT, true, 3, 0, false)).toEqual({ action: "navigate", delta: 1 });
   });
 
-  it("rows 5/6 — interacted edges WRAP end-to-end (carousel; the clamp is retired as unreachable)", () => {
+  it("rows 5/6 — interacted edges WRAP end-to-end (carousel over the modular ±1)", () => {
     // Wrap = plain ±1: the wiring applies it MODULARLY, so −1 from the
     // first lands at the last and +1 from the last lands at the first
     // (the design sketch's ±(count−1) deltas land at the wrong index).

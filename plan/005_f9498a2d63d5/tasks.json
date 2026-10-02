@@ -11,14 +11,14 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Model v2 in code: generation state, decision table, wiring, test battery",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Implement the v2 interaction model in src/pi/widget.ts (per-generation interacted flag, pure decideWidgetKey v2 decision table, widgetHandleInput wiring) and rewrite test/widget.test.ts from the old boundary-Esc/clamp battery to the spec/09 v2 battery.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Generation state + decideWidgetKey v2 + wiring + test battery",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Single coherent feature: (a) per-generation interacted flag on WidgetState with reset at the existing result-set-change site; (b) decideWidgetKey v2 decision table (boundary-pass-through replaces boundary-esc, clamp deleted, wrap-on-interacted); (c) widgetHandleInput wiring following the enter-submit dismiss-then-forward precedent; (d) full widget.test.ts battery rewrite per spec/09:134–159.",
               "subtasks": [
                 {
@@ -71,7 +71,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S3",
                   "title": "widget.test.ts battery rewrite to the v2 model (spec/09 bullets)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1",
@@ -112,7 +112,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "README sweep: re-mirror invariant 1 from spec/SPEC.md, purge stale old-model claims",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",
@@ -134,7 +134,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "Full gauntlet green + §1a drift spot-check report",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",
