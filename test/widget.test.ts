@@ -51,6 +51,7 @@ import type { ChainMachine } from "../src/pi/provider.js";
 import type { ChainGrantTracker } from "../src/pi/chain-grant.js";
 import type { WidgetState } from "../src/pi/widget.js";
 import {
+  createLineClaim,
   createWidgetEditorFactory,
   decideWidgetKey,
   isWidgetWrapper,
@@ -1906,5 +1907,143 @@ describe("widget chain end-to-end — BUG-001 acceptance (PRD §Issue 1 repro)",
       "Alphaword",
       "Betaword",
     ]);
+  });
+});
+
+// ── line claim (spec §07 "Line claim", 2026-10 owner rule) ───────────────────
+
+/** Claim harness: the key harness's shape plus an INJECTED claim
+ *  controller (the same seam index.ts uses for before_agent_start) and
+ *  a render() helper — arming lives at the render override, so every
+ *  test drives real renders, not just set(). */
+const makeClaimHarness = () => {
+  const innerCalls: string[] = [];
+  const raw = {
+    handleInput: (data: string): string => {
+      innerCalls.push(data);
+      return `inner:${data}`;
+    },
+    getLines: (): string[] => ["hello"],
+    getCursor: (): { line: number; col: number } => ({ line: 0, col: 0 }),
+    render: (): string[] => ["hello"],
+  };
+  const claim = createLineClaim();
+  const opts: WidgetLayerOptions = {
+    inner: () => raw,
+    store: {} as unknown as CandidateStore,
+    config: cfg(),
+    chain: {} as unknown as ChainMachine,
+    claim,
+    restoreReady: Promise.resolve(),
+    onKeystroke: () => {},
+  };
+  const editor = createWidgetEditorFactory(opts)(undefined, {}, undefined);
+  const state = widgetStateOf(editor)! as WidgetState & {
+    readonly hidden: boolean;
+  };
+  const render = (width = 80): string[] =>
+    (editor.render as (w: number) => string[])(width);
+  const press = (data: string): unknown =>
+    (editor.handleInput as (d: string) => unknown)(data);
+  const show = (displays: string[]): void =>
+    state.set(displays.map((display) => ({ display })));
+  return { editor, state, claim, render, press, show, innerCalls };
+};
+
+describe("line claim — the row is owned for the prompt's duration (spec §07, 2026-10)", () => {
+  it("a prompt that never shows a result set never grows a row (unclaimed = byte-identical inner lines)", () => {
+    const h = makeClaimHarness();
+    expect(h.claim.held()).toBe(false);
+    expect(h.render()).toEqual(["hello"]);
+    // hide() without ever having shown: still no row, claim never armed.
+    h.state.hide();
+    expect(h.render()).toEqual(["hello"]);
+    expect(h.claim.held()).toBe(false);
+  });
+
+  it("the first NON-EMPTY RENDER arms the claim — set() alone does not (only a painted line claims)", () => {
+    const h = makeClaimHarness();
+    h.show(["Zendesk", "zephyr"]);
+    expect(h.claim.held()).toBe(false); // not yet rendered
+    expect(h.render()).toEqual(["hello", "Zendesk | zephyr"]);
+    expect(h.claim.held()).toBe(true);
+  });
+
+  it("claimed: every hide state renders BLANK — hide(), an emptied set, dismissal — never back to byte-identical", () => {
+    const h = makeClaimHarness();
+    h.show(["Zendesk"]);
+    h.render(); // arm
+    h.state.hide(); // dismiss/suppress/zero — the S2 hide path
+    expect(h.render()).toEqual(["hello", ""]); // blank row, NOT removed
+    h.show([]); // zero-candidate set
+    expect(h.render()).toEqual(["hello", ""]);
+    h.show(["zlock"]); // re-show, then Escape dismissal (suppression window)
+    h.render();
+    h.press("\x1b");
+    expect(h.render()).toEqual(["hello", ""]); // suppressed = blank, still there
+    expect(h.claim.held()).toBe(true);
+  });
+
+  it("an unfittable line never arms the claim (invariant 3 holds pre-claim)", () => {
+    const h = makeClaimHarness();
+    h.show(["averyveryverylongword"]); // 21 chars — wider than the render width
+    expect(h.render(16)).toEqual(["hello"]); // no content line fits
+    expect(h.claim.held()).toBe(false); // never claimed by a non-paint
+    // …and a later fittable paint still arms normally.
+    h.show(["zlock"]);
+    expect(h.render(16)).toEqual(["hello", "zlock"]);
+    expect(h.claim.held()).toBe(true);
+  });
+
+  it("the submit key releases the claim — the visible enter-submit arm and the hidden blank-row forward alike", () => {
+    // Visible line: Enter dismisses-then-forwards (submits) — released.
+    const a = makeClaimHarness();
+    a.show(["Zendesk"]);
+    a.render(); // arm
+    a.press("\r");
+    expect(a.innerCalls).toEqual(["\r"]); // forwarded — the inner submits
+    expect(a.claim.held()).toBe(false);
+    expect(a.render()).toEqual(["hello"]); // row gone until a next first-show
+
+    // Claimed-blank row: Enter forwards plainly — released identically.
+    const b = makeClaimHarness();
+    b.show(["Zendesk"]);
+    b.render(); // arm
+    b.state.hide();
+    expect(b.render()).toEqual(["hello", ""]);
+    b.press("\r");
+    expect(b.claim.held()).toBe(false);
+    expect(b.render()).toEqual(["hello"]);
+  });
+
+  it("non-submit keys never release — typing, arrows, and Escape keep the reservation", () => {
+    const h = makeClaimHarness();
+    h.show(["Zendesk"]);
+    h.render(); // arm
+    h.state.hide(); // claimed-blank
+    h.press("a"); // plain typing (forwarded)
+    h.press("\x1b"); // Escape while hidden (forwarded)
+    h.press("\u001b[C"); // right arrow while hidden (forwarded)
+    expect(h.innerCalls).toEqual(["a", "\x1b", "\u001b[C"]);
+    expect(h.claim.held()).toBe(true);
+    expect(h.render()).toEqual(["hello", ""]); // still reserved
+  });
+
+  it("release is idempotent and the next first-show re-arms", () => {
+    const h = makeClaimHarness();
+    h.show(["Zendesk"]);
+    h.render(); // arm
+    // The real release sequence (before_agent_start after a submit): the
+    // line is already dismissed, THEN the wiring releases externally.
+    h.state.hide();
+    h.claim.release();
+    h.claim.release(); // idempotent
+    expect(h.render()).toEqual(["hello"]); // reservation withdrawn
+    // Next prompt generation: a fresh first-show claims again.
+    h.show(["zlock"]);
+    expect(h.render()).toEqual(["hello", "zlock"]);
+    expect(h.claim.held()).toBe(true);
+    h.state.hide();
+    expect(h.render()).toEqual(["hello", ""]); // blank again — owned
   });
 });

@@ -58,10 +58,12 @@ import {
 } from "./provider.js";
 import type { ChainMachine } from "./provider.js";
 import {
+  createLineClaim,
   createWidgetEditorFactory,
   isWidgetWrapper,
   widgetOptsOf,
 } from "./widget.js";
+import type { LineClaim } from "./widget.js";
 
 /**
  * Dictionary path resolution lives in ./paths.js (P1.M3.T5.S2): the seam
@@ -140,6 +142,12 @@ export default function hapax(pi: ExtensionAPI): void {
   let pipeline: IngestPipeline | null = null;
   let displayProvider: { dispose(): void } | null = null;
   let chain: ChainMachine | null = null;
+  // Line claim (spec §07 "Line claim", 2026-10): the widget row's
+  // per-prompt reservation controller. Fresh per session and injected
+  // into the widget composition so before_agent_start can release it
+  // alongside the chain (submit-key release lives in the widget key
+  // layer itself; this slot is the belt-and-braces turn boundary).
+  let claim: LineClaim | null = null;
   let disabled = false;
 
   pi.on("session_start", (event, ctx) => {
@@ -162,6 +170,11 @@ export default function hapax(pi: ExtensionAPI): void {
     // store/pipeline — cleared on session_shutdown alongside them).
     const sessionChain = createChainMachine();
     chain = sessionChain;
+    // Line claim (spec §07): one controller per session, shared with the
+    // widget composition below (render arms it at the first non-empty
+    // paint; the submit key and before_agent_start release it).
+    const sessionClaim = createLineClaim();
+    claim = sessionClaim;
     lazyDict = createLazyDictionary(resolveDictPath(), () => {
       ctx.ui.notify("hapax: dictionary failed to load", "error");
       disabled = true; // permanent for this extension runtime
@@ -246,6 +259,7 @@ export default function hapax(pi: ExtensionAPI): void {
           config, // triggerChar, maxSuggestions, menuDelayMs,
           // fuzzThreshold, trigger modes… (S2/T2/T3 consume)
           chain: sessionChain,
+          claim: sessionClaim, // render-armed; submit key + turn boundary release
           restoreReady, // startup gate — shared with the fallback
           onKeystroke: tickInputClock, // shared input clock (hesitation timing)
         }),
@@ -280,6 +294,7 @@ export default function hapax(pi: ExtensionAPI): void {
             store: sessionStore, // THIS session's store — never the stale one
             config,
             chain: sessionChain,
+            claim: sessionClaim, // fresh composition → unclaimed row (rebind release)
             restoreReady,
             onKeystroke: tickInputClock,
           }),
@@ -393,6 +408,7 @@ export default function hapax(pi: ExtensionAPI): void {
     pipeline = null;
     lazyDict = null;
     chain = null;
+    claim = null; // spec §07 Line claim — session_shutdown release
     store = null;
   });
 
@@ -400,5 +416,9 @@ export default function hapax(pi: ExtensionAPI): void {
     // New user turn → the chain machine goes idle (P2.M2.T2.S1, PRD §07
     // h2.43). Still no return value: pi would treat a result as a reply.
     chain?.reset();
+    // …and the line claim releases (spec §07 "Line claim" release set:
+    // submit / turn reset / rebind — the submit key usually got here
+    // first; this covers any submission path the key layer never saw).
+    claim?.release();
   });
 }

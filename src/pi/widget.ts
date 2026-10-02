@@ -28,9 +28,14 @@
  * the ONLY width source (pi-tui's TUI exposes no width getter, r4 doc
  * §2), so the last seen width is cached. Overflow drops the RIGHTMOST
  * (lowest-ranked) items; an unfittable single item means NO line.
- * Zero candidates / hidden state / no width yet → the inner's lines are
- * returned BYTE-IDENTICAL (invariant 3: the widget is structurally
- * absent, never a blank line). The accent highlight is
+ * Zero candidates / hidden state / no width yet → NO CONTENT line: the
+ * inner's lines are returned BYTE-IDENTICAL while the row is UNCLAIMED;
+ * while CLAIMED (spec §07 Line claim, 2026-10) a single BLANK line is
+ * appended instead — the first non-empty render claims the row for the
+ * prompt's duration (blank-when-empty, never row-removal, released on
+ * submit / turn reset / session rebind), so the input area never jumps
+ * by one line mid-prompt. Invariant 3 governs CONTENT — a blank
+ * reserved row paints none. The accent highlight is
  * theme.selectList.selectedText, applied to the leftmost item by
  * default and reset to index 0 on every set(); styling is applied LAST
  * (width arithmetic runs on plain strings — ANSI codes inflate
@@ -87,6 +92,16 @@
  * repaints — decisions land at the next natural per-keystroke render;
  * async gate wakes (restoreReady settle / 500 ms bound) surface then
  * too (accepted; live-verify in P1.M3.T4.S1).
+ *
+ * Line claim (2026-10 owner rule, spec §07 "Line claim"): the row
+ * directly below the editor, once first shown for a prompt, is OWNED
+ * until an interface reflow — empty result sets render BLANK, never
+ * row-removal (kills the 1-line input-area bounce; the stock vertical
+ * menu reserves its space the same way). Arming happens at the render
+ * override (only a real non-empty painted line claims); release hooks:
+ * the submit key in this file's key layer (the canonical reflow) and
+ * before_agent_start/session rebind in index.ts (belt and braces —
+ * the claim object is created per session and shared with the wiring).
  *
  * Idempotence: the built factory is stamped WIDGET_WRAPPED (mirroring
  * editor.ts's WRAPPED) so a reload cycle re-running session_start with
@@ -148,6 +163,13 @@ export interface WidgetLayerOptions {
    *  creates one, so production wiring is zero-config; injected → tests
    *  can spy/reset or share an instance deliberately. */
   grant?: ChainGrantTracker;
+  /** Line-claim controller (spec §07 "Line claim", 2026-10): the row,
+   *  once first shown for a prompt, renders BLANK-while-empty until
+   *  release (submit / turn reset / session rebind) instead of being
+   *  removed. Absent → the factory creates one per built editor;
+   *  injected → the session wiring (index.ts) can release it on
+   *  before_agent_start, and tests can drive/assert it directly. */
+  claim?: LineClaim;
   /** startup restore gate signal — shared with the fallback path's
    *  createStartupGate (resolves when history replay settles). */
   restoreReady: Promise<void>;
@@ -254,12 +276,11 @@ function fitItems(
 
 /**
  * Build the one-line widget (spec §07 h3.8): candidates joined by
- * " | " in rank order, display strings ONLY. Returns null when the
- * line must be STRUCTURALLY ABSENT (invariant 3, h2.2 — never a blank
- * line):
- *   - zero items → null;
- *   - not even the first item fits `width` → null (a line that can't
- *     hold a word must not exist);
+ * " | " in rank order, display strings ONLY. Returns null when there
+ * is no CONTENT line (invariant 3 — zero items, or not even the first
+ * item fits `width`); the render GLUE decides absent-vs-blank from
+ * there per the Line claim (unclaimed → byte-identical inner lines,
+ * claimed → one blank row, spec §07).
  *
  * Caps and the width fit are fitItems (above). `accent` is applied
  * last, only to the item at `highlightIndex` (clamped into the
@@ -342,6 +363,54 @@ function createWidgetState(): WidgetStateInternal {
 export function widgetStateOf(editor: unknown): WidgetState | undefined {
   if (editor === null || typeof editor !== "object") return undefined;
   return (editor as { [WIDGET_STATE]?: WidgetState })[WIDGET_STATE];
+}
+
+// ── Line claim (spec §07 "Line claim", 2026-10 owner rule) ───────────────────
+
+/** Per-prompt ROW reservation controller (spec §07 "Line claim"):
+ *  once the widget line first renders a NON-EMPTY result set during a
+ *  prompt, the row directly below the editor is OWNED by hapax until
+ *  an interface reflow — every would-be-hide state (zero candidates,
+ *  disqualification, trailing-space close, dismissal, suppression,
+ *  stock contexts) renders the row BLANK instead of removing it, so
+ *  the input area never jumps by one line mid-prompt (the stock
+ *  vertical menu reserves its space the same way until pi-tui
+ *  reflows, e.g. on submit).
+ *
+ *  Arming lives at the render override (only a line that actually
+ *  painted claims — an unfittable word never does); release lives at
+ *  the submit key (this file's key layer) and at before_agent_start /
+ *  session rebind (index.ts wiring, via the shared instance passed in
+ *  WidgetLayerOptions.claim). Deliberately NOT part of the visibility
+ *  machine: the claim never changes show/hide/suppress decisions — it
+ *  is a RENDER-layer concern (blank vs absent), and keeping it here
+ *  means the machine's tests are untouched. */
+export interface LineClaim {
+  /** True once the row is claimed for the current prompt (armed at the
+   *  first non-empty render; false again after release). */
+  held(): boolean;
+  /** Arm the claim (idempotent) — called by the render override exactly
+   *  when a non-empty widget line is appended. */
+  arm(): void;
+  /** Release the claim (idempotent) — the row stops rendering until a
+   *  later first-show re-arms it. */
+  release(): void;
+}
+
+/** Fresh UNCLAIMED controller (one per session in index.ts, injected
+ *  into the widget factory; the factory also creates one per built
+ *  editor when absent — tests may pass their own). */
+export function createLineClaim(): LineClaim {
+  let held = false;
+  return {
+    held: () => held,
+    arm: () => {
+      held = true;
+    },
+    release: () => {
+      held = false;
+    },
+  };
 }
 
 // ── T2/S1: the visibility machine (spec §07 h3.10, "auto-open, re-based") ───
@@ -1296,9 +1365,10 @@ const identityAccent = (text: string): string => text;
  * bound render, never memoized; pi-tui must not see a cached identity,
  * r4 §2 risk note). The closure caches the width (render(width) is the
  * only terminal-width source), calls the inner's render, and appends at
- * most one widget line per the renderWidgetLine contract — or returns
- * the inner's lines byte-identical when there is no line (zero
- * candidates, hidden, unfittable).
+ * most one widget line per the renderWidgetLine contract — or, when
+ * there is no content line, returns the inner's lines byte-identical
+ * while UNCLAIMED and appends one BLANK line while CLAIMED (Line
+ * claim, spec §07).
  */
 export function createWidgetEditorFactory(
   opts: WidgetLayerOptions,
@@ -1307,6 +1377,11 @@ export function createWidgetEditorFactory(
     // Per-built-editor widget state: a new editor instance starts
     // empty/hidden; T2's visibility machine drives set/hide.
     const state = createWidgetState();
+
+    // Line claim (spec §07, 2026-10): the shared controller from the
+    // session wiring when provided (index.ts releases it on
+    // before_agent_start / rebind), else one per built editor.
+    const claim = opts.claim ?? createLineClaim();
 
     // ONE-SHOT GRANT tracker (spec/07:450–457, plan 004 T2.S2) — ONE
     // instance per built editor, owned HERE next to the chain machine and
@@ -1453,6 +1528,18 @@ export function createWidgetEditorFactory(
     // so the caret moves); forwarded keys reach the guard verbatim,
     // exactly once.
     const widgetHandleInput = (data: string): unknown => {
+      // Line claim release (spec §07 "Line claim"): the submit key is
+      // the canonical interface reflow — the row is released BEFORE the
+      // decision so both arms (the visible enter-submit dismiss-then-
+      // forward AND the plain forward while hidden/blank) release
+      // identically. isSubmitKey is the guard's OWN test (custom
+      // keybindings consistent by construction). Best-effort: a claim
+      // hiccup never breaks input.
+      try {
+        if (isSubmitKey(data, keybindings)) claim.release();
+      } catch {
+        /* claim failures never break input */
+      }
       let decision: WidgetKeyDecision;
       try {
         decision = decideWidgetKey(
@@ -1617,9 +1704,17 @@ export function createWidgetEditorFactory(
                     highlightIndex: state.highlightIndex,
                     accent,
                   });
-            // Invariant 3: no line → the inner's lines BYTE-IDENTICAL
-            // (never a blank appended line).
-            return line === null ? lines : [...lines, line];
+            if (line !== null) {
+              // Line claim ARM (spec §07): only a line that actually
+              // painted claims the row — an unfittable word never does.
+              claim.arm();
+              return [...lines, line];
+            }
+            // No content line: UNCLAIMED → the inner's lines BYTE-IDENTICAL
+            // (the widget is structurally absent); CLAIMED → one BLANK row
+            // — the reservation is never withdrawn mid-prompt (invariant 3
+            // governs CONTENT, and a blank row paints none).
+            return claim.held() ? [...lines, ""] : lines;
           };
         }
         return innerRecord[prop];
