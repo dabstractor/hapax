@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "Widget arrow interaction model v2 — boundary pass-through + interaction carousel",
-      "status": "Planned",
+      "status": "Ready",
       "description": "Code-catches-up delta (same shape as the tier-0 run): spec/07 'Widget key handling', SPEC.md invariant 1, and spec/09 are ALREADY at model v2 and are READ-ONLY; only code, tests, the README invariant mirror, and the DoD record change. Boundary pass-through replaces boundary-Esc's consumed press (one press: dismiss + suppress + forward verbatim, caret moves same keypress); the interaction carousel (first highlight-moving arrow press marks the generation interacted; both edges wrap end-to-end) retires the clamp as unreachable. Out of scope: fallback path, core/ modules, config, spec edits, chain semantics, tier/matching, and everything in the PRD §1a landed list.",
       "milestones": [
         {
@@ -98,14 +98,14 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Changeset coherence: README sweep, gauntlet, live smoke, drift report, DoD record",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Mode B catch-all so a coherent delta never ships with stale overview docs: re-mirror README's invariant-1, run the full gauntlet, execute the BINDING live smoke in tmux, record the spec-read-only drift report, and append the dated DoD gauntlet item.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Sync changeset-level documentation",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Final task of the changeset (depends on every implementing subtask): README.md invariant re-mirror + stale-claim sweep; full gauntlet (check/test/bench) + §1a drift spot-check; BINDING live smoke (tmux, 4 scenarios, capture-pane); dated gauntlet-item append to docs/M1-DoD.md with suite counts, gate numbers, captures, and the drift verdict.",
               "subtasks": [
                 {
@@ -134,7 +134,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "Full gauntlet green + §1a drift spot-check report",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",
@@ -156,7 +156,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S3",
                   "title": "Live smoke in tmux (4 scenarios) with capture-pane evidence — BINDING",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",
@@ -179,7 +179,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S4",
                   "title": "docs/M1-DoD.md dated gauntlet-item append (counts, gates, captures, drift verdict)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",
