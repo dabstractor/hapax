@@ -36,10 +36,11 @@ behavior. Nothing else — JSDoc, README, plan artifacts — overrides it.
 
 1. **Never hijack typing.** No key is ever captured, consumed, or altered except
    Tab while a suggestion is selected — plus, on the one-line widget display
-   (M3), the four arrow keys and Escape while the result line is visible; ↑/←
-   on the first word act as Escape (boundary-Esc), dismissing the line and
-   returning every key to the user. The user's typing experience is
-   otherwise unchanged; the result line is strictly take-it-or-leave.
+   (M3), the arrow keys and Escape once the result line has been ENTERED; on
+   an un-entered line ↑/← on the first word dismiss the line AND forward the
+   press (the caret moves — one press, plain-pi parity). The user's typing
+   experience is otherwise unchanged; the result line is strictly
+   take-it-or-leave.
 2. **Tab is never delayed by UI — and Tab only ever completes.** The top
    suggestion is computed synchronously on every keystroke; the popup may be
    debounced, but a single Tab keypress always resolves the current top or
@@ -72,7 +73,7 @@ behavior. Nothing else — JSDoc, README, plan artifacts — overrides it.
 | Dictionary size | ~50k English frequent words (shipped: 48,802 entries), 8-bit quantized frequency, ~0.85 MB packed binary |
 | Scoring | Global commonness (static: admission bands + conjugation guard). Result order (2026-10): match-strictness tier desc → sessionCount desc within tier → shorter key → lex; the pure content-derived order is RETIRED (stability now holds only among equal counts within tiers). Session salience (dynamic) drives store eviction only. Admission reject band is length-conditioned (2026-10): flat floor through 8 chars, sqrt ramp to admit-all at 20; runtime-tunable floor via `rejectCommonness`; remaining constants baked |
 | Matching | Anchored fuzzy after the first character (2026-10): the fragment's first char must equal the candidate's first char; the rest is a subsequence. Three strictness tiers (exact prefix > contiguous tail > scattered); admission gated by `fuzzThreshold` (0–100, higher = stricter; 100 = prefix-only). The store's first-char index remains the scan entry, preserving the < 1 ms budget |
-| Display | One-line widget (2026-10): hapax renders its own single-line result set below the input — words joined `" | "`, no `Session ×N` column, no descriptions, width-truncated lowest-ranked-first, zero candidates never render. All four arrows navigate while visible; ↑/← on the first word = Esc (dismiss + suppress until next word start); →/↓ clamp at the last word; Tab inserts the highlighted word; Enter always submits. The vertical stock menu is retained as the FALLBACK where no editor factory exists (dual-path; rejected alternatives: a synthesized single item — loses arrow selection — and upstream horizontal-menu support — no timeline) |
+| Display | One-line widget (2026-10): hapax renders its own single-line result set below the input — words joined `" | "`, no `Session ×N` column, no descriptions, width-truncated lowest-ranked-first, zero candidates never render. Arrow semantics are two-state per generation (2026-10): UN-ENTERED — ↑/← on the first word dismiss + suppress AND forward the press (one press, caret moves — plain-pi parity); →/↓ with nothing to navigate forwards verbatim; →/↓ entering a multi-word line navigates and ENTERS the list. ENTERED — the cluster is captured and both edges wrap end-to-end (carousel; the clamp is retired/unreachable); plain Escape always dismisses. Every new result set resets to un-entered. Tab inserts the highlighted word; Enter always submits. The vertical stock menu is retained as the FALLBACK where no editor factory exists (dual-path; rejected alternatives: a synthesized single item — loses arrow selection — and upstream horizontal-menu support — no timeline) |
 | Long-word admission (2026-10) | R_eff length gradient (04): floor R=12 holds through 8 chars, sqrt ramp to admit-all at 20; every attested admission lands at group 1 (+0.5 rarity bonus); conjugation-guard stems ride R_eff; mid band (20) retired. Chosen by owner measurement: linear 6→20 (~18.9k flips, re-admits the audit's `provider`) rejected; floor-10 (~3.2k) stricter than owner intent; sqrt 8→20 (~10.5k) adopted |
 | File-path candidates (2026-10, rule 4d) | Slash-joined path runs are whole tokens (≥2 interior slashes, or 1 slash + dotted component); key trims leading `/`/`~`/`./`/`../`, display preserves them (absolute paths insert with the slash); key cap 96; `:line:col` suffix trimmed; single-slash letter-only paths (`src/core` ≡ `and/or`) a documented gap; mid-path typing still delegates to stock pi file completion |
 | Tier-0 anchorless fallback (2026-10) | When the anchored scan returns zero — and only then — one full-store pass matches the fragment as ONE contiguous run anywhere in the key (`esk`→`zendesk`, `query`→`src/core/query.ts`); floor 3 chars; score 85−40·runStart/len, threshold-gated; sorts below tier 1. `#` mode: tier-0 always consulted + scattered tier-1 visible (default threshold 45 vs ambient 60; explicit knob overrides both). Measured cost: ~5% (3c) → ~20% (7c) one-shot prose-cousin menus, owner-accepted; fallback pass budget < 3 ms p99; chaining stays anchored |
@@ -94,4 +95,5 @@ behavior. Nothing else — JSDoc, README, plan artifacts — overrides it.
   Tab, zero typed chars to see the next word. No phrase menu items, no
   multi-word insertion, ever. Specced in 06/07; implemented after M1 acceptance.
 - **M3 (v3):** anchored-fuzzy matching, frequency tie-break ranking, and the
-  one-line widget display with arrow selection + boundary-Esc (07).
+  one-line widget display with arrow selection + boundary pass-through
+  (07).

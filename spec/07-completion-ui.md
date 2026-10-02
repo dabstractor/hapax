@@ -61,15 +61,43 @@ inner editor sees them:
 
 - **All four arrows navigate.** ← and ↑ move the highlight left; →
   and ↓ move it right. (Owner-accepted capture of the arrow cluster
-  while the line shows; boundary-Esc below is the escape hatch.)
-- **Boundary-Esc (owner refinement).** ↑ or ← while the highlight is
-  on the FIRST word acts as Escape: the line dismisses, the press is
-  consumed (it does NOT also move the caret), and control returns to
-  the user — pressing ← twice mid-word goes back one character
-  (first press dismisses, second moves the caret). → and ↓ at the
-  LAST word clamp (consumed, no movement): nothing needs editing to
-  the right of the cursor, so no dismissal is warranted there.
-- **Explicit dismissal (Escape, boundary-Esc) suppresses the line for
+  once the list is entered — an arrow that moved the highlight;
+  boundary pass-through below is the un-entered escape hatch.)
+- **Boundary pass-through (owner refinement; 2026-10 one-press rule;
+  status: adopted ahead of implementation — code lands with this
+  spec).** ↑ or ← while the highlight is on the FIRST word of an
+  UN-interacted generation: the line dismisses, suppression arms
+  until the next word start, and the press FORWARDS verbatim to the
+  editor — the caret moves on that same keypress. ONE press,
+  plain-pi parity: a user who never enters the list experiences
+  ↑/← exactly as with no extension installed. (Supersedes the
+  consumed-press variant — first press dismisses, second moves the
+  caret — rejected by the owner 2026-10: no second press.)
+  Symmetric transparency: → or ↓ with nothing to navigate (a
+  one-word line, un-interacted) forwards verbatim too and the line
+  simply stays — NO arrow press is ever consumed before the list
+  has actually been entered.
+- **Carousel after interaction (2026-10 owner rule; status: adopted
+  ahead of implementation — code lands with this spec).** A
+  generation is one continuously-displayed result set. The first
+  arrow press that MOVES the highlight — →/↓ entering an
+  un-interacted multi-word line — marks the generation as
+  interacted; from then on, for that generation only, the arrow
+  cluster is captured and both edges wrap end-to-end: ↑/← on the
+  FIRST word wraps to the LAST, →/↓ on the LAST word wraps to the
+  FIRST. The clamp is RETIRED — unreachable: reaching the last word
+  requires navigation, which interacts the generation, and
+  interacted edges wrap. Plain Escape is unchanged (always dismiss +
+  suppress) and is the exit once interacted. A genuinely new result
+  set (narrowed, replaced, or otherwise changed) starts a FRESH
+  generation: the highlight returns to the first word, the
+  interaction flag resets with it, and boundary pass-through is
+  available again. A pass-through press never sets the flag (no
+  movement happened) — a one-word line therefore never becomes
+  interacted and keeps full plain-pi arrow behavior. Tab inserts
+  and Enter submits are unaffected by the interaction state.
+- **Explicit dismissal (Escape, boundary pass-through) suppresses the
+  line for
   the REST OF THE WORD.** Re-open only at the next word start or
   trigger char. A disqualification close (candidates hit zero) does
   not suppress — the next qualifying keystroke reopens.
@@ -108,8 +136,8 @@ on each keystroke:
    100 ms swap debounce — both carried over unchanged.
 3. Trailing space with no `@`/`/` in text-before-cursor → hidden
    (close-on-space carried over as the widget's own state).
-4. Cursor move, Escape, boundary-Esc, disqualification → hidden
-   (flicker hysteresis carried over: narrowing must not
+4. Cursor move, Escape, boundary pass-through, disqualification →
+   hidden (flicker hysteresis carried over: narrowing must not
    close-and-reopen).
 5. The startup restore gate (below) applies identically.
 
@@ -383,8 +411,9 @@ path: the line hides at trailing space by its own state machine). pi's
   zero-char chain offer. There is no manual open gesture; Tab completes,
   full stop.
 - Fallback path: Escape, arrows, backspace, space behave exactly as
-  stock pi. Widget path: arrows and Escape are consumed while the
-  line is visible (boundary-Esc above); backspace and space behave as
+  stock pi. Widget path: arrows and Escape are consumed only after
+  the list is entered (boundary pass-through above moves the caret
+  on the same press); backspace and space behave as
   stock.
 - Tab with no live suggestion set passes through as a literal Tab.
 - The user can type an entire session and never trigger a menu for common

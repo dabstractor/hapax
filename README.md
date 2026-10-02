@@ -192,12 +192,14 @@ type  #l        → offers lwlock  → Tab inserts it
 
 **Widget mode** (the primary display whenever pi exposes an editor
 factory): results render as one line below the input — words joined with
-`" | "`, no descriptions. While the line is visible the four arrow keys
-navigate the highlight, ↑/← on the first word act as Escape
-(boundary-Esc: the line dismisses and every key returns to you; a second
-← then moves the caret normally), →/↓ clamp at the last word, Escape
-dismisses (suppressing the line for the rest of that word), Tab inserts
-the highlighted word, and Enter always submits. Where no editor factory
+`" | "`, no descriptions. Arrow behavior is two-state per result set:
+un-entered (no arrow has moved the highlight yet) — ↑/← on the first
+word dismiss the line and the caret moves on that same press (boundary
+pass-through, identical to plain pi), →/↓ enter the list; entered —
+the four arrows move the highlight and both edges wrap end-to-end
+(carousel; →/↓ on the last word returns to the first), Escape dismisses
+(suppressing the line for the rest of that word), Tab inserts the
+highlighted word, and Enter always submits. Where no editor factory
 exists, the same results appear in pi's vertical autocomplete menu
 instead (the fallback path).
 

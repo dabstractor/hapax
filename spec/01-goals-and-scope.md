@@ -58,7 +58,8 @@ matching word (or the 1st character after the trigger char, default `#`).
    tiers — sessionCount descending inside a tier (04).
 10. One-line horizontal result display: words joined `" | "`, no
     frequency column, hapax-rendered widget with arrow selection and
-    boundary-Esc (07); the vertical stock menu retained as fallback.
+    one-press boundary pass-through on un-entered lists (07); the
+    vertical stock menu retained as fallback.
 
 ## Non-goals (explicit)
 
@@ -85,19 +86,24 @@ matching word (or the 1st character after the trigger char, default `#`).
 - **Tab may insert a top item the debounced popup hasn't painted yet.** The
   computation is deterministic and correct; treated as cosmetic. Revisit only
   if observed in practice (see 07, "Tab-before-paint").
-- **Arrow capture while the result line shows.** All four arrows are
-  captured whenever the line is visible — auto-open makes that most
-  mid-word keystrokes. Boundary-Esc (↑/← on the first word) dismisses
-  and returns the keys. Owner-accepted trade-off, 2026-10.
+- **Arrow capture while the result line shows.** The arrow cluster is
+  captured only once the list has been ENTERED (an arrow that moved
+  the highlight); before that, boundary arrows pass through to the
+  editor with the caret moving on the same press (plain-pi parity),
+  and after entry both edges carousel end-to-end, per generation
+  (07). Owner-accepted trade-off, 2026-10; one-press + interaction
+  rules 2026-10.
 
 ## UX principles
 
 - The user's typing experience is identical with or without the extension,
   except that Tab occasionally does something useful and, while the
-  result line is visible, the arrow keys navigate it (boundary-Esc
-  returns control instantly; 07).
-- The result line is a suggestion surface, never a modal. While visible
-  it consumes the four arrows and Escape — boundary-Esc returns control
-  instantly (07); never any typing key.
+  result line is visible, the arrow keys navigate it (boundary
+  pass-through returns the keys instantly, one press, until the
+  list has been entered — then Escape is the exit; 07).
+- The result line is a suggestion surface, never a modal. The arrow
+  cluster is consumed only after the list is entered — boundary
+  pass-through returns control instantly, one press (07); never any
+  typing key.
 - Suggestions that would embarrass (secrets, garbage tokens) must never appear;
   the shape gate is load-bearing for the absent-from-dictionary class.

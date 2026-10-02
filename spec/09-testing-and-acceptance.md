@@ -135,13 +135,25 @@
 - Visibility machine: word-start fragment + candidates → line shows;
   trailing space (no `@`/`/`) → hides; path/slash/`@` contexts never
   show; zero candidates never render.
-- Key handling (editor-proxy double): ←/→/↑/↓ all navigate; ↑/← on
-  the first word dismiss (press consumed — caret unmoved — and
-  suppressed until the next word start; disqualification close does
-  NOT suppress); →/↓ on the last word clamp; Tab inserts the
-  highlighted word synchronously (never debounce-gated); Enter
-  dismisses then forwards (submits); every other key forwards
-  verbatim; the inner instance is NEVER mutated (v1 regression pin).
+- Key handling (editor-proxy double): ←/→/↑/↓ all navigate once the
+  list is entered; ↑/← on the first word of an UN-interacted
+  generation FORWARDS to the editor — the line dismisses +
+  suppresses AND the caret moves on that same press (one-press
+  plain-pi parity; disqualification close does NOT suppress); →/↓
+  with no word to navigate (one-word line, un-interacted) forwards
+  verbatim and the line stays; Tab inserts the highlighted word
+  synchronously (never debounce-gated); Enter dismisses then
+  forwards (submits); every other key forwards verbatim; the inner
+  instance is NEVER mutated (v1 regression pin).
+  Interaction carousel (2026-10; spec 07): the first
+  highlight-MOVING arrow press (→/↓ entering an un-interacted
+  multi-word line) marks the generation interacted — from then on
+  ↑/← on the first word wraps to the LAST and →/↓ on the last word
+  wraps to the FIRST (the clamp is retired — unreachable); a new
+  result set resets the flag with the highlight and re-arms
+  boundary pass-through; a pass-through press never sets the flag
+  (a one-word line therefore never becomes interacted); plain
+  Escape is unchanged at every state.
 - Insertion: replaces the word-regex span or `#fragment` with the
   candidate's display casing.
 - Highlight resets to top on every set change; debounce/hysteresis
@@ -152,16 +164,18 @@
 1. **Happy path:** session discussing `Zendesk` + `lwlock`; type `ze` → menu
    offers `Zendesk`; Tab inserts `Zendesk` (cased). Type `#l` → `lwlock`.
    (M3 widget: the offer is one line below the input — `Zendesk | …`;
-   arrows move the highlight; ← twice mid-word dismisses then moves
-   the caret — boundary-Esc.)
+   arrows move the highlight once the list is entered; ← on an
+   un-entered list moves the caret on that same press and the line
+   dismisses with it — boundary pass-through, one press; entered
+   lists carousel at both edges and Escape is the exit.)
 2. **No-hijack (amended 2026-10):** type ordinary prose continuously;
    keystrokes land verbatim, no menu for common words WITH ANCHORED
    MATCHES — the zero-result tier-0 fallback MAY surface one-shot
    contiguous-run cousin menus (said→unsaid class, ~5–20% by length,
    narrowing away as typing continues; 04); Tab with no selection =
-   literal tab. While
-   the result line is visible only arrows/Escape/Tab are consumed
-   (boundary-Esc returns the rest).
+   literal tab. While the result line is visible only arrows/Escape/Tab
+   are consumed — and arrows only once the list is entered (boundary
+   pass-through otherwise: the caret moves on the same press).
 3. **Restore:** `/resume` a 100k+ token session; store rebuilt in background
    (< 100 ms total); completions available within the first second.
 4. **Compaction:** trigger compaction (long session + `/compact`); store
