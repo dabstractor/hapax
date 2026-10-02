@@ -1,0 +1,119 @@
+{
+  "backlog": [
+    {
+      "type": "Phase",
+      "id": "P1",
+      "title": "Widget arrow interaction model v2 — boundary pass-through + interaction carousel",
+      "status": "Ready",
+      "description": "Code-catches-up delta (same shape as the tier-0 run): spec/07 'Widget key handling', SPEC.md invariant 1, and spec/09 are ALREADY at model v2 and are READ-ONLY; only code, tests, the README invariant mirror, and the DoD record change. Boundary pass-through replaces boundary-Esc's consumed press (one press: dismiss + suppress + forward verbatim, caret moves same keypress); the interaction carousel (first highlight-moving arrow press marks the generation interacted; both edges wrap end-to-end) retires the clamp as unreachable. Out of scope: fallback path, core/ modules, config, spec edits, chain semantics, tier/matching, and everything in the PRD §1a landed list.",
+      "milestones": [
+        {
+          "type": "Milestone",
+          "id": "P1.M1",
+          "title": "Model v2 in code: generation state, decision table, wiring, test battery",
+          "status": "Ready",
+          "description": "Implement the v2 interaction model in src/pi/widget.ts (per-generation interacted flag, pure decideWidgetKey v2 decision table, widgetHandleInput wiring) and rewrite test/widget.test.ts from the old boundary-Esc/clamp battery to the spec/09 v2 battery.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M1.T1",
+              "title": "Generation state + decideWidgetKey v2 + wiring + test battery",
+              "status": "Planned",
+              "description": "Single coherent feature: (a) per-generation interacted flag on WidgetState with reset at the existing result-set-change site; (b) decideWidgetKey v2 decision table (boundary-pass-through replaces boundary-esc, clamp deleted, wrap-on-interacted); (c) widgetHandleInput wiring following the enter-submit dismiss-then-forward precedent; (d) full widget.test.ts battery rewrite per spec/09:134–159.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T1.S1",
+                  "title": "WidgetState generation flag + WidgetKeyDecision/decideWidgetKey v2 decision table",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.2", "h2.8", "h2.10", "h2.11", "h2.14", "h2.42", "h3.8", "h3.9", "h3.10", "h2.47", "h2.62"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/005_f9498a2d63d5/architecture/system_context.md §'Where the old model lives' + §'Generation state home' + §'CRITICAL pitfall' (line numbers verified at HEAD 23fd764). WidgetKeyDecision is at src/pi/widget.ts:976–983 (variants navigate/boundary-esc/clamp/escape/tab-insert/enter-submit/forward); decideWidgetKey at :999–1018 is PURE — params (data, visible, count, highlightIndex, keybindings?) — currently deciding boundary-esc at up/left i===0 and clamp at down/right i===count−1. WidgetState :278–286; WidgetStateInternal :289–292 (items, hidden); createWidgetState.set() :302–306 resets highlightIndex=0 (:304, 'spec h3.8') — and applyVisibility's signature-compare (:1286–1300) means set() fires ONLY on a genuinely-new result set, so set() IS the generation boundary; showing IS set() (no separate show()). Authoritative model text: spec/07-completion-ui.md:57–122.\n2. INPUT: no new external data; existing seams only (state.highlightIndex, renderedCount() :1346–1350, decision-time stale-index clamp :1007). decideWidgetKey's only callers are widget.ts wiring and test/widget.test.ts:986–1057 — the signature change is contained (per system_context.md §'Ripple containment').\n3. LOGIC: (a) Add `interacted: boolean` to WidgetStateInternal AND expose it on the exported WidgetState interface (tests read/drive it via widgetStateOf :318–321); init false in createWidgetState; reset to false inside set() (:304 site — covers every show / fresh generation) and defensively in hide() (:307–310). (b) Rewrite WidgetKeyDecision: replace `boundary-esc` with `boundary-pass-through`; DELETE `clamp`; keep navigate/escape/tab-insert/enter-submit/forward. (c) decideWidgetKey gains an `interacted` parameter (keep the function pure/table-testable; placed adjacent to highlightIndex, before keybindings). Implement the v2 decision table: !visible||count<=0 → forward; Escape at ANY state → escape (consumed, unchanged); un-interacted ↑/← at i===0 → boundary-pass-through (dismiss + suppress + forward verbatim); un-interacted →/↓ on a one-word line (count===1) → forward (line stays, no dismiss, no suppress); un-interacted →/↓ multi-word → navigate +1 (entering the list); interacted ↑/← at first → navigate wrapping to LAST; interacted →/↓ at last → navigate wrapping to FIRST; interior arrows → navigate ±1; Tab → tab-insert and submit key → enter-submit, both unchanged. Wrap may be expressed as delta ±(count−1) or as modular/absolute-target info on the decision — implementer's choice — BUT note the wiring pitfall in system_context.md: the existing navigate clamp (:1415–1420) nulls a wrap delta, so if the decision carries only a delta, P1.M1.T1.S2 must compute wrap modularly. All index math uses the RENDERED count param (width truncation shrinks the list). Defensive totality: un-interacted with i>0 (theoretically unreachable after reset-on-set-change) must degrade to a navigate decision that marks the generation interacted — NEVER to a forward. TDD implied workflow: rewrite the decision-table describes (test/widget.test.ts:986–1057, incl. stale-index clamp :1045 and single-item :1052) to pin every table cell first, then implement until green.\n4. OUTPUT: updated WidgetKeyDecision union + decideWidgetKey(data, visible, count, highlightIndex, interacted, keybindings?) and WidgetState.interacted, consumed by P1.M1.T1.S2 (wiring) and pinned by P1.M1.T1.S3 (battery).\n5. DOCS: [Mode A] JSDoc on WidgetKeyDecision (:976–983) and decideWidgetKey (:999–1018) describing the v2 table, and the WidgetState field docs (:278–286) incl. the new `interacted` field's generation semantics — updated in this same subtask; no separate docs subtask. No user-facing/config/API surface change beyond the exported type."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T1.S2",
+                  "title": "widgetHandleInput wiring: boundary-pass-through branch, navigate wrap + interacted flag, comment sync",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T1.S1"],
+                  "prd_selectors": ["h2.12", "h2.14", "h3.2", "h2.42", "h3.8", "h3.9", "h3.10", "h2.46", "h3.13", "h2.47", "h2.48"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: system_context.md §'widgetHandleInput branch map' + §'Tick seams' + §'Suppression seam' (verified at HEAD 23fd764). widgetHandleInput spans src/pi/widget.ts:1365–1493. The enter-submit branch (:1383–1399) is the EXACT precedent for dismiss-then-forward: try { state.hide(); machine.onDismissed(true); } catch {} then `return forwardInput(data)` — crucially it returns BEFORE the consumed-tick block (:1400–1413, opts.onKeystroke at :1409) so forwarded keys get their single tick from the guard's delegation seam (createEnterSubmitEditor tick, :1302–1317) instead. escape∥boundary-esc branch :1421–1429 (hide + onDismissed(true), consumed). navigate :1414–1420 uses CLAMP math that defeats wrap deltas. tab-insert + chain arming :1430–1460 (arms at rec.key, tier !== 0, fresh grant — :1457–1460; UNCHANGED). Old-model comments to rewrite: header model blurb :57–73, :1367 ('caret must not move on boundary-Esc/clamp'), :1480 ('clamp: consumed, no movement'), and boundary-Esc doc mentions at :331 (VisibilityState.suppressUntilWordStart) and :401 (onDismissed).\n2. INPUT: the new decision union, decideWidgetKey signature (now taking interacted), and WidgetState.interacted from P1.M1.T1.S1.\n3. LOGIC: (a) New boundary-pass-through branch shaped EXACTLY like enter-submit: try { state.hide(); machine.onDismissed(true); } catch { /* dismissal hiccups never break the press */ } then `return forwardInput(data)` — NOT consumed, NO widget-layer onKeystroke tick (the guard's delegation seam ticks exactly once; double-ticking corrupts hesitation timing). The press reaches the inner editor verbatim on the SAME keypress (plain-pi parity). (b) forward decision for un-interacted →/↓ on a one-word line: the existing forward path (:1382) already returns forwardInput with the line staying, no dismiss, no suppress — verify no accidental hide/tick. (c) navigate branch: apply the delta; at interacted edges land exactly on first/last of renderedCount() — if S1's decision carries only a delta, compute the wrap modularly (((i+delta) % count + count) % count); the old clamp math (:1415–1420) must not swallow wraps. Set state.interacted = true on EVERY navigate decision ('any arrow press that MOVES the highlight marks interacted' — marking on the decision also covers the defensive un-interacted i>0 corner). Consumed: keep exactly one widget-layer tick (:1409). (d) escape, tab-insert (incl. chain arming :1457–1460), enter-submit, forward branches: unchanged — only labels/comments shift for the renamed union. (e) Rewrite the stale comments listed in the research note to the v2 model (pass-through + carousel). No external services — the makeKeyHarness fakes already isolate editor/machine.\n4. OUTPUT: wired v2 behavior for P1.M1.T1.S3's battery; observable seams: innerCalls receives the forwarded data verbatim, machine.getState().suppressUntilWordStart arms on pass-through, opts.onKeystroke called exactly once per press.\n5. DOCS: [Mode A] header model blurb (:57–73), in-branch comments (:1367, :1480), and the :331/:401 doc mentions — all rewritten in this same subtask."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T1.S3",
+                  "title": "widget.test.ts battery rewrite to the v2 model (spec/09 bullets)",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2"],
+                  "prd_selectors": ["h2.2", "h2.42", "h3.8", "h3.9", "h2.46", "h2.47", "h2.55", "h2.58", "h2.60"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: system_context.md §'Test harness'. makeKeyHarness (test/widget.test.ts:~427–466): recording inner fake (`innerCalls` log, handleInput returns `inner:${data}`), never-mutate Proxy set-trap (`setHits()`), onKeystroke=vi.fn() clock counter, press() → editor.handleInput, show(displays) → state.set() directly (does NOT populate machine.painted()). Old-model blocks to rewrite: navigation/width-truncation describe (~:470, it ~:507), boundary-Esc describe (:526; its :527–541 and single-item :542–556), clamp describe (:558; it :559–574), input-clock describe (~:632, it ~:637), full-scenario never-mutate describe (:967, it :969 — KEEP the pin, update the scenario to v2), pure decision-table describes (:986–1057). File-header model blurb :14–20 also carries old-model prose.\n2. INPUT: P1.M1.T1.S1's decideWidgetKey v2 (+ WidgetState.interacted, now readable/drivable in the harness) and P1.M1.T1.S2's wiring.\n3. LOGIC: battery per spec/09:134–159 — (a) one-press pass-through: ↑/← on the first word un-interacted → line hidden, suppressUntilWordStart armed, AND innerCalls contains the verbatim data (caret-move parity on the same press); (b) →/↓ on a one-word un-interacted line → forwarded, line stays visible, NO suppression; (c) entering: →/↓ on a multi-word un-interacted line → highlightIndex +1 AND the interacted flag set; (d) carousel: interacted ↑/← at first wraps to the LAST rendered index; interacted →/↓ at last wraps to 0; interior arrows navigate ±1; every navigate/escape press consumed (no inner call); the clamp case class is GONE; (e) fresh generation: state.set(newDisplays) resets highlightIndex AND the flag, re-arms pass-through; a pass-through press never sets the flag (a one-word line therefore never becomes interacted); (f) Escape unchanged at every state (dismiss + suppress + consumed); Tab synchronous insert / Enter dismiss-then-forward unaffected by the flag; inner instance NEVER mutated (v1 regression pin — setHits()===0 across a full mixed scenario); (g) width truncation: 3 items at width 16 → 2 rendered; entering navigates to the rendered end (index 1), further →/↓ (now interacted) wraps to 0; (h) clock: navigate/escape → exactly ONE onKeystroke tick total; boundary-pass-through → exactly one tick total via the delegation seam and zero extra widget-layer ticks (the counter cannot distinguish layers — same observable shape as enter-submit/forward: assert total===1 AND innerCalls received the data). Delete/rewrite every old-model title or comment mentioning boundary-Esc, clamp, 'press CONSUMED', or 'caret unmoved'.\n4. OUTPUT: green `npx vitest --run test/widget.test.ts` and full `npm test`; the battery enumerates every state×key cell of the v2 table. Suite counts feed P1.M2.T1.S2.\n5. DOCS: [Mode A] test file header blurb (:14–20) and test titles/comments updated with the work — no user-facing/config/API surface change."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Milestone",
+          "id": "P1.M2",
+          "title": "Changeset coherence: README sweep, gauntlet, live smoke, drift report, DoD record",
+          "status": "Planned",
+          "description": "Mode B catch-all so a coherent delta never ships with stale overview docs: re-mirror README's invariant-1, run the full gauntlet, execute the BINDING live smoke in tmux, record the spec-read-only drift report, and append the dated DoD gauntlet item.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M2.T1",
+              "title": "Sync changeset-level documentation",
+              "status": "Planned",
+              "description": "Final task of the changeset (depends on every implementing subtask): README.md invariant re-mirror + stale-claim sweep; full gauntlet (check/test/bench) + §1a drift spot-check; BINDING live smoke (tmux, 4 scenarios, capture-pane); dated gauntlet-item append to docs/M1-DoD.md with suite counts, gate numbers, captures, and the drift verdict.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T1.S1",
+                  "title": "README sweep: re-mirror invariant 1 from spec/SPEC.md, purge stale old-model claims",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T1.S3"],
+                  "prd_selectors": ["h2.2", "h2.3", "h2.42", "h3.9", "h2.47", "h2.62", "h2.63"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: plan/005_f9498a2d63d5/architecture/external_deps.md §'README.md stale inventory'. README:313–331 mirrors 'Design invariants' and claims verbatim-from-spec, but :318–323 still carries the OLD model ('the four arrow keys and Escape while the result line is visible … ↑/← on the first word act as Escape (boundary-Esc), dismissing the line and returning every key to the user' — capture-while-visible, consumed press). The authoritative v2 text is spec/SPEC.md:38–43. README:195–200 (widget-mode prose) is ALREADY v2 — do not regress it. :545 (verification note 'arrow/Escape/Tab key capture') needs a wording-consistency check. Ignore false-positive grep hits (rescues/TypeScript/desc/narrow; config-table '(clamped)' :462–486; :241 word-boundary tokenization).\n2. INPUT: the landed v2 behavior from P1.M1.T1.S1–S3 (pass-through + carousel, tests green).\n3. LOGIC: re-mirror invariant 1 verbatim from spec/SPEC.md:38–43 (keep the section's 'that file is authoritative; the text below is verbatim' framing true); then sweep `grep -n -i -E 'boundary|clamp|second press|esc|arrow|carousel|interaction' README.md` and fix every remaining OLD-model claim (widget/arrow blurbs, any decision-log Display-row mirror wording — README has no decision-log table, only prose refs at :14/:23/:70/:251–252/:268).\n4. OUTPUT: README consistent with spec — grep-clean of old-model claims; consumed by P1.M2.T1.S4's changeset record.\n5. DOCS: [Mode B] this subtask IS the changeset-level documentation sweep for README.md — no code changes."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T1.S2",
+                  "title": "Full gauntlet green + §1a drift spot-check report",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T1.S3"],
+                  "prd_selectors": ["h2.1", "h2.55", "h2.56", "h2.58", "h2.60", "h2.62", "h2.63"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: external_deps.md §'Gauntlet commands' + plan/005_f9498a2d63d5/architecture/verification_1a.md (the 9-row spot-check table). Commands: `npm run check` (tsc --noEmit), `npm test` (vitest --run), `npm run bench` (vitest bench). AGENTS.md: pipeline/plan agents treat spec/*.md as READ-ONLY and record drift in their reports — never edit spec.\n2. INPUT: the complete implemented changeset P1.M1.T1.S1–S3 (widget battery green).\n3. LOGIC: run all three gauntlet commands and capture suite counts + bench gate numbers; then ONE verification read pass over the verification_1a.md table (segment.ts:575–580 containment, ingest.ts:402–428 token carry, score.test.ts:129 float-compare, config.ts:135–162/237/246+ reserved triggerChar, perf-gates.test.ts:309 180 ms bound, store.test.ts:431 eviction wording, acceptance.test.ts:838 + fixtures Zorp/Zephra re-theme, query.ts:480/530 ASCII x, widget.ts:1443–1460 chain arming). Expected verdict: no drift; record any mismatch verbatim with file:line (cf. docs/M1-DoD.md:1166 'NONE FOUND' precedent).\n4. OUTPUT: green gauntlet + captured counts/gates + drift findings (expected NONE) handed to P1.M2.T1.S3 and P1.M2.T1.S4.\n5. DOCS: none directly — findings land in the DoD gauntlet item (P1.M2.T1.S4)."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T1.S3",
+                  "title": "Live smoke in tmux (4 scenarios) with capture-pane evidence — BINDING",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T1.S3", "P1.M2.T1.S2"],
+                  "prd_selectors": ["h2.42", "h3.9", "h2.46", "h2.47", "h2.48", "h2.56", "h2.57"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: external_deps.md §'Live verification technique' (spec/09:194–218 — BINDING). tmux pane; run `pi --no-session` (the TUI needs a real TTY — piping stdout exits silently). Seed the store: submit one short user message, then Ctrl+C the turn. Drive keys via `tmux send-keys` ONE character at a time with 0.08–0.12 s sleeps between (burst-typed strings cancel in-flight queries — a known false-conclusion source). Evidence via `tmux capture-pane`. Sanctioned internal probe: temporary appendFileSync behind an env var in src/pi/provider.ts — MUST be removed before finishing; `git status` clean afterward, no instrumentation left in the tree.\n2. INPUT: implemented v2 behavior (P1.M1.T1.S1–S3) with a green gauntlet (P1.M2.T1.S2).\n3. LOGIC: four scenarios per PRD R4: (i) un-entered ← mid-word — the caret moves one char AND the line dismisses on that SINGLE press (capture before/after); (ii) → on a one-word line passes through, line stays; (iii) → enters a multi-word line, ← at first wraps to last, → at last wraps to first, Escape exits, and the next word start re-offers; (iv) Tab still inserts and Enter still submits while the line is visible. No unit test substitutes for this — a key-handling change on the widget path requires live verification against the real extension stack (the v1 proxy crash is the precedent).\n4. OUTPUT: capture-pane evidence for all four scenarios (pacing noted) handed to P1.M2.T1.S4; clean tree.\n5. DOCS: none directly — captures land in the DoD gauntlet item (P1.M2.T1.S4)."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T1.S4",
+                  "title": "docs/M1-DoD.md dated gauntlet-item append (counts, gates, captures, drift verdict)",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T1.S3", "P1.M2.T1.S2", "P1.M2.T1.S3"],
+                  "prd_selectors": ["h2.55", "h2.58", "h2.60", "h2.61", "h2.62", "h2.63"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: external_deps.md §'docs/M1-DoD.md pattern'. docs/M1-DoD.md (1261 lines) is append-only history — NEVER edit prior items. Pattern per entry: `## Gauntlet item N — <name>: PASS` (or `### <item>: PASS` inside a dated section) → fenced re-runnable commands → dated bullet with suite counts (e.g. '52/52'), gate numbers, and named test cases quoted verbatim. Worked example at :739–757 (historical old-model evidence — do not touch); existing sections end ~:1230, so append the new dated section at end of file.\n2. INPUT: suite counts + gate numbers + drift findings from P1.M2.T1.S2; live-smoke captures from P1.M2.T1.S3; the README sync from P1.M2.T1.S1 (mention in the changeset summary line).\n3. LOGIC: append a dated gauntlet item for the arrow-model-v2 changeset following the file's own pattern: the re-runnable commands (npm run check / npm test / npm run bench + the widget battery invocation), suite counts, bench gate numbers, the four live-smoke captures with the pacing note, the §1a drift verdict (expected NONE FOUND), and a post-smoke tree-cleanliness note.\n4. OUTPUT: docs/M1-DoD.md records the changeset; documentation is coherent end-to-end (spec ↔ README ↔ DoD).\n5. DOCS: [Mode B] this subtask IS the changeset-level documentation record — docs/M1-DoD.md only."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
