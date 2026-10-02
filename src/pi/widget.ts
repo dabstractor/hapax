@@ -1503,14 +1503,19 @@ export function createWidgetEditorFactory(
           // ±(count−1) through the old clamping application would null
           // out (the CRITICAL pitfall). count is the RENDERED count
           // (width truncation shrinks the list; the decision used the
-          // same number). A landing navigate interacts the generation —
-          // the ONLY setter (pass-through, Tab, Enter, Escape never do).
+          // same number).
           const n = renderedCount();
           if (n > 0) {
             state.highlightIndex =
               (((state.highlightIndex + decision.delta) % n) + n) % n;
-            state.interacted = true;
           }
+          // Any arrow press that MOVES the highlight marks the generation
+          // interacted (spec: "the first arrow press that MOVES the
+          // highlight marks the generation"). Set on EVERY navigate
+          // decision — also covering the defensive row-8 corner
+          // (un-interacted i>0 degraded to navigate); the ONLY setter
+          // (pass-through, Tab, Enter, Escape never do).
+          state.interacted = true;
         } else if (decision.action === "escape") {
           state.hide(); // immediate visual dismissal…
           machine.onDismissed(true); // …+ suppression until the next word

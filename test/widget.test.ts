@@ -579,6 +579,63 @@ describe("widget key handling — carousel wrap (spec §07 h3.9 v2: interacted e
   });
 });
 
+describe("widget key handling — v2 wiring observables (S2: tick accounting + interacted lifecycle)", () => {
+  it("a boundary-pass-through press ticks the input clock EXACTLY once (guard seam only — the double-tick trap)", () => {
+    // THE pass-through wiring trap: the branch both dismisses AND
+    // forwards. If it fell into the consumed-tick block after
+    // forwarding, the press would tick twice (widget layer + the guard's
+    // delegation seam) and corrupt hesitation timing. One press, ONE
+    // tick, press delivered verbatim.
+    const h = makeKeyHarness();
+    h.show(["alpha", "beta", "gamma"]);
+    h.press(UP); // un-entered first word → boundary-pass-through
+    expect(h.onKeystroke).toHaveBeenCalledTimes(1);
+    expect(h.innerCalls).toEqual([UP]); // the press reached the inner editor
+    expect(h.state.hidden).toBe(true); // dismissed on the same press
+  });
+
+  it("the interacted generation flag: navigate sets it; pass-through, Escape, Enter, and Tab never do", () => {
+    // Pass-through: dismissal + forward, but the generation is NOT
+    // entered — the flag stays false.
+    const pt = makeKeyHarness();
+    pt.show(["alpha", "beta", "gamma"]);
+    pt.press(UP);
+    expect(pt.state.interacted).toBe(false);
+
+    // Escape: consumed dismissal — never an interaction.
+    const esc = makeKeyHarness();
+    esc.show(["alpha", "beta", "gamma"]);
+    esc.press(ESC);
+    expect(esc.state.interacted).toBe(false);
+
+    // Enter (enter-submit): dismissal + forward — never an interaction.
+    const enter = makeKeyHarness();
+    enter.show(["alpha", "beta", "gamma"]);
+    enter.press("\r");
+    expect(enter.state.interacted).toBe(false);
+
+    // Tab: the harness inner exposes no setText, so insertHighlighted
+    // declines and the press forwards — either way, never an interaction.
+    const tab = makeKeyHarness();
+    tab.show(["alpha", "beta", "gamma"]);
+    tab.press("\t");
+    expect(tab.state.interacted).toBe(false);
+    expect(tab.innerCalls).toContain("\t");
+
+    // ANY navigate decision sets it — the row-4 entry here, and it
+    // stays set across further navigates within the same generation.
+    const nav = makeKeyHarness();
+    nav.show(["alpha", "beta", "gamma"]);
+    nav.press(RIGHT); // enters the list
+    expect(nav.state.interacted).toBe(true);
+    nav.press(RIGHT);
+    expect(nav.state.interacted).toBe(true);
+    // A fresh generation (set()) resets it — the battery's re-arm seam.
+    nav.show(["alpha", "beta", "gamma"]);
+    expect(nav.state.interacted).toBe(false);
+  });
+});
+
 describe("widget key handling — Escape and suppression taxonomy (spec §07 h3.9)", () => {
   it("Escape: line hides + suppressed (explicit dismissal), press consumed from any highlight index", () => {
     const h = makeKeyHarness();
