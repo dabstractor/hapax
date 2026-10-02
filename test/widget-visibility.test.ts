@@ -963,13 +963,15 @@ describe("R4 — fingerprint release (BUG-003)", () => {
       suppressUntilWordStart: true,
     });
 
-    // The submitted message clears the buffer: an empty-buffer tick is a
-    // plain close (no fragment), still suppressed.
+    // The submitted message clears the buffer: an empty-buffer tick
+    // OBSERVES the dismissed word occurrence gone → the suppression
+    // LAPSES (2026-10 wedge fix — spec §07 dismissal bullet). The old
+    // behavior kept suppressUntilWordStart: true here.
     editor.set("", 0);
     await vi.advanceTimersByTime(10);
     expect(machine.onInput()).toMatchObject({
       visible: false,
-      suppressUntilWordStart: true,
+      suppressUntilWordStart: false,
     });
 
     // THE inversion: the next message's first word at start 0 — neither
@@ -995,9 +997,12 @@ describe("R4 — fingerprint release (BUG-003)", () => {
 
     editor.set("", 0); // Enter-submit cleared the buffer
     await vi.advanceTimersByTime(10);
+    // The cleared buffer OBSERVES the occurrence gone → lapse (the
+    // dismissed word can never re-wedge the next prompt's first word,
+    // even when it shares the prefix — the 2026-10 wedge fix).
     expect(machine.onInput()).toMatchObject({
       visible: false,
-      suppressUntilWordStart: true,
+      suppressUntilWordStart: false,
     });
 
     await vi.advanceTimersByTime(10);
@@ -1036,6 +1041,88 @@ describe("R4 — fingerprint release (BUG-003)", () => {
 
     await vi.advanceTimersByTime(10);
     editor.set("zen", 3); // backspace: current is a prefix OF the dismissed buffer
+    expect(machine.onInput()).toMatchObject({
+      visible: false,
+      suppressUntilWordStart: true,
+    });
+  });
+
+  // ── suppression lapse — the 2026-10 wedge fix (live-observed) ────────────
+
+  it("WEDGE REPRO: Tab-completed FIRST word backspaced away → retyping the SAME word paints (no preceding space exists to delete)", async () => {
+    const { machine, editor } = await build({
+      query: canned({
+        z: [rm("Zendesk")],
+        ze: [rm("Zendesk")],
+      }),
+    });
+    // Tab-accept seam: the COMPLETED buffer is live at dismissal.
+    editor.set("Zendesk", 7);
+    machine.onDismissed(true); // fingerprint "Zendesk", start 0
+    expect(machine.getState().suppressUntilWordStart).toBe(true);
+
+    // Backspace the whole word — the "" tick observes the occurrence
+    // gone and lapses suppression.
+    await vi.advanceTimersByTime(10);
+    editor.set("", 0);
+    expect(machine.onInput()).toMatchObject({
+      visible: false,
+      suppressUntilWordStart: false, // LAPSED
+    });
+
+    // Retype the SAME word — previously wedged (every prefix looked
+    // like same-word backspace continuation); now a fresh word start.
+    await vi.advanceTimersByTime(10);
+    editor.set("ze", 2);
+    const st = machine.onInput();
+    expect(st.visible).toBe(true);
+    expect(st.currentSet).toEqual([{ display: "Zendesk" }]);
+  });
+
+  it("mid-prompt: Tab-completed word backspaced to the PRECEDING SPACE → retype paints (no space-deletion workaround needed)", async () => {
+    const { machine, editor } = await build({
+      query: canned({
+        z: [rm("Zendesk")],
+        ze: [rm("Zendesk")],
+      }),
+    });
+    editor.set("foo Zendesk", 11);
+    machine.onDismissed(true); // fingerprint "foo Zendesk", start 4
+
+    // Backspace exactly the word — the space stays ("foo ", len 4 =
+    // the dismissed start) → the occurrence is gone → lapse.
+    await vi.advanceTimersByTime(10);
+    editor.set("foo ", 4);
+    expect(machine.onInput()).toMatchObject({
+      visible: false,
+      suppressUntilWordStart: false,
+    });
+
+    await vi.advanceTimersByTime(10);
+    editor.set("foo ze", 6);
+    const st = machine.onInput();
+    expect(st.visible).toBe(true);
+    expect(st.currentSet).toEqual([{ display: "Zendesk" }]);
+  });
+
+  it("immediate post-Tab re-offer protection intact: the completed word on screen NEVER lapses or repaints", async () => {
+    const { machine, editor } = await build({
+      query: canned({ Zendesk: [rm("Zendesk")] }),
+    });
+    editor.set("Zendesk", 7);
+    machine.onDismissed(true);
+
+    // The very next tick — buffer still holds the completed word: no
+    // lapse (len 7 > start 0), no re-offer (same-word continuation).
+    await vi.advanceTimersByTime(10);
+    expect(machine.onInput()).toMatchObject({
+      visible: false,
+      suppressUntilWordStart: true,
+    });
+
+    // Extending it stays hidden too ("rest of the word").
+    await vi.advanceTimersByTime(10);
+    editor.set("Zendeskx", 8);
     expect(machine.onInput()).toMatchObject({
       visible: false,
       suppressUntilWordStart: true,

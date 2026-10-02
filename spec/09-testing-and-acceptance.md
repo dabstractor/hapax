@@ -136,6 +136,16 @@
   trailing space (no `@`/`/`) → hides; path/slash/`@` contexts never
   show; zero candidates never render content (unclaimed: no row;
   claimed: blank row — Line claim below).
+- Suppression lapse (2026-10, spec 07): after explicit dismissal
+  (Escape / boundary / Tab-accept / Enter-submit), a tick that
+  OBSERVES the dismissed word occurrence gone — live buffer a prefix
+  of the dismissed buffer no longer reaching the dismissed fragment's
+  start (fully backspaced, empty buffer included) — releases
+  suppression: retyping the SAME word at that word start paints (the
+  Tab-completed FIRST word no longer wedges; mid-prompt recovery
+  needs no space deletion). The completed word still on screen and
+  same-word EXTENSION stay suppressed (rest-of-word + the immediate
+  post-Tab re-offer guard).
 - Line claim (2026-10, spec 07): the first non-empty display claims the
   row; from then on zero-candidate queries, disqualification and
   trailing-space closes, Escape/boundary dismissal, rest-of-word

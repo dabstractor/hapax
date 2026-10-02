@@ -776,6 +776,39 @@ export function createVisibilityMachine(
   ): VisibilityState {
     // Chain-offer intent is per-tick: reset BEFORE any path can set it.
     chainIntent = false;
+    // Suppression LAPSE (2026-10 wedge fix, spec §07 key-handling
+    // dismissal bullet): the moment a tick OBSERVES the dismissed word
+    // occurrence GONE — the live buffer is a prefix of the dismissed
+    // fingerprint that no longer reaches the dismissed fragment's start
+    // (fully backspaced, the empty buffer included) — suppression is
+    // OVER: whatever gets typed there next is a NEW word at a word
+    // start ("re-open at the next word start"), never a same-word
+    // continuation. Without this a Tab-completed FIRST word (fragment
+    // start 0, no preceding space to delete) wedged forever: every
+    // retype was prefix-indistinguishable from same-word backspacing
+    // (live-observed 2026-10: tab-complete → backspace → no suggestions
+    // until a differently-starting word). Runs BEFORE R1 so ticks that
+    // never reach the R4 check (empty buffer → R3, stock contexts →
+    // R1) still observe the removal; it only ever RELEASES (shows
+    // sooner), never suppresses, so the BUG-003 cross-message release
+    // is unaffected. Length is the JOINED buffer's — exact for
+    // single-line dismissals, and the multi-line corner can only err
+    // toward releasing (the safe direction).
+    if (
+      suppressed &&
+      suppressedFingerprint !== null &&
+      suppressedFragmentStart !== null
+    ) {
+      const liveBuffer = lines.join("\n");
+      if (
+        suppressedFingerprint.startsWith(liveBuffer) &&
+        liveBuffer.length <= suppressedFragmentStart
+      ) {
+        suppressed = false;
+        suppressedFragmentStart = null;
+        suppressedFingerprint = null;
+      }
+    }
     // R1 — stock contexts OWN slash/@/quoted-path/path verdicts; classify
     // FIRST (extractMatchState is blind to them). Hidden, no suppression,
     // no close stamp: leaving pi's context is not a hapax close.
@@ -946,9 +979,10 @@ export function createVisibilityMachine(
       // be the dismissed context — one of the two a prefix of the other.
       // A cleared/rewritten buffer matches neither direction → release.
       // fp === null (empty dismissed buffer) is context-free: release.
-      // An empty CURRENT buffer stays suppressed (fp.startsWith("") —
-      // backspacing the word away keeps the same-word context; the next
-      // typed char re-tests).
+      // An empty CURRENT buffer never reaches here — the lapse above
+      // clears suppression the moment the dismissed word's region is
+      // observed gone (2026-10 wedge fix); within-word backspaces
+      // (buffer still past the dismissed start) stay suppressed.
       const fp = suppressedFingerprint;
       const current = lines.join("\n");
       const sameWordContinuation =

@@ -143,13 +143,33 @@ inner editor sees them:
   movement happened) — a one-word line therefore never becomes
   interacted and keeps full plain-pi arrow behavior. Tab inserts
   and Enter submits are unaffected by the interaction state.
-- **Explicit dismissal (Escape, boundary pass-through) suppresses the
+- **Explicit dismissal (Escape, boundary pass-through, Tab-accept,
+  Enter-submit — all through the same suppression seam) suppresses the
   line for
   the REST OF THE WORD.** Re-open only at the next word start or
   trigger char. A disqualification close (candidates hit zero) does
   not suppress — the next qualifying keystroke reopens. Suppression
   hides CONTENT only: a claimed row renders blank through the
   suppression window (Line claim above).
+  **Suppression lapse (2026-10 owner rule, live-observed wedge fix):
+  suppression also ends the moment a tick OBSERVES the dismissed word
+  occurrence GONE — the live buffer is a prefix of the dismissed
+  buffer that no longer reaches the dismissed fragment's start (the
+  word fully backspaced, the empty buffer included).** What is typed
+  there next is a NEW word at a word start ("re-open at the next word
+  start" includes a retyped one), never a same-word continuation.
+  Without this, a Tab-completed FIRST word (fragment start 0, no
+  preceding space to delete) wedged forever: every retype was
+  prefix-indistinguishable from same-word backspacing, and mid-prompt
+  recovery demanded deleting the word AND the space before it. The
+  lapse only ever RELEASES (shows sooner): the completed word still on
+  screen never lapses (the buffer still reaches past its start — this
+  is exactly the immediate post-Tab re-offer guard), and EXTENDING the
+  dismissed word (the dismissed buffer a prefix of the live one) stays
+  suppressed for the rest of the word as before. The Enter-submit
+  variant's cleared buffer lapses on the next observed tick, so a
+  single-word submitted prompt can no longer wedge the next prompt's
+  prefix-sharing first word.
 - **Tab inserts the highlighted word** (leftmost if none
   highlighted), synchronously against the live query — never gated by
   the display debounce (invariant 2). Insertion replaces the live
