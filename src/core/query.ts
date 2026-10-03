@@ -90,15 +90,24 @@ export const DEFAULT_LIMIT = 8;
  *  Knob relationship (plan 003 P1.M2.T1.S3): the fuzzThreshold config key
  *  (0–100, clamped in config.ts) gates a candidate's score against these
  *  tiers — 100 = exact-prefix-only (only TIER3_SCORE survives the strict-<
- *  gate, TIER2_BASE_SCORE (85) and TIER1_BASE_SCORE (50) sit below it),
- *  and TIER1_BASE_SCORE < DEFAULT_FUZZ_THRESHOLD (60) keeps scattered
- *  matches invisible at the default. §09 tuning protocol: the knob is a
- *  runtime tuning surface; these tier boundaries are not. */
+ *  gate, TIER2_BASE_SCORE (85) and every tier-1 score sit below it).
+ *  Tier-1 gap penalties are GAP-SIZE-SCALED (2026-10 retune of the first
+ *  calibration, 50 − 5·gapRuns − min(gapChars, 15), whose max 44 gated ALL
+ *  scattered matches at both mode defaults — a cliff: `del`/`delet` scored
+ *  100 while `delt`, the word minus ONE interior letter, scored 44 and
+ *  vanished): each gap run still costs a flat 5 but each gap CHAR now
+ *  costs 3 (capped at 15 total), off a base of 70. So the tightest
+ *  scattered trace — one 1-char hole — scores 62 and ADMITS at the
+ *  ambient default 60, while every looser shape gates (2-char hole 59,
+ *  a second gap ≤ 54); hole SIZE slopes instead of one near-flat drop.
+ *  §09 tuning protocol: the knob is a runtime tuning surface; these tier
+ *  boundaries are not. */
 export const TIER3_SCORE = 100 as const;
 export const TIER2_BASE_SCORE = 85 as const;
 export const TIER2_SKIP_FACTOR = 40 as const;
-export const TIER1_BASE_SCORE = 50 as const;
+export const TIER1_BASE_SCORE = 70 as const;
 export const TIER1_GAPRUN_PENALTY = 5 as const;
+export const TIER1_GAPCHAR_WEIGHT = 3 as const;
 export const TIER1_GAPCHAR_CAP = 15 as const;
 
 /** Tier-0 anchorless base score / skip penalty (spec §04 h2.28, 2026-10):
@@ -115,9 +124,11 @@ export const TIER0_BASE_SCORE = 85 as const;
 export const TIER0_SKIP_FACTOR = 40 as const;
 
 /** Default fuzzThreshold (PRD §08 h2.52): minimum admission score for a
- *  candidate to enter a result set. 60 admits all exact prefixes (100)
- *  and strong contiguous tails, gates out ALL scattered matches (tier-1
- *  max = TIER1_BASE_SCORE = 50). Higher = stricter; 100 =
+ *  candidate to enter a result set. 60 admits all exact prefixes (100),
+ *  strong contiguous tails, and — since the 2026-10 gap-size retune — the
+ *  single tightest scattered class, one 1-char interior hole (62: `delt` →
+ *  `delete`); every looser tier-1 shape gates (2-char hole 59, a second
+ *  gap ≤ 54). Higher = stricter; 100 =
  *  exact-prefix-only; 0 = admit all. config.ts auto-imports this as the
  *  schema default (the rejectCommonness pattern, P1.M2.T1.S3).
  *
@@ -131,10 +142,14 @@ export const DEFAULT_FUZZ_THRESHOLD = 60 as const;
 
 /** Default fuzzThreshold under the trigger char (PRD §04 trigger
  *  loosening, §08 h2.52): 45 sits under tier-2's floor — the weakest
- *  tier-2 (tail skipped the whole key) still outscores it — while tier-1
- *  can NEVER admit here: its score is 50 − 5·gapRuns − gapChars with ≥ 1
- *  gap run of ≥ 1 char, so its effective maximum is 44 < 45 (pinned by
- *  test/query.test.ts's loose-mode erratum block). Calibration starting
+ *  tier-2 (tail skipped the whole key) still outscores it — and under
+ *  tier-1's gap-size-scaled ceiling (2026-10 retune): the admitted
+ *  scattered shapes are those with 5·gapRuns + min(3·gapChars, 15) ≤ 25 —
+ *  up to two gaps of ANY size, or three/four tiny gaps — so `#cfg` →
+ *  `config_manager_service` (62) finally delivers the §04 exemplar (the
+ *  first calibration's max was 44 < 45, admitting nothing; the old
+ *  erratum pin is retired). Three-plus sizeable gaps (e.g. 4 gaps → ≤ 47)
+ *  still gate. Calibration starting
  *  point (§09 tuning protocol), exactly
  *  like DEFAULT_FUZZ_THRESHOLD (60) for ambient matching. An explicitly
  *  set config fuzzThreshold overrides BOTH mode defaults — resolution
@@ -210,13 +225,16 @@ const clampScore = (n: number): number => (n < 0 ? 0 : n > 100 ? 100 : n);
  * Score formulas (§04 h2.28 verbatim, integer via Math.round, clamped
  * to [0, 100]): tier 3 → 100; tier 2 → 85 − 40·(charsSkippedBeforeRun /
  * len(c)) where skipped = runStart − 1 (the anchor consumes c[0]);
- * tier 1 → 50 − 5·gapRuns − min(gapChars, 15). gapRuns/gapChars count
+ * tier 1 → 70 − 5·gapRuns − min(3·gapChars, 15) (2026-10 gap-size
+ * retune; first calibration was 50 − 5·gapRuns − min(gapChars, 15)).
+ * gapRuns/gapChars count
  * ONLY the gap stretches BETWEEN consecutive matched tail chars — the
  * stretch between the anchor and the FIRST tail char is not a gap (the
  * anchor is not gapped). The constants are calibration starting points
  * (§09 tuning protocol) and are exported from this module (TIER3_SCORE /
  * TIER2_BASE_SCORE / TIER2_SKIP_FACTOR / TIER1_BASE_SCORE /
- * TIER1_GAPRUN_PENALTY / TIER1_GAPCHAR_CAP) — the arithmetic consumes
+ * TIER1_GAPRUN_PENALTY / TIER1_GAPCHAR_WEIGHT / TIER1_GAPCHAR_CAP) — the
+ * arithmetic consumes
  * them, never inline literals; the tier BOUNDARIES are semantics, never
  * tunable. Score is admission-only: score ≥ the active fuzzThreshold
  * keeps a candidate in the result set (rankMatches discards on strict
@@ -298,7 +316,7 @@ export function matchFragment(f: string, c: string): MatchResult | null {
       Math.round(
         TIER1_BASE_SCORE -
           TIER1_GAPRUN_PENALTY * gapRuns -
-          Math.min(gapChars, TIER1_GAPCHAR_CAP),
+          Math.min(TIER1_GAPCHAR_WEIGHT * gapChars, TIER1_GAPCHAR_CAP),
       ),
     ),
   };
@@ -379,9 +397,9 @@ export function compareRankedMatches(
  * tiers → every candidate flows to the ranking path. Under the
  * first-char-bucket scan (below) the gate is LOAD-BEARING at the
  * default threshold: tier-2 tail matches (≤ TIER2_BASE_SCORE) admit
- * while above it, and every tier-1 scattered match (max
- * TIER1_BASE_SCORE = 50 < 60) stays invisible unless the threshold is
- * lowered.
+ * while above it, and every tier-1 scattered shape except the single
+ * 1-char-hole class (62; looser shapes ≤ 59) stays invisible unless the
+ * threshold is lowered.
  *
  * Accepts any prefix casing — it is lowercased BEFORE prefixRange, since
  * prefixRange deliberately throws RangeError on non-lowercase input

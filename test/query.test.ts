@@ -28,7 +28,8 @@
  * (noted inline at the drifted cases). The admission-threshold describe
  * (plan 003 P1.M2.T1.S2) pins the fuzzThreshold gate: constants
  * single-sourced, strict score < threshold discard inside rankMatches'
- * candidate loop, default-60-kills-tier-1, and the zero-fragment bypass
+ * candidate loop, default-60 admitting ONLY tier-1's single-1-char-hole
+ * class (2026-10 gap-size retune), and the zero-fragment bypass
  * (scan-sequencing note in that describe).
  */
 
@@ -49,6 +50,7 @@ import {
   TIER0_SKIP_FACTOR,
   TIER1_BASE_SCORE,
   TIER1_GAPCHAR_CAP,
+  TIER1_GAPCHAR_WEIGHT,
   TIER1_GAPRUN_PENALTY,
   TIER2_BASE_SCORE,
   TIER2_SKIP_FACTOR,
@@ -418,9 +420,9 @@ describe("rankMatches — tier-0 anchorless ambient fallback (2026-10, spec §04
 });
 
 describe("compareRankedMatches — 4-key order (spec §04 h2.29, comparator level)", () => {
-  /** Direct comparator fixture — tier-1 stays invisible through
-   *  rankMatches at the default threshold (T1 max 50 < 60), so
-   *  cross-tier order is pinned here, where tiers exist; tier-2 IS
+  /** Direct comparator fixture — cross-tier order is pinned here at
+   *  the comparator level, independent of which tier-1 shapes clear the
+   *  admission threshold (a §09 calibration question); tier-2 IS
    *  observable since T2.S2's bucket scan, but a count can never cross
    *  a tier boundary either way (pinned again below at this level). */
   const rec = (tier: number, key: string, sessionCount: number) => ({
@@ -817,26 +819,29 @@ describe("matchFragment — anchored fuzzy (PRD §04 h2.28, plan 003)", () => {
     // Greedy-leftmost trace over 'andleresponseproxy' (after the h
     // anchor): r@6 — the anchor→first-tail stretch is NOT a gap (the
     // anchor is not gapped) — then p@9: one gap run of 2 chars ('es').
-    // gapRuns=1, gapChars=2 → 50 − 5 − 2 = 43. (The PRP's "r@1, p@7, one
-    // gap" trace miscounted the string; the landed trace is this one.)
+    // gapRuns=1, gapChars=2 → 70 − 5 − min(3·2, 15) = 59 (the 2026-10
+    // gap-size retune; the first calibration scored this 43).
     expect(matchFragment("hrp", "handleResponseProxy")).toEqual({
       tier: 1,
-      score: 43,
+      score: 59,
     });
   });
 
-  it("tier 1 — leading stretch never counts as a gap ('zds' → 'zendesk') = 44", () => {
+  it("tier 1 — leading stretch never counts as a gap ('zds' → 'zendesk') = 62", () => {
     // d@3 (skips 'en' BEFORE the first tail char — free), s@5 (one gap
-    // run of 1 char 'e'). gapRuns=1, gapChars=1 → 50 − 5 − 1 = 44.
-    expect(matchFragment("zds", "zendesk")).toEqual({ tier: 1, score: 44 });
+    // run of 1 char 'e'). gapRuns=1, gapChars=1 → 70 − 5 − min(3·1, 15)
+    // = 62 — tier-1's maximum, the single-1-char-hole class the retune
+    // admits at the ambient default 60.
+    expect(matchFragment("zds", "zendesk")).toEqual({ tier: 1, score: 62 });
   });
 
-  it("tier 1 — gapChars saturates at 15 and the score stays within [0, 100]", () => {
+  it("tier 1 — gapChars saturates at a 15-point penalty and the score stays within [0, 100]", () => {
     // 'a' matches at 1 (no gap), 'y' at 18: one gap run of 16 chars →
-    // min(16, 15) = 15 → 50 − 5 − 15 = 30. Saturation, not the raw 16.
+    // min(3·16, 15) = 15 → 70 − 5 − 15 = 50. Saturation at 5 skipped
+    // chars, not the raw 3·16 = 48.
     const c = "ha" + "x".repeat(16) + "y";
     const r = matchFragment("hay", c);
-    expect(r).toEqual({ tier: 1, score: 30 });
+    expect(r).toEqual({ tier: 1, score: 50 });
     expect(r!.score).toBeGreaterThanOrEqual(0);
     expect(r!.score).toBeLessThanOrEqual(100);
   });
@@ -845,10 +850,10 @@ describe("matchFragment — anchored fuzzy (PRD §04 h2.28, plan 003)", () => {
     expect(matchFragment("sr", "src/core/query.ts")).toEqual({ tier: 3, score: 100 });
     // 'r/co' is not contiguous in 'rc/core/query.ts' (cl[1..] = 'rc/…'):
     // greedy trace r@1 (free), '/'@3 (gap 1: 'c'), c@4, o@5 →
-    // gapRuns=1, gapChars=1 → 50 − 5 − 1 = 44.
+    // gapRuns=1, gapChars=1 → 70 − 5 − 3 = 62.
     expect(matchFragment("sr/co", "src/core/query.ts")).toEqual({
       tier: 1,
-      score: 44,
+      score: 62,
     });
   });
 
@@ -873,7 +878,7 @@ describe("matchFragment — anchored fuzzy (PRD §04 h2.28, plan 003)", () => {
     expect(matchFragment("zz", "zendesk")).toBeNull();
   });
 
-  it("tier scores respect their bands: tier 3 = 100, tier 1 ≤ 50", () => {
+  it("tier scores respect their bands: tier 3 = 100, tier 1 ≤ 62 (the one-hole max)", () => {
     expect(matchFragment("z", "zendesk")!.score).toBe(100);
     for (const [f, c] of [
       ["hrp", "handleResponseProxy"],
@@ -883,7 +888,10 @@ describe("matchFragment — anchored fuzzy (PRD §04 h2.28, plan 003)", () => {
     ] as const) {
       const r = matchFragment(f, c)!;
       expect(r.tier).toBe(1);
-      expect(r.score).toBeLessThanOrEqual(50);
+      // Max = BASE − run penalty − one 1-char hole (62), from constants.
+      expect(r.score).toBeLessThanOrEqual(
+        TIER1_BASE_SCORE - TIER1_GAPRUN_PENALTY - TIER1_GAPCHAR_WEIGHT,
+      );
       expect(r.score).toBeGreaterThanOrEqual(0);
     }
   });
@@ -893,8 +901,9 @@ describe("matchFragment — anchored fuzzy (PRD §04 h2.28, plan 003)", () => {
 //
 // SCAN-SEQUENCING NOTE (updated by T2.S2): rankMatches now scans the
 // FIRST-CHAR bucket, so the gate is load-bearing at the default — tier-2
-// tail matches (≤ 85) admit above it, tier-1 scattered matches (≤ 50)
-// stay invisible at 60. The historical pins below (thresholds 150/100)
+// tail matches (≤ 85) admit above it, tier-1 scattered matches stay under
+// it except the single-1-char-hole class (62, the 2026-10 gap-size
+// retune). The historical pins below (thresholds 150/100)
 // still hold: they prove the comparison direction and the absent =
 // DEFAULT_FUZZ_THRESHOLD semantics through the public seam, and the
 // tier-2/1 boundary cases pinned at the matcher level are now reachable
@@ -903,7 +912,7 @@ describe("matchFragment — anchored fuzzy (PRD §04 h2.28, plan 003)", () => {
 describe("admission threshold — fuzzThreshold gating (PRD §04 h2.28, plan 003 S2)", () => {
   /** Keys with known matcher traces: zendesk (tier-2 probe 'zsk' → 62),
    *  z_lwlock (tier-2 'zlock' → 70 exactly), handleresponseproxy
-   *  (tier-1 'hrp' → 43). */
+   *  (tier-1 'hrp' → 59). */
   const seed = (): CandidateStore => {
     const s = new CandidateStore();
     put(s, "zendesk", 2);
@@ -933,15 +942,16 @@ describe("admission threshold — fuzzThreshold gating (PRD §04 h2.28, plan 003
       Math.round(TIER2_BASE_SCORE - (TIER2_SKIP_FACTOR * 3) / "z_lwlock".length),
     ).toBe(70);
 
-    // Tier 1: score = BASE − GAPRUN_PENALTY·gapRuns − min(gapChars, CAP).
+    // Tier 1: score = BASE − GAPRUN_PENALTY·gapRuns −
+    // min(GAPCHAR_WEIGHT·gapChars, GAPCHAR_CAP).
     // 'hrp'→'handleResponseProxy': greedy trace gives gapRuns=1,
-    // gapChars=2 → 50 − 5 − 2 = 43.
+    // gapChars=2 → 70 − 5 − 6 = 59.
     expect(matchFragment("hrp", "handleResponseProxy")).toEqual({
       tier: 1,
       score:
         TIER1_BASE_SCORE -
         TIER1_GAPRUN_PENALTY * 1 -
-        Math.min(2, TIER1_GAPCHAR_CAP),
+        Math.min(TIER1_GAPCHAR_WEIGHT * 2, TIER1_GAPCHAR_CAP),
     });
   });
 
@@ -988,22 +998,30 @@ describe("admission threshold — fuzzThreshold gating (PRD §04 h2.28, plan 003
     ]);
   });
 
-  it("absent fuzzThreshold ≡ DEFAULT_FUZZ_THRESHOLD (not 0) — and default 60 kills ALL tier-1 (spec-quoted)", () => {
+  it("absent fuzzThreshold ≡ DEFAULT_FUZZ_THRESHOLD (not 0) — default 60 admits ONLY tier-1's one-1-char-hole class (2026-10 retune)", () => {
     const s = seed();
-    // SPEC (§04 h2.28): "At the default this admits every exact prefix
-    // and strong contiguous tails … and gates out most scattered
-    // matches." The arithmetic that makes the last clause true: tier-1's
-    // MAXIMUM score is TIER1_BASE_SCORE (50 — every gap subtracts more),
-    // strictly below the default 60, so NO scattered match can ever
-    // survive the default gate. Do NOT "fix" this — it is the intended
-    // calibration (r3 doc §7 feasibility).
+    // SPEC (§04, gap-size retune): "At the default this admits every exact
+    // prefix, strong contiguous tails and — since the gap-size retune —
+    // exactly one scattered class: the single 1-char interior hole." The
+    // arithmetic: tier-1's MAXIMUM is BASE − run penalty − one 1-char
+    // hole = 62 ≥ 60, and every looser shape subtracts ≥ 3 more per gap
+    // char (2-char hole 59) or 5+ per extra run (≤ 54), staying under.
     expect(DEFAULT_FUZZ_THRESHOLD).toBe(60); // the §08 h2.52 schema default; a §09 retune updates this pin deliberately
-    expect(TIER1_BASE_SCORE).toBeLessThan(DEFAULT_FUZZ_THRESHOLD);
-    // Empirically, every tier-1 trace in the matcher suite gates out:
+    const t1Max = TIER1_BASE_SCORE - TIER1_GAPRUN_PENALTY - TIER1_GAPCHAR_WEIGHT;
+    expect(t1Max).toBe(62);
+    expect(t1Max).toBeGreaterThanOrEqual(DEFAULT_FUZZ_THRESHOLD);
+    // The one-hole traces admit at the default:
     for (const [f, c] of [
-      ["hrp", "handleResponseProxy"],
       ["zds", "zendesk"],
       ["sr/co", "src/core/query.ts"],
+    ] as const) {
+      expect(matchFragment(f, c)!.score, `${f} vs ${c}`).toBeGreaterThanOrEqual(
+        DEFAULT_FUZZ_THRESHOLD,
+      );
+    }
+    // Every looser tier-1 trace in the matcher suite still gates out:
+    for (const [f, c] of [
+      ["hrp", "handleResponseProxy"],
       ["hay", "ha" + "x".repeat(16) + "y"],
     ] as const) {
       expect(matchFragment(f, c)!.score, `${f} vs ${c}`).toBeLessThan(
@@ -1078,7 +1096,8 @@ describe("rankMatches — first-char-bucket scan (P1.M2.T2.S2)", () => {
   it("tier-1 scattered matches stay invisible at the default, admit under a lowered threshold", () => {
     const s = new CandidateStore();
     put(s, "handleresponseproxy", 3);
-    // The 'h' bucket IS scanned since T2.S2; the tier-1 score (43) is
+    // The 'h' bucket IS scanned since T2.S2; the tier-1 score (59 — a
+    // 2-char hole, one point under the line) is
     // what keeps it out at the default 60 — the gate, not the range.
     expect(rankMatches(s, "hrp")).toEqual([]);
     expect(
@@ -1105,15 +1124,89 @@ describe("rankMatches — first-char-bucket scan (P1.M2.T2.S2)", () => {
   });
 });
 
+// ── Tier-1 gap-size retune (2026-10, spec §04) ──────────────────────────
+
+describe("rankMatches — tier-1 single-skip admission (2026-10 gap-size retune)", () => {
+  // Spec §04 retune: tier-1 is 70 − 5·gapRuns − min(3·gapChars, 15), so
+  // hole SIZE slopes (62 / 59 / 56 / …) instead of the first
+  // calibration's cliff (a flat 44 for every one-run-one-char trace,
+  // below BOTH mode defaults). At ambient 60 exactly ONE scattered class
+  // admits — the single 1-char interior hole. Motivating live report:
+  // typing `del`/`delet` offered `delete` but `delt` showed NOTHING.
+
+  const seed = (): CandidateStore => {
+    const s = new CandidateStore();
+    put(s, "delete", 2);
+    put(s, "deliver");
+    put(s, "handleresponseproxy");
+    return s;
+  };
+
+  it("the motivating report: 'delt' → 'delete' admits at the ambient default (62 ≥ 60)", () => {
+    const s = seed();
+    // Greedy trace: e@1, l@2 consecutive; t skips exactly one char
+    // ('e'@3) → gapRuns=1, gapChars=1 → 70 − 5 − min(3·1, 15) = 62.
+    expect(matchFragment("delt", "delete")).toEqual({ tier: 1, score: 62 });
+    expect(rankMatches(s, "delt").map((m) => m.key)).toEqual(["delete"]);
+    expect(rankMatches(s, "delt", { fuzzThreshold: 62 })).toHaveLength(1); // == survives
+    expect(rankMatches(s, "delt", { fuzzThreshold: 63 })).toEqual([]); // one above discards
+    // Sibling shapes of the same class (one 1-char hole, 3–5 chars):
+    expect(matchFragment("dlt", "delete")).toEqual({ tier: 1, score: 62 });
+    expect(matchFragment("dlte", "delete")).toEqual({ tier: 1, score: 62 });
+    expect(rankMatches(s, "dlt").map((m) => m.key)).toEqual(["delete"]);
+  });
+
+  it("'del'/'delet' are unchanged: tier-3 exact prefixes at 100 (tier-2 sibling 72)", () => {
+    const s = seed();
+    expect(matchFragment("del", "delete")).toEqual({ tier: 3, score: 100 });
+    expect(matchFragment("delet", "delete")).toEqual({ tier: 3, score: 100 });
+    // Both are also prefixes of nothing else in the 'd' bucket…
+    expect(rankMatches(s, "delet").map((m) => m.key)).toEqual(["delete"]);
+    // …while 'del' prefix-matches BOTH tier-3 words (count desc within
+    // the tier: delete 2 > deliver 1).
+    expect(rankMatches(s, "del").map((m) => m.key)).toEqual(["delete", "deliver"]);
+    // The tier-2 sibling is untouched: 'det' skips 2 chars BEFORE a
+    // contiguous 'et' run → round(85 − 40·2/6) = 72.
+    expect(matchFragment("det", "delete")).toEqual({ tier: 2, score: 72 });
+  });
+
+  it("slope, not cliff: a 2-char hole gates ambient by one point (59 < 60)", () => {
+    const s = seed();
+    // 'hrp' → 'handleResponseProxy': one gap run of 2 chars ('es') →
+    // 70 − 5 − min(3·2, 15) = 59. The retune's ambient line: one 1-char
+    // hole admits (62), a 2-char hole does not — the drop from
+    // contiguous (85) is now a slope (85 → 62 → 59), not the old
+    // 85 → 44 cliff.
+    expect(matchFragment("hrp", "handleResponseProxy")).toEqual({
+      tier: 1,
+      score: 59,
+    });
+    expect(rankMatches(s, "hrp")).toEqual([]); // 59 < 60 — gates at the default
+  });
+
+  it("deliberately sloppy fragments still gate ambient: two gaps score 54", () => {
+    const s = seed();
+    // 'dlvr' → 'deliver': l@2, then v skips 'i' (gap 1), then r skips
+    // 'e' (gap 2) → gapRuns=2, gapChars=2 → 70 − 10 − 6 = 54 < 60.
+    expect(matchFragment("dlvr", "deliver")).toEqual({ tier: 1, score: 54 });
+    expect(rankMatches(s, "dlvr")).toEqual([]);
+    // …but 54 ≥ 45: the `#` trigger mode still surfaces it (mode split).
+    expect(
+      rankMatches(s, "dlvr", { loose: true, fuzzThreshold: 45 }).map((m) => m.key),
+    ).toEqual(["deliver"]);
+  });
+});
+
 describe("rankMatches — loose mode (trigger loosening, spec §04 h2.28, plan 004)", () => {
-  // Plan-004 erratum vs the task PRP's '#cfg' example, pinned deliberately:
-  // tier-1 scores are 50 − 5·gapRuns − gapChars with ≥ 1 gap run of ≥ 1
-  // char, so the tier-1 MAXIMUM is 44 — matchFragment("cfg",
-  // "config_manager_service") measures exactly 44 < TRIGGER_FUZZ_THRESHOLD
-  // (45). A tier-1 record can therefore never admit at the trigger
-  // threshold; the mode-differentiation vector below uses a tier-2 match
-  // scoring 58 (∈ [45, 60)) instead, and this block pins the 44 reality so
-  // the ceiling is visible, not accidental.
+  // Plan-004 erratum RETIRED by the 2026-10 gap-size retune: the first
+  // calibration (50 − 5·gapRuns − gapChars) maxed tier-1 at 44 <
+  // TRIGGER_FUZZ_THRESHOLD (45), so the spec's own '#cfg' →
+  // 'config_manager_service' exemplar could never admit — a pinned
+  // erratum, not the intended behavior. With gap-size scaling
+  // (70 − 5·gapRuns − min(3·gapChars, 15), max 62) the exemplar finally
+  // delivers at the trigger default, and the mode-differentiation
+  // vector below (a tier-2 match scoring 58 ∈ [45, 60)) keeps proving
+  // the ambient/trigger split.
 
   /** Shared store: anchored tier-3 words + a rule-4d path key whose only
    *  match path is tier-0 ('query' sits mid-key), plus the PRP's config/
@@ -1160,17 +1253,21 @@ describe("rankMatches — loose mode (trigger loosening, spec §04 h2.28, plan 0
     expect(rankMatches(s, "ade", { loose: true, fuzzThreshold: 60 })).toEqual([]);
   });
 
-  it("'#cfg' erratum pin: tier-1 maxes at 44 — config_manager_service never admits at 45", () => {
+  it("'#cfg' delivers the §04 exemplar post-retune: 62 admits at the trigger default 45", () => {
     const s = looseStore();
+    // One gap run of 1 char ('i' between f@3 and g@5) → 70 − 5 − 3 = 62.
     expect(matchFragment("cfg", "config_manager_service")).toEqual({
       tier: 1,
-      score: 44,
+      score: 62,
     });
-    expect(rankMatches(s, "cfg", { loose: true, fuzzThreshold: 45 })).toEqual([]);
-    // The machinery works — the threshold sits above tier-1's ceiling:
     expect(
-      rankMatches(s, "cfg", { loose: true, fuzzThreshold: 40 }).map((m) => m.key),
+      rankMatches(s, "cfg", { loose: true, fuzzThreshold: 45 }).map((m) => m.key),
     ).toEqual(["config_manager_service"]);
+    // Boundary: exactly-at survives the strict gate; one above discards.
+    expect(
+      rankMatches(s, "cfg", { loose: true, fuzzThreshold: 62 }).map((m) => m.key),
+    ).toEqual(["config_manager_service"]);
+    expect(rankMatches(s, "cfg", { loose: true, fuzzThreshold: 63 })).toEqual([]);
   });
 
   it("dedup: a key matching anchored AND anchorless appears once — anchored wins", () => {

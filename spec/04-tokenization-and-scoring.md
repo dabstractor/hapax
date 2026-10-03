@@ -438,7 +438,7 @@ match gets an integer score 0–100:
 ```
 tier 3: 100
 tier 2: 85 − 40 · (charsSkippedBeforeRun / len(c))   → ~45–85
-tier 1: 50 − 5 · gapRuns − min(gapChars, 15)          → ≤ 50
+tier 1: 70 − 5 · gapRuns − min(3 · gapChars, 15)      → ≤ 62
 ```
 
 Candidates scoring below `fuzzThreshold` (config, 08; default 60,
@@ -446,12 +446,32 @@ higher = stricter; 100 degenerates to exact-prefix-only mode) are
 discarded BEFORE ranking — they render nothing even though they
 technically match. Owner rationale (2026-10): a ~20k-entry store with
 loose fuzzy settings floods the results; only fairly strict matches
-belong. At the default this admits every exact prefix and strong
+belong. At the default this admits every exact prefix, strong
 contiguous tails (`zsk`→`zendesk` ≈ 62, `hr`→`handleResponse` ≈ 69)
-and gates out most scattered matches. The formula constants are
-calibration starting points (09 tuning protocol), not gospel; the tier
-BOUNDARIES (what is a prefix / contiguous tail / scattered match) are
-semantics, never tunable.
+and — since the gap-size retune below — exactly one scattered class:
+the single 1-char interior hole (`delt`→`delete` = 62, the word minus
+one letter). Every looser scattered shape gates: a 2-char hole scores
+59 (`hrp`→`handleResponseProxy`), a second gap ≤ 54. The formula
+constants are calibration starting points (09 tuning protocol), not
+gospel; the tier BOUNDARIES (what is a prefix / contiguous tail /
+scattered match) are semantics, never tunable.
+
+**Tier-1 gap-size scaling (2026-10 retune of the first calibration,
+`50 − 5·gapRuns − min(gapChars, 15)`).** The first calibration was a
+cliff, not a slope: its ceiling (44, since every tier-1 trace has ≥ 1
+gap run of ≥ 1 char) sat below BOTH mode defaults, so no scattered
+match could ever render — while `del`/`delet`→`delete` scored 100 and
+`delt` (the word minus ONE interior letter, a plain skipped-keystroke
+typo) scored 44 and vanished at ambient 60 AND `#` 45. The retune
+keeps the flat 5-per-gap-run (fragility of the subsequence) and
+scales the per-gap-CHAR cost to 3 (capped at 15 total, saturating at
+5 skipped chars), off a base of 70 — so hole SIZE slopes (62 / 59 /
+56 / 53 / 50…) instead of one near-flat drop, and the tightest
+possible trace — one 1-char hole — lands at 62, just over the ambient
+gate with every looser shape still under it. Verified against a
+synthetic d-bucket corpus: the ambient-60 delta is exactly the
+one-1-char-hole class (e.g. `dlt`/`delt`/`dlte`→`delete`-shaped
+traces); tier-2/3/0 arithmetic is untouched.
 
 **Tier 0 — anchorless contiguous run (2026-10 owner rule; status:
 adopted ahead of implementation — code lands with this spec).** When
@@ -502,8 +522,13 @@ never in the ambient word-start path: (a) tier-0 anchorless runs are
 ALWAYS consulted — no zero-anchored-result precondition (`#query` →
 `src/core/query.ts` works directly); (b) scattered tier-1 matches are
 VISIBLE — the `#` mode's default threshold is **45** (vs ambient 60;
-45 sits under tier-1's max of 50, so only the strongest scattered
-matches admit — `#cfg` → `config_manager_service`). An explicitly set
+45 sits under tier-1's max of 62, so the tighter scattered shapes
+admit — those with `5·gapRuns + min(3·gapChars, 15) ≤ 25`, i.e. up to
+two gaps of any size or three/four tiny gaps: `#cfg` →
+`config_manager_service` (62), `#hrp` → `handleResponseProxy` (59);
+three-plus sizeable gaps still gate). Under the first calibration
+this clause was vacuously false (max 44 < 45 admitted nothing); the
+gap-size retune makes it true as written. An explicitly set
 `fuzzThreshold` (08) overrides BOTH mode defaults. Successor
 chaining stays ANCHORED everywhere: chain arming and the chain gate
 consult tiers 1–3 only — tier-0 matches never arm or extend a chain.

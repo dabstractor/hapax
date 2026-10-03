@@ -64,7 +64,14 @@
   `handleResponseProxy`).
 - Admission score + threshold: below-`fuzzThreshold` matches never
   render; `fuzzThreshold: 100` = exact-prefix-only mode; score
-  arithmetic per 04's formula for each tier.
+  arithmetic per 04's formula for each tier. Tier-1 gap-size scaling
+  (2026-10 retune, 04): the single-1-char-hole class admits at the
+  ambient default (`delt`→`delete` = 62 ≥ 60 — the retune's motivating
+  case; `del`/`delet` stay tier-3 100); every looser scattered shape
+  gates at 60 (2-char hole 59, a second gap ≤ 54 — e.g. the two-gap
+  `dlvr`→`deliver` = 54); gapChars saturates via `min(3·gapChars,
+  15)`; `#cfg` admits at the trigger default 45 (62), retiring the
+  first calibration's erratum (max 44 admitted nothing at 45).
 - Ranking: tier descending always (a 1-count exact-prefix word
   outranks a 40-count scattered match, which outranks any tier-0
   anchorless run); sessionCount descending within
