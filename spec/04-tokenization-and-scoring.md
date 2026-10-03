@@ -584,8 +584,10 @@ of conversation-relevant ordering; salience still decides MEMBERSHIP —
 admission and eviction — and the full salience score never orders
 anything (only its raw `sessionCount` component does, within tiers).
 
-Return top **8** items (`maxSuggestions` config, 1–20; the widget
-line's item cap and the fallback menu's height — 07). Under the
+Return top `maxSuggestions` items (config, 1–20; **default 20 since
+the 2026-10 width-bound rule** — the widget line's real cap is the
+terminal width, so the count is only a sanity ceiling and the default
+sits at the schema max; the fallback menu's height — 07). Under the
 trigger char, same rules.
 
 ## Case handling

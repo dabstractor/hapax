@@ -29,7 +29,13 @@ defaults, continue running. Missing files are normal.
                               // pi-tui only requests at word starts, so
                               // matching is effectively 1 char (see 07).
                               // Kept for schema compatibility. 1 | 2 | 3.
-  "maxSuggestions": 8,       // 1–20
+  "maxSuggestions": 20,      // 1–20: WIDTH-BOUND default (2026-10) — the
+                              // widget line caps at the terminal width
+                              // (rightmost dropped first); the count is
+                              // only a sanity ceiling, so the default
+                              // sits at the schema max and width binds
+                              // on every realistic terminal. Tune down
+                              // for fewer words per line.
   "rejectCommonness": 12,    // 1–255: dictionary-attestation FLOOR of
                               // the length-conditioned reject curve R_eff
                               // (04): flat through 8 chars, sqrt ramp to

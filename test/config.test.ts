@@ -94,7 +94,7 @@ describe("defaults — no config files (PRD §08)", () => {
     expect(loadConfig(loadOpts())).toEqual({
       triggerChar: "#",
       threshold: 2,
-      maxSuggestions: 8,
+      maxSuggestions: 20, // width-bound default (2026-10): ceiling, width binds
       rejectCommonness: DEFAULT_CONFIG.rejectCommonness,
       fuzzThreshold: DEFAULT_CONFIG.fuzzThreshold,
       menuDelayMs: DEFAULT_CONFIG.menuDelayMs,

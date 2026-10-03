@@ -121,7 +121,14 @@ export interface HapaxConfig {
 export const DEFAULT_CONFIG: HapaxConfig = {
   triggerChar: "#",
   threshold: 2,
-  maxSuggestions: 8,
+  // Width-bound default (2026-10 owner rule): the widget line's real
+  // cap is the TERMINAL WIDTH (rightmost items drop first, spec 07) —
+  // the count is only a sanity ceiling, so the default sits at the
+  // schema max (20): every realistic terminal fits fewer words than
+  // this, width binds, and the line fills the screen edge as shell
+  // completions do. The fallback vertical menu pages via pi's
+  // autocompleteMaxVisible. Users can still tune the count down.
+  maxSuggestions: 20,
   rejectCommonness: REJECT_COMMON_THRESHOLD,
   fuzzThreshold: DEFAULT_FUZZ_THRESHOLD,
   menuDelayMs: 0,

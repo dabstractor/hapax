@@ -926,7 +926,7 @@ describe("dual-path display branch (spec 07 h2.42)", () => {
     expect(opts).toBeDefined();
     expect(opts!.store).toBeInstanceOf(CandidateStore); // this session's store
     expect(opts!.config.triggerChar).toBe("#"); // default config flowed in
-    expect(opts!.config.maxSuggestions).toBe(8);
+    expect(opts!.config.maxSuggestions).toBe(20); // width-bound default (2026-10)
     expect(typeof opts!.chain.reset).toBe("function"); // the chain machine
     expect(opts!.restoreReady).toBeInstanceOf(Promise); // startup gate signal
     expect(typeof opts!.onKeystroke).toBe("function"); // shared input clock tick

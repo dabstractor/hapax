@@ -48,8 +48,12 @@ own-rendered line.
   `chain` marker included). Frequency still ranks (04); it just isn't
   displayed. A result item is the candidate display string, nothing
   else.
-- Line cap = `maxSuggestions` AND terminal width: overflow drops the
-  lowest-ranked (rightmost) items first.
+- Line cap = terminal WIDTH first: fill the screen edge with as many
+  words as fit (2026-10 owner rule — the count cap is a vertical-menu
+  relic; on a one-line surface width is the resource, as in shell
+  completions), bounded above by `maxSuggestions` (default 20 = the
+  schema max, so width binds on every realistic terminal). Overflow
+  drops the lowest-ranked (rightmost) items first.
 - Zero candidates never render content (invariant 3). UNCLAIMED (never
   shown this prompt — Line claim below), zero candidates mean no row at
   all; once the row is CLAIMED, zero candidates render the row blank.
