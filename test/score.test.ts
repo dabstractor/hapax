@@ -92,8 +92,8 @@ const cand = (over: Partial<Candidate> = {}): Candidate => ({
 describe("admit — baked thresholds (PRD §04/§08)", () => {
   // Deliberate pin of the measured values (tools/calibrate-bands.mjs,
   // BUG-001): P1.M1.T2.S2's calibration test relies on these being exact.
-  it("exports REJECT_COMMON_THRESHOLD = 12 (2026-09 retighten) and MID_FREQ_THRESHOLD = 20", () => {
-    expect(REJECT_COMMON_THRESHOLD).toBe(12);
+  it("exports REJECT_COMMON_THRESHOLD = 30 (2026-10 width-bound retune) and MID_FREQ_THRESHOLD = 20", () => {
+    expect(REJECT_COMMON_THRESHOLD).toBe(30);
     expect(MID_FREQ_THRESHOLD).toBe(20); // guard tier-2 only; the g2 table band is retired
   });
 });
@@ -126,24 +126,24 @@ describe("R_eff length-conditioned admission (2026-10 gradient)", () => {
     ).toBe(1);
   });
 
-  it("sqrt ramp boundary at 9 chars: rEff ≈ 82.15 → q=82 admits, q=83 rejects (float compare, no rounding)", () => {
-    // PRP-fencepost note: ceil(82.147) = 83, so the measured boundary is
-    // last-admit 82 / first-reject 83 (the self-relative construction rule:
-    // q_reject = ceil(rEff)). Rounding down to 82 would flip q=82 to reject
-    // — this pair pins the no-rounding contract.
-    expect(rEff(REJECT_COMMON_THRESHOLD, 9)).toBeCloseTo(82.147, 2);
-    expect(admit(draft("ninechars"), dict({ ninechars: 82 }))).toBe(1);
-    expect(admit(draft("ninechars"), dict({ ninechars: 83 }))).toBe("reject");
+  it("sqrt ramp boundary at 9 chars: rEff ≈ 94.95 → q=94 admits, q=95 rejects (float compare, no rounding)", () => {
+    // PRP-fencepost note: ceil(94.952) = 95, so the measured boundary is
+    // last-admit 94 / first-reject 95 (the self-relative construction rule:
+    // q_reject = ceil(rEff)). Rounding down to 94 would flip q=94 to reject
+    // — this pair pins the no-rounding contract. (2026-10 retune: R=30.)
+    expect(rEff(REJECT_COMMON_THRESHOLD, 9)).toBeCloseTo(94.952, 2);
+    expect(admit(draft("ninechars"), dict({ ninechars: 94 }))).toBe(1);
+    expect(admit(draft("ninechars"), dict({ ninechars: 95 }))).toBe("reject");
   });
 
-  it("ramp probes (spec h2.26 measured values): 10-char 110/139, 14-char 183/184", () => {
-    // rEff(12,10) ≈ 111.2 → 110 admits, 139 rejects;
-    // rEff(12,14) ≈ 183.8 → 183 admits, 184 rejects.
+  it("ramp probes (spec h2.26 measured values, R=30): 10-char 110/139, 14-char 189/190", () => {
+    // rEff(30,10) ≈ 121.8 → 110 admits, 139 rejects;
+    // rEff(30,14) ≈ 189.1 → 189 admits (float compare), 190 rejects.
     expect(admit(draft("government"), dict({ government: 110 }))).toBe(1);
     expect(admit(draft("everything"), dict({ everything: 139 }))).toBe("reject");
-    expect(admit(draft("characteristic"), dict({ characteristic: 183 }))).toBe(1);
+    expect(admit(draft("characteristic"), dict({ characteristic: 189 }))).toBe(1);
     expect(
-      admit(draft("characteristic"), dict({ characteristic: 184 })),
+      admit(draft("characteristic"), dict({ characteristic: 190 })),
     ).toBe("reject");
   });
 
@@ -159,10 +159,14 @@ describe("R_eff length-conditioned admission (2026-10 gradient)", () => {
     expect(admit(draft("ninechars"), dict({ ninechars: 81 }))).toBe(1);
     expect(admit(draft("tokenish"), dict({ tokenish: 0 }))).toBe(1);
     expect(admit(draft("token"), dict({ token: REJECT_COMMON_THRESHOLD - 1 }))).toBe(1);
-    // The old MID row is gone: a mid-band q at floor length rejects flat,
-    // never demotes to 2.
+    // The old MID row is gone: a q that still rejects at floor length
+    // rejects FLAT, never demotes to 2 — and (2026-10 R=30) the old
+    // mid-band's low half now ADMITS at group 1 (q=20 < floor 30).
     expect(
       admit(draft("tokenish"), dict({ tokenish: MID_FREQ_THRESHOLD })),
+    ).toBe(1);
+    expect(
+      admit(draft("tokenish"), dict({ tokenish: REJECT_COMMON_THRESHOLD })),
     ).toBe("reject");
   });
 
@@ -269,13 +273,15 @@ describe("admit — conjugation guard (2026-09, 'deleted' leak)", () => {
   });
 
   it("stem below the reject band does NOT reject absent jargon (rarestem plurals stay admitted)", () => {
-    // 2026-09: at REJECT=12, a stem must sit in the rarest tail to spare
-    // its absent inflection — zephyr(q=MID−1=19) is attested-English
-    // noise now, so its plural rejects too; a genuinely rare stem
-    // (q=10) keeps the absent plural admitting at group 0.
-    expect(admit(draft("zephyrs"), dict({ zephyr: MID_FREQ_THRESHOLD - 1 }))).toBe(
-      "reject", // stem 19 ≥ 12: tier-1 rejects the absent inflection
-    );
+    // 2026-10 (R=30): a stem must sit in the rarest tail to spare its
+    // absent inflection — zephyr(q=MID−1=19) is now BELOW the floor, so
+    // its absent plural admits at group 0 (the deliberate loosening);
+    // a stem at/above the floor (q=35 ≥ 30) still rejects the plural,
+    // and a genuinely rare stem (q=10) keeps sparing it.
+    expect(admit(draft("zephyrs"), dict({ zephyr: MID_FREQ_THRESHOLD - 1 }))).toBe(0);
+    expect(
+      admit(draft("zephyrs"), dict({ zephyr: REJECT_COMMON_THRESHOLD + 5 })),
+    ).toBe("reject");
     expect(admit(draft("rarewords"), dict({ rareword: 10 }))).toBe(0);
   });
 
@@ -430,9 +436,9 @@ describe("admit — whole-token bands (PRD §04 h2.24)", () => {
     ).toBe(1);
   });
 
-  it("attested English in the OLD mid band (20 ≤ q < 50) now REJECTS (2026-09 retighten)", () => {
+  it("the OLD mid band SPLITS at the floor (2026-10 R=30): q < 30 admits group 1, q ≥ 30 rejects", () => {
     expect(admit(draft("tokenish"), dict({ tokenish: MID_FREQ_THRESHOLD }))).toBe(
-      "reject",
+      1, // 20 < 30 — the 2026-10 deliberate flip
     );
     expect(admit(draft("tokenish"), dict({ tokenish: 49 }))).toBe("reject");
   });

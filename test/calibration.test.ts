@@ -136,16 +136,19 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     // Ordinary English prose is no longer completion material. 2026-10
     // semantics: every prose.jsonl word is ≤ 8 chars, so the R_eff ramp
     // (spec/04 h2.26) stays in its floor-hold region for the whole
-    // fixture — R=12 rejects all attested words (fences 41, posts 47,
-    // garden 86…) exactly as the 2026-09 flat band did; the rest are
-    // capitalized-only-at-structural-starts. 9+ char attested words
-    // WOULD admit under the ramp, but the fixture contains none — a
-    // property pinned by the length test below so this expectation
-    // cannot silently rot. The no-menu assertions below are therefore
-    // trivially true for the RIGHT reason (nothing admits); the
+    // fixture — R=30 rejects the prose HEAD exactly as before (fences
+    // 41, posts 47, garden 86…); the 2026-10 loosened floor admits the
+    // q<30 class (measured: `sweeten` q=26 — the ONE word in this
+    // fixture under the floor), and 9+ char attested words WOULD admit
+    // under the ramp, but the fixture contains none — a property
+    // pinned by the length test below so this expectation cannot
+    // silently rot. The no-menu assertions below remain true for the
+    // RIGHT reason (the admitted word prefix-matches no probe); the
     // live-menu control elsewhere in this suite uses a direct store
     // upsert, keeping this file non-vacuous.
-    expect(store.size).toBe(0);
+    expect(store.size).toBe(1);
+    store.prefixRange("a"); // force consolidation — snapshot may lag pending
+    expect(store.sortedKeysSnapshot()).toEqual(["sweeten"]);
   });
 
   it("prose.jsonl contains no ramp-length words (store-empty pin, 2026-10)", () => {

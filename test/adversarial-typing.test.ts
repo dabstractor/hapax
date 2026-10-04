@@ -288,11 +288,15 @@ describe("adversarial Probe A — prose no-menu (BUG-001)", () => {
   }, 60_000);
 
   it("ingests prose.jsonl into a live (non-empty) store", () => {
-    // 2026-09 retighten: ordinary English prose admits NOTHING — the
-    // store is empty by design and the no-menu assertions below are true
-    // for the right reason. The live-menu control in this file uses a
-    // direct store upsert, keeping the suite non-vacuous.
-    expect(store.size).toBe(0);
+    // 2026-10 width-bound retune (R=30): ordinary prose admits the q<30
+    // floor class — measured: `sweeten` (q=26), the fixture's ONE word
+    // under the floor; the prose HEAD still rejects, so the no-menu
+    // assertions below remain true for the right reason. The live-menu
+    // control in this file uses a direct store upsert, keeping this
+    // suite non-vacuous.
+    expect(store.size).toBe(1);
+    store.prefixRange("a"); // force consolidation — snapshot may lag pending
+    expect(store.sortedKeysSnapshot()).toEqual(["sweeten"]);
   });
 
   it.each(PROSE_PROBES)("prose probe '$fragment' → $title", async ({ fragment, full, expected }) => {
@@ -523,7 +527,8 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     );
     expect(offer1!.prefix, "hop 1: word-start offer must answer with zero typed chars").toBe("");
     expect(offer1!.items.map((i) => i.label), "hop 1: 'zorp' successors (count-desc)").toEqual([
-      "Zephra", // 2026-09: turbine (q26) table-rejects — sole successor
+      "Zephra",
+      "turbine", // 2026-10 R=30: turbine (q26) admits — count-1 tail; Zephra strictly top
     ]);
     provider.applyCompletion(
       current.state.lines,

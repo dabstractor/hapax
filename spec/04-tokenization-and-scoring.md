@@ -288,21 +288,38 @@ code lands with this spec)**:
     R_eff(len) = R + (255 − R)·√((len − 8)/12)    8 < len < 20
     R_eff(len) = 255 (admit-all)                  len ≥ 20
 
-`R` is the floor — **default 12** (2026-09 retighten; owner rule),
-runtime-tunable via the `rejectCommonness` config (see 08; the knob
-moves the floor and the whole curve scales from it). The design premise
-(2026-09, refined 2026-10): **dictionary attestation is
-near-disqualifying evidence at short lengths** — hapax completes the
-dictionary-ABSENT class (identifiers, commit-hash-shaped tokens,
-jargon) — but commonness stops being evidence of noise as words
-lengthen: typing savings grow with length while noise mass collapses
-(of ~50k corpus words, ~13k currently-rejected live at 7–9 chars, ~2.8k
-at 11+, ~250 at 14+). The sqrt shape is steep where noise dies (9–12)
-and saturates where almost nothing remains to admit (16+). Curve chosen
-by owner measurement (2026-10): linear 6→20 was rejected (≈18.9k
-flips, re-admitting the audit's own `provider` class); floor-10
-variants were rejected as stricter than the owner's intent (~3.2k
-flips, nothing below 11 chars); **sqrt 8→20 adopted** (≈10.5k flips).
+`R` is the floor — **default 30** (2026-10 width-bound retune; owner
+rule — was 12 since the 2026-09 retighten), runtime-tunable via the
+`rejectCommonness` config (see 08; the knob moves the floor and the
+whole curve scales from it). The design premise (2026-09, refined
+2026-10): **dictionary attestation is discounting evidence at short
+lengths** — hapax completes the dictionary-ABSENT class (identifiers,
+commit-hash-shaped tokens, jargon) — but commonness stops being
+evidence of noise as words lengthen: typing savings grow with length
+while noise mass collapses (of ~50k corpus words, ~13k
+currently-rejected live at 7–9 chars, ~2.8k at 11+, ~250 at 14+).
+The sqrt shape is steep where noise dies (9–12) and saturates where
+almost nothing remains to admit (16+). Curve chosen by owner
+measurement (2026-10): linear 6→20 was rejected (≈18.9k flips,
+re-admitting the audit's own `provider` class); floor-10 variants were
+rejected as stricter than the owner's intent (~3.2k flips, nothing
+below 11 chars); **sqrt 8→20 adopted** (≈10.5k flips).
+
+**Floor retune 12 → 30 (2026-10 owner rule, width-bound):** the
+one-line widget + per-prompt line claim + width-bound suggestion
+count dropped the UI cost of an admitted common word — the 8-item
+vertical-menu flooding that justified R=12 is gone, and a fuller line
+is now the deliberate display. Measured against the shipped artifact:
+attested-admitted table words 15,064 → 32,544 of 48,802. The
+dev-vocabulary class comes in (`node` q=23, `spec` q=28, `null` q=24,
+`turbine` q=26 — the zephyr fixture's successor tail grew with it);
+the prose HEAD holds (`the` 240, `with` 179, `this` 197, `window` 99,
+`context` 51, `everything` 139) and the conjugation guard rides the
+curve unchanged (`deleted`/`lists`/`uploads` still reject — their
+stems sit at/above the floor). Accepted consequence (owner): mid-class
+words now carry high sessionCount and can out-rank rare identifiers
+within a match tier; the rarity-weighted ordering that would neutralize
+this is a recorded future design item, not shipped.
 
 | Condition | Result |
 |---|---|
@@ -310,17 +327,18 @@ flips, nothing below 11 chars); **sqrt 8→20 adopted** (≈10.5k flips).
 | `q !== null && q < R_eff(len)` | **Admit, rank group 1** — attested, but worth completing at this length |
 | `q === null` (absent) | **Admit, rank group 0** — rare-by-default (post shape gate): THE value class |
 
-Measured effect against the shipped artifact (sqrt 8→20): ≈10.5k
-corpus words flip vs the flat band — nothing below 9 chars changes; at
-9 chars admits q≤82 (`R_eff(9)` ≈ 82.15, float compare — q=83 is the
-first reject), 10 → q≤111 (`R_eff(10)` ≈ 111.2; `government` q=101
-yes; `everything` q=139 no),
-11 → q<133 (`information`, `development`), 12 → q<152
-(`organization`, `relationship`), 14 → q<184 (`characteristics`,
-`infrastructure`, `responsibility`); admit-all from 20. The 2026-09
-audit's noise words all stay rejected (`provider` q=34 sits on the
-8-char floor hold; `default` q=44, `enable` q=38, `cache` q=30,
-`node`/`spec`/`null` are all under their length's threshold).
+Measured effect against the shipped artifact (sqrt 8→20, floor R=30
+since the 2026-10 width-bound retune): at floor lengths (≤ 8 chars)
+admits q<30; 9 chars admits q≤94 (`R_eff(9)` ≈ 94.95, float compare —
+q=95 is the first reject), 10 → q<121.8 (`R_eff(10)` ≈ 121.8;
+`government` q=101 yes; `everything` q=139 no),
+11 → q<142.5 (`information`, `development`), 12 → q<159.9
+(`organization`, `relationship`), 14 → q<189.1 (`characteristics`,
+`infrastructure`, `responsibility`); admit-all from 20. The prose head
+stays rejected (`provider` q=34 and `cache` q=30 sit at/on the 8-char
+floor hold; `default` q=44, `enable` q=38); the dev-vocabulary class
+(`node` 23, `spec` 28, `null` 24) ADMITS — the deliberate 2026-10
+flip.
 
 **Group placement is flat at 1 (2026-10 owner rule).** Every attested
 admission lands at rank group 1 regardless of q — long ramp-admitted
@@ -337,8 +355,9 @@ The bands are baked constants calibrated against the shipped artifact
 with `tools/calibrate-bands.mjs`, which doubles as a word probe:
 `node tools/calibrate-bands.mjs lists deleted` prints a word's `q` and
 its verdict (lowercase and capitalized). Calibration history: 220
-(BUG-001, mathematically unreachable) → 100 → 50 (Issue-1) → **12
-(final)** → length-conditioned sqrt 8→20 (2026-10 gradient).
+(BUG-001, mathematically unreachable) → 100 → 50 (Issue-1) → **12**
+(2026-09 final) → length-conditioned sqrt 8→20 (2026-10 gradient) →
+**30** (2026-10 width-bound retune).
 
 **Proper-noun relief — RETIRED-IN-PLACE.** The relief mechanism (a
 capitalized whole token whose table result is reject admits at group 2)
@@ -364,7 +383,7 @@ being admitted — `R_eff(len(word))` (2026-10):
 
 - stem `q >= R_eff(len)` → reject (any `q` of the word itself);
 - word absent AND stem `q >= R_eff(len)` → reject (absent inflections
-  of attested stems: `uploads` → `upload` q=38 ≥ R_eff(7) = 12).
+  of attested stems: `uploads` → `upload` q=38 ≥ R_eff(7) = 30).
 
 The fixed mid-band stem threshold (20, MID) is retired (2026-10) —
 both tiers ride R_eff; it survives only as a compatibility constant.

@@ -215,10 +215,13 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
 
   it("ingests with the default config and stores only gate-passed words", async () => {
     const { store } = await ingestFixture(`${FIXTURES}/prose.jsonl`);
-    // 2026-09 retighten: ordinary English prose admits NOTHING by design
-    // (every prose.jsonl word is attested ≥ 12 or structural-start-only);
-    // the zero-candidate probes below are then true for the right reason.
-    expect(store.size).toBe(0);
+    // 2026-10 width-bound retune (R=30): ordinary prose no longer admits
+    // NOTHING — the q<30 floor class does (measured: `sweeten` q=26). The
+    // PROSE HEAD (that/with/this/them/have/would, q 156–215) still
+    // rejects, so the zero-candidate probes below remain true.
+    store.prefixRange("a"); // force index consolidation — snapshot may lag pending keys
+    expect(store.sortedKeysSnapshot()).toEqual(["sweeten"]);
+    expect(store.size).toBe(1);
     for (const probe of PROBES) {
       expect(rankMatches(store, probe), `probe "${probe}" must have zero candidates`).toEqual([]);
     }
@@ -803,11 +806,12 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     await replayChain(pipeline, entries);
 
     // Successor chain (PRD §06 h3.9), deterministic top-1 per word.
-    // 2026-09 retighten: "turbine" (q=26) rejects at admission, so the
-    // "Zorp turbine" co-occurrence no longer forms a bigram — the chain
-    // is the strictly-absent walk (zorp/zephra/noria/inverter) only.
+    // 2026-10 width-bound retune (R=30): "turbine" (q=26) now ADMITS,
+    // so the "Zorp turbine" co-occurrence forms a count-1 bigram beside
+    // the walk — zephra (4) stays strictly top, the chain is unchanged.
     expect(store.topSuccessors("zorp")).toEqual([
       { next: "zephra", count: 4 },
+      { next: "turbine", count: 1 },
     ]);
     expect(store.topSuccessors("zephra")).toEqual([{ next: "noria", count: 4 }]);
     expect(store.topSuccessors("noria")).toEqual([{ next: "inverter", count: 4 }]);
@@ -886,7 +890,7 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     expect(offer1?.prefix).toBe("");
     expect(offer1?.items.map((i) => [i.label, i.value])).toEqual([
       [topNextDisplay, topNextDisplay], // bare, display-cased: pi-tui splices verbatim at prefix ""
-      // 2026-09: turbine (q26) table-rejects — the second offer slot is gone
+      ["turbine", "turbine"], // 2026-10 R=30: turbine (q26) admits — second offer slot
     ]);
     expect(provider.__hapaxLive()?.prefix).toBe("");
     expectSingleWordItems(offer1?.items ?? []);
@@ -952,7 +956,7 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => [i.label, i.value])).toEqual([
       ["Zephra", "Zephra"],
-      // 2026-09: turbine (q26) table-rejects — single-successor offer
+      ["turbine", "turbine"], // 2026-10 R=30: turbine (q26) admits — count-1 tail of the offer
     ]);
     expect(chain.state()).toEqual({ word: "zorp" });
 
@@ -1039,7 +1043,7 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     // zero-typed-char word start (plan 002 P1.M2.T1.S1).
     const painted = await display.getSuggestions(["Zorp "], 0, 5, opts());
     expect(painted?.prefix).toBe("");
-    expect(painted?.items.map((i) => i.label)).toEqual(["Zephra"]);
+    expect(painted?.items.map((i) => i.label)).toEqual(["Zephra", "turbine"]); // R=30: two-slot offer
     expect(display.dispose).toBeDefined();
   });
 });
@@ -1092,7 +1096,7 @@ describe("acceptance item 7 — NREL phrase (nrel-chain.jsonl, bugfix 001_0f4b64
 
     // Floor lengths (≤ REJECT_LEN_FLOOR): flat band unchanged — reject.
     for (const w of ["national", "energy"]) {
-      expect(store.get(w), `${w} must reject (floor band, q ≥ 12)`).toBeUndefined();
+      expect(store.get(w), `${w} must reject (floor band, q ≥ 30)`).toBeUndefined();
     }
     // Long words ride the R_eff ramp in at flat group 1 (table, NOT the
     // retired relief — group 2 would mean the relief came back).

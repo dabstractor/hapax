@@ -209,13 +209,18 @@ console.log(`\nacceptance (constants vs shipped artifact):`);
 for (const w of ["the", "with", "this", "them"]) {
   check(admit(draft(w), dict) === "reject", `admit('${w}') rejects`);
 }
-// The 2026-09 FINAL retighten: dictionary attestation is near-disqualifying
-// (REJECT=12) — everyday prose rejects across the board, not just the
-// top band. Assert the named examples plus former mid-band residents
-// (provider/null-class words were the live-audit leak).
-for (const w of ["context", "because", "would", "data", "code", "provider", "null", "node"]) {
+// The 2026-09 FINAL retighten pinned the whole prose class; the 2026-10
+// width-bound retune (one-line widget + line claim + width-bound count
+// lowered the UI cost of a common word) re-admits the mid-frequency /
+// dev-vocabulary class. The prose HEAD still rejects across the board;
+// null/node (q < floor 30) now admit at group 1 — the deliberate flip.
+for (const w of ["context", "because", "would", "data", "code", "provider"]) {
   const r = admit(draft(w), dict);
   check(r === "reject", `admit('${w}') rejects (${band(r)})`);
+}
+for (const w of ["null", "node"]) {
+  const r = admit(draft(w), dict);
+  check(r === 1, `admit('${w}') admits at group 1 — 2026-10 deliberate flip (got ${band(r)})`);
 }
 check(
   admit(draft("hapax"), dict) === 0,
@@ -231,16 +236,24 @@ check(
 );
 const rejectPop = popReject(REJECT_COMMON_THRESHOLD);
 check(
-  rejectPop >= 40000 && rejectPop <= 47000,
-  `reject band covers the attested bulk, ~top 43.5k ranks (measured ${rejectPop})`,
+  rejectPop >= 19000 && rejectPop <= 22000,
+  `reject band covers the attested HEAD (q >= floor, flat view), ~20.5k ranks (measured ${rejectPop})`,
 );
-// 2026-09: table group 2 is RETIRED — with REJECT=12 nothing attests into
-// [MID, REJECT). Pin its emptiness so a future band change is deliberate.
-const group2Pop = popBand2(MID_FREQ_THRESHOLD, REJECT_COMMON_THRESHOLD);
-check(
-  group2Pop === 0,
-  `group-2 band is empty (retired; measured ${group2Pop})`,
-);
+// 2026-10 retune: with REJECT(30) > MID(20) the flat [MID, REJECT) view is
+// inside the admit side — the retired table group 2 is kept dead by the
+// flat-group-1 rule (pinned below), not by band inversion. Pin the
+// length-conditioned admitted population instead: ~32.5k of 48,802.
+{
+  const admitted = rankWord.filter(
+    (w) => w !== undefined &&
+      dict.lookup(w) !== null &&
+      dict.lookup(w) < rEff(REJECT_COMMON_THRESHOLD, w.length),
+  ).length;
+  check(
+    admitted >= 31000 && admitted <= 34000,
+    `length-conditioned attested admits ~32.5k of 48,802 (2026-10 target; measured ${admitted})`,
+  );
+}
 // 2026-10 R_eff boundary pins (spec/04 h2.26): the table AND the
 // conjugation guard ride the length-conditioned curve. These are the
 // contract's named checks — they pass only once S1 (rEff in admit()) and
@@ -248,11 +261,11 @@ check(
 // is drifted: fix the curve, do not loosen the assertion.
 check(
   admit(draft("uploads"), dict) === "reject",
-  "guard rides R_eff: 'uploads' (7c, stem upload q=38 ≥ R_eff(7)=12) rejects",
+  "guard rides R_eff: 'uploads' (7c, stem upload q=38 ≥ R_eff(7)=30) rejects",
 );
 check(
   admit(draft("configurations"), dict) === 0,
-  "guard rides R_eff: 'configurations' (14c, stem configuration q=26 < R_eff(14)≈184) admits group 0",
+  "guard rides R_eff: 'configurations' (14c, stem configuration q=26 < R_eff(14)≈189) admits group 0",
 );
 check(
   admit(draft("government"), dict) === 1,

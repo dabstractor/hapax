@@ -34,8 +34,9 @@
 **score.test.ts**
 - Admission is length-conditioned (2026-10 gradient; assert relative to
   the imported constants/R_eff, not absolute quants): floor hold —
-  q ≥ 12 rejects at any length ≤ 8; sqrt ramp 9–19 (boundary probes,
-  e.g. q=82 admits / q=83 rejects at 9 chars); admit-all at len ≥ 20;
+  q ≥ 30 rejects at any length ≤ 8; sqrt ramp 9–19 (boundary probes,
+  e.g. q=94 admits / q=95 rejects at 9 chars; 10-char 110/139,
+  14-char 189/190); admit-all at len ≥ 20;
   every attested admission lands at GROUP 1 (flat — the old group-2
   band stays dead); absent → group 0; the `rejectCommonness` override
   moves the floor and the curve scales from it.
@@ -195,8 +196,11 @@
    dismisses with it — boundary pass-through, one press; entered
    lists carousel at both edges and Escape is the exit.)
 2. **No-hijack (amended 2026-10):** type ordinary prose continuously;
-   keystrokes land verbatim, no menu for common words WITH ANCHORED
-   MATCHES — the zero-result tier-0 fallback MAY surface one-shot
+   keystrokes land verbatim, no menu for the common PROSE HEAD (the /
+   with / context / everything class; 04) WITH ANCHORED
+   MATCHES — the mid-frequency class (node/spec/turbine) DOES menu
+   since the 2026-10 R=30 retune, owner-accepted; the zero-result
+   tier-0 fallback MAY surface one-shot
    contiguous-run cousin menus (said→unsaid class, ~5–20% by length,
    narrowing away as typing continues; 04); Tab with no selection =
    literal tab. While the result line is visible only arrows/Escape/Tab
@@ -278,8 +282,9 @@ Tuning surfaces: the runtime `rejectCommonness` and `fuzzThreshold`
 config knobs (08 — the
 floor of the length-conditioned curve; the anchored-fuzzy admission
 threshold), and
-the baked constants — the length-gradient parameters (floor R=12,
-floor-hold 8, admit-all 20, sqrt shape — 2026-10), the retired mid-band
+the baked constants — the length-gradient parameters (floor R=30
+(2026-10 width-bound retune; was 12), floor-hold 8, admit-all 20, sqrt
+shape — 2026-10), the retired mid-band
 and relief constants, conjugation-guard suffix set, salience weights
 (2.0/3.0/1.5/0.8/1.0), fuzzy scorer tier bases/penalties (04 — tier
 BOUNDARIES are semantics, never runtime-tunable; only the threshold

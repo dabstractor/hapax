@@ -167,15 +167,15 @@ describe("maskSecrets — ingest pipeline (BUG-003 end-to-end)", () => {
     expect(rankMatches(store, "abc")).toEqual([]);
     expect(rankMatches(store, "xoxb")).toEqual([]);
     // Ordinary words flow through UNMASKED: "turbinez" (absent) admits —
-    // "turbine" (q=26) itself rejects at the table since the 2026-09
-    // retighten; the masking-surgical contract is about unmasked words
-    // flowing. "aws" (3 chars, dictionary-ABSENT) also admits since the
-    // 2026 MIN_LENGTH floor drop — a legitimate gate pass, not masking
-    // damage — while "secret" (q=108) and "slack" (q=51; joined the
-    // reject band in the 2026-09 Issue-1 retune) are rejected at
-    // ADMISSION for commonness, i.e. they reached the gate unmasked and
-    // died on normal decisions, not on masking.
-    expect(keys).toEqual(["aws", "turbinez"]);
+    // "turbine" (q=26) itself ADMITS since the 2026-10 R=30 width-bound
+    // retune (it table-rejected 2026-09–2026-10); the masking-surgical
+    // contract is about unmasked words flowing. "aws" (3 chars,
+    // dictionary-ABSENT) also admits since the 2026 MIN_LENGTH floor
+    // drop — a legitimate gate pass, not masking damage — while
+    // "secret" (q=108) and "slack" (q=51) are rejected at ADMISSION
+    // for commonness, i.e. they reached the gate unmasked and died on
+    // normal decisions, not on masking.
+    expect(keys).toEqual(["aws", "turbine", "turbinez"]);
     expect(rankMatches(store, "tur").map((m) => m.key)).toContain("turbinez");
   });
 

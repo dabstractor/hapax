@@ -102,10 +102,18 @@ import type { Candidate, Dictionary, RankGroup } from "./types.js";
  *  ranks ≤ 3 (BUG-001 — rejection mathematically unreachable);
  *  retuned 220 → 100 → 50 (2026-09 Issue 1: "context" q=51 et al. kept
  *  admitting) → 12 (2026-09 final: English attestation is evidence
- *  AGAINST admission, per owner: "not half of the english language").
+ *  AGAINST admission, per owner: "not half of the english language")
+ *  → 30 (2026-10 width-bound retune, owner rule: the one-line widget
+ *  + line claim + width-bound count dropped the UI cost of a common
+ *  word — the 8-item vertical-menu flooding that justified R=12 is
+ *  gone; the dev-vocabulary class node(23)/spec(28)/null(24) admits
+ *  while the prose head — the(240)/with(179)/this(197)/window(99)/
+ *  context(51)/everything(139) — and the conjugation guard hold;
+ *  cache(30) sits exactly ON the floor and stays out).
+ *  Measured: attested-admitted table words 15,064 → 32,544 of 48,802.
  *  Calibrated against the shipped artifact via
  *  tools/calibrate-bands.mjs. */
-export const REJECT_COMMON_THRESHOLD = 12 as const;
+export const REJECT_COMMON_THRESHOLD = 30 as const;
 
 /** Demote to group 2 at/above this commonness rank
  *  (historically 20 ≤ q < 50 — mid-frequency). PRD §04 h2.24; baked per
@@ -148,7 +156,7 @@ export const MID_FREQ_THRESHOLD = 20 as const;
  *  the relief admitting ~483 capitalized common words (echo, windows,
  *  failed, file) — the owner retired it: "it's for completing commit
  *  hashes and variable names, not half of the english language." */
-export const PROPER_NOUN_ADMIT_CEILING = 12 as const;
+export const PROPER_NOUN_ADMIT_CEILING = 30 as const; // == floor (retired-in-place; scales with retunes)
 
 /** 2026-10 length gradient (spec/04 h2.26): the flat reject floor holds
  *  through this word length. Nothing below 9 chars changed vs the 2026-09

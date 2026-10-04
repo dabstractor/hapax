@@ -102,7 +102,8 @@ not a rejection.
 
 - Salience weights, the mid-frequency band (20; retired 2026-10 — both
   conjugation-guard tiers ride the length-conditioned R_eff), the
-  proper-noun relief ceiling (12, retired-in-place), the
+  proper-noun relief ceiling (30, retired-in-place — scales with the
+  floor), the
   length-gradient curve shape (sqrt, 8-char floor hold, 20-char
   admit-all — 2026-10), shape-gate secret rules, the conjugation-guard
   suffix set, eviction cap, debounce intervals, popup timing, the

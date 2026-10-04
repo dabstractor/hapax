@@ -852,9 +852,7 @@ describe("replayed-store arming end-to-end (real ingest pipeline, zephra-chain f
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => [i.label, i.value])).toEqual([
       ["Zephra", "Zephra"],
-      // 2026-09 retighten: "turbine" (q=26) now REJECTS at the table, so
-      // it no longer appears as a successor (its adjacency run broke the
-      // same way "license" did via the gate).
+      ["turbine", "turbine"], // 2026-10 R=30: turbine (q=26) admits — count-1 tail of the offer
     ]);
     expectSingleWordItems(offer?.items ?? []);
 
