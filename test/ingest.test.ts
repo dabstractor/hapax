@@ -7,8 +7,11 @@
  * deep-frozen inputs: any mutation attempt throws in strict mode.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import { extractText, type AgentMessage } from "../src/pi/ingest.js";
+import { IngestPipeline, type RunMember } from "../src/pi/ingest.js";
+import { CandidateStore } from "../src/core/store.js";
+import type { Dictionary } from "../src/core/types.js";
 
 // --- fixture helpers: minimal valid pi messages (contextually typed) -------
 
@@ -162,3 +165,200 @@ describe("extractText — PRD §05 event contract (P1.M3.T2.S1)", () => {
     expect(Object.isFrozen(frozenAssistant)).toBe(true);
   });
 });
+
+// --- run-member band bypass + chain-only (spec §04 h2.26, P1.M1.T3.S1) -----
+
+/** In-memory dictionary over a plain map (types.ts contract; missing →
+ *  null). Same convention as test/score.test.ts's stub. */
+const mapDict = (entries: Record<string, number>): Dictionary => ({
+  lookup: (w) => (w in entries ? entries[w]! : null),
+  version: 1,
+  entryCount: Object.keys(entries).length,
+});
+
+/** Self-contained pipeline harness: real core chain, fake dictionary,
+ *  onAdmittedTokens capture (same discipline as ingest-pipeline.test.ts;
+ *  test files are self-contained by convention). */
+function makeRunPipeline(entries: Record<string, number>): {
+  store: CandidateStore;
+  pipeline: IngestPipeline;
+  runs: (readonly (readonly RunMember[])[])[];
+  drain: () => Promise<void>;
+} {
+  const store = new CandidateStore();
+  const runs: (readonly (readonly RunMember[])[])[] = [];
+  const pipeline = new IngestPipeline({
+    store,
+    dictionary: mapDict(entries),
+    yieldFn: async () => {}, // deterministic; no real setImmediate turns
+    onAdmittedTokens: (r) => runs.push(r),
+  });
+  return {
+    store,
+    pipeline,
+    runs,
+    drain: async () => {
+      vi.advanceTimersByTime(300);
+      await pipeline.flush();
+    },
+  };
+}
+
+/** The series-marked members of a captured payload, in document order. */
+const seriesMembers = (
+  runs: (readonly (readonly RunMember[])[])[],
+): RunMember[] =>
+  runs
+    .flat()
+    .flatMap((r) => [...r])
+    .filter((m) => m.series === true);
+
+describe(
+  "run-member band bypass + chain-only ceiling (spec §04 h2.26, P1.M1.T3.S1)",
+  () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("'National Renewable Energy Laboratory' stores all four members (national g1 despite q ≥ floor)", async () => {
+      const h = makeRunPipeline({ national: 90, energy: 94, laboratory: 57 });
+      h.pipeline.onMessageEnd(
+        userMsg("National Renewable Energy Laboratory"),
+      );
+      await h.drain();
+      // national/energy: band-rejected eagerly (q 90/94 ≥ rEff=30), then
+      // retro-admitted at finalization via seriesMember (both < ceiling
+      // 135) → group 1. renewable/laboratory: absent/under-the-ramp →
+      // admitted eagerly (g0/g1). One occurrence each.
+      expect(h.store.get("national")).toMatchObject({
+        rankGroup: 1,
+        sessionCount: 1,
+        display: "National",
+      });
+      expect(h.store.get("renewable")).toMatchObject({ rankGroup: 0 });
+      expect(h.store.get("energy")).toMatchObject({
+        rankGroup: 1,
+        sessionCount: 1,
+        display: "Energy",
+      });
+      expect(h.store.get("laboratory")).toMatchObject({ rankGroup: 1 });
+      // stats: 2 eager + 2 retro-admitted; chain-only would add nothing.
+      expect(h.pipeline.getStats().admitted).toBe(4);
+    });
+
+    it("'The Fed Cut': 'the' never upserted but stays in the runs payload (chainOnly)", async () => {
+      const h = makeRunPipeline({ the: 240 });
+      h.pipeline.onMessageEnd(userMsg("The Fed Cut"));
+      await h.drain();
+      // fed/cut: absent → group 0 eagerly. the: q=240 ≥ ceiling →
+      // chain-only — NO sighting, NO admitted count, payload mark only.
+      expect(h.store.get("the")).toBeUndefined();
+      expect(h.store.get("fed")).toMatchObject({ rankGroup: 0 });
+      expect(h.store.get("cut")).toMatchObject({ rankGroup: 0 });
+      expect(h.pipeline.getStats().admitted).toBe(2);
+      // h.runs is [message][run][member] — one message, one run, three
+      // series members ('the' chain-only-marked).
+      expect(h.runs).toEqual([
+        [
+          [
+            { key: "the", rawCasing: "The", series: true, chainOnly: true },
+            { key: "fed", rawCasing: "Fed", series: true },
+            { key: "cut", rawCasing: "Cut", series: true },
+          ],
+        ],
+      ]);
+    });
+
+    it("'Uploaded Files' admits 'uploaded' (conjugation guard bypassed by run membership)", async () => {
+      const h = makeRunPipeline({ upload: 200 });
+      h.pipeline.onMessageEnd(userMsg("Uploaded Files"));
+      await h.drain();
+      // Line-initial 'Uploaded' is structural-cap (properName false), so
+      // the EAGER path hits the guard (upload=200 ≥ rEff(30,8)) and
+      // band-rejects; the seriesMember override bypasses the guard and
+      // admits absent → group 0. 'files' admits eagerly (file absent).
+      expect(h.store.get("uploaded")).toMatchObject({ rankGroup: 0 });
+      expect(h.store.get("files")).toMatchObject({ rankGroup: 0 });
+    });
+
+    it("lowercase 'national energy' (no run) stores nothing and leaks no series members", async () => {
+      const h = makeRunPipeline({ national: 90, energy: 94 });
+      h.pipeline.onMessageEnd(userMsg("national energy"));
+      await h.drain();
+      expect(h.store.get("national")).toBeUndefined();
+      expect(h.store.get("energy")).toBeUndefined();
+      expect(h.runs).toEqual([[]]); // band-rejected lowercase → no entries
+    });
+
+    it("memo stays context-free: 'National' in a run admits THIS message only; later lowercase occurrence stays out", async () => {
+      const h = makeRunPipeline({ national: 90 });
+      h.pipeline.onMessageEnd(userMsg("National Grid Corp")); // run → retro-admit g1
+      await h.drain();
+      expect(h.store.get("national")).toMatchObject({
+        rankGroup: 1,
+        sessionCount: 1,
+      });
+      const firstOrdinal = h.store.get("national")!.lastSeenOrdinal;
+      // Same DISTINCT token text lowercase: a different memo key AND (even
+      // for the capitalized memo entry) no run context — the band-reject
+      // stands. Memoizing seriesMember would have admitted this occurrence.
+      h.pipeline.onMessageEnd(userMsg("national grid"));
+      await h.drain();
+      expect(h.store.get("national")).toMatchObject({
+        rankGroup: 1,
+        sessionCount: 1,
+        lastSeenOrdinal: firstOrdinal, // no new sighting
+      });
+    });
+
+    it("reverse purity: lowercase first (rejected), capitalized run later (retro-admitted)", async () => {
+      const h = makeRunPipeline({ national: 90 });
+      h.pipeline.onMessageEnd(userMsg("national grid"));
+      await h.drain();
+      expect(h.store.get("national")).toBeUndefined();
+      h.pipeline.onMessageEnd(userMsg("National Grid Corp"));
+      await h.drain();
+      expect(h.store.get("national")).toMatchObject({
+        rankGroup: 1,
+        sessionCount: 1,
+      });
+    });
+
+    it("ordinary runs unchanged: 'the quick brown fox' excludes 'the'", async () => {
+      const h = makeRunPipeline({ the: 240 });
+      h.pipeline.onMessageEnd(userMsg("the quick brown fox"));
+      await h.drain();
+      expect(h.store.get("the")).toBeUndefined();
+      expect(h.runs).toEqual([
+        [
+          [
+            { key: "quick", rawCasing: "quick" },
+            { key: "brown", rawCasing: "brown" },
+            { key: "fox", rawCasing: "fox" },
+          ],
+        ],
+      ]);
+      expect(seriesMembers(h.runs)).toEqual([]); // no cap run here
+    });
+
+    it("band-rejected uppercase singleton stays out of ordinary runs (no cap run)", async () => {
+      const h = makeRunPipeline({ the: 240 });
+      h.pipeline.onMessageEnd(userMsg("The quick brown fox"));
+      await h.drain();
+      // 'The' band-rejects (entry exists, run-eligible) but is alone —
+      // below the ≥2 cap-run floor → excluded from the payload entirely.
+      expect(h.runs).toEqual([
+        [
+          [
+            { key: "quick", rawCasing: "quick" },
+            { key: "brown", rawCasing: "brown" },
+            { key: "fox", rawCasing: "fox" },
+          ],
+        ],
+      ]);
+    });
+  },
+);

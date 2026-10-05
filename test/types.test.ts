@@ -11,6 +11,7 @@ describe('core type contracts', () => {
       key: 'nrel', display: 'NREL', sessionCount: 1,
       lastSeenOrdinal: 0, firstSeenOrdinal: 0, userTyped: false,
       properName: true, rankGroup: 0 ,
+      capCount: 1, lowerCount: 0, capDisplay: 'NREL',
     };
     expect(candidate.rankGroup satisfies RankGroup).toBe(0);
 

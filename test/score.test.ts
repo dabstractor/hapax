@@ -38,6 +38,7 @@ import { describe, expect, it } from "vitest";
 import {
   MID_FREQ_THRESHOLD,
   PROPER_NOUN_ADMIT_CEILING,
+  PROPER_SERIES_TOP_BAND_CEILING,
   REJECT_COMMON_THRESHOLD,
   admit,
   compareCandidates,
@@ -84,6 +85,9 @@ const cand = (over: Partial<Candidate> = {}): Candidate => ({
   userTyped: false,
   properName: false,
   rankGroup: 0,
+  capCount: 0,
+  lowerCount: 1,
+  capDisplay: "",
   ...over,
 });
 
@@ -675,5 +679,77 @@ describe("compareCandidates — PRD §09 orderings", () => {
     expect(shuffled(99)).toEqual(once);
     // Total order: re-sorting the sorted output is a no-op.
     expect([...once].sort((x, y) => compareCandidates(x, y, 40))).toEqual(once);
+  });
+});
+
+describe("run-member admission (spec §04 h2.26 seriesMember, P1.M1.T3.S1)", () => {
+  it("pins the calibrated ceiling (203 of 48,802 artifact words ≥ 135)", () => {
+    // tools/calibrate-bands.mjs probe: the/and/for/with (240/219/194/179)
+    // all ≥ 135 (chain-only material); national/energy (90/94) below
+    // (run-admit at group 1). Baked per §08 — never configurable.
+    expect(PROPER_SERIES_TOP_BAND_CEILING).toBe(135);
+  });
+
+  it("seriesMember + dictionary-absent → group 0 (band bypassed)", () => {
+    expect(admit(draft("zorpwibble"), dict({}), { seriesMember: true })).toBe(0);
+  });
+
+  it("seriesMember + attested below the ceiling → group 1, any band (incl. q ≥ floor)", () => {
+    // The flat band would reject both (q ≥ REJECT_COMMON_THRESHOLD at
+    // these lengths); run evidence replaces the table verdict wholesale.
+    expect(
+      admit(draft("national"), dict({ national: 90 }), { seriesMember: true }),
+    ).toBe(1);
+    expect(
+      admit(draft("energy"), dict({ energy: REJECT_COMMON_THRESHOLD + 64 }), {
+        seriesMember: true,
+      }),
+    ).toBe(1);
+  });
+
+  it("ceiling boundary: q = ceiling−1 admits (g1); q = ceiling is chain-only", () => {
+    const d = dict({
+      wordy: PROPER_SERIES_TOP_BAND_CEILING - 1,
+      wordz: PROPER_SERIES_TOP_BAND_CEILING,
+    });
+    expect(admit(draft("wordy"), d, { seriesMember: true })).toBe(1);
+    expect(admit(draft("wordz"), d, { seriesMember: true })).toBe(
+      "chain-only",
+    );
+  });
+
+  it("seriesMember + q ≥ ceiling → chain-only (the/and/for/with class)", () => {
+    expect(
+      admit(draft("the"), dict({ the: 240 }), { seriesMember: true }),
+    ).toBe("chain-only");
+  });
+
+  it("run membership bypasses the conjugation guard (Uploaded-class)", () => {
+    // Lowercase draft (properName false — the casing evidence lives in
+    // the RUN, not the draft): unflagged, the guard rejects on the stem
+    // (upload=200 ≥ rEff(30,8)); flagged, the guard is skipped entirely
+    // and the override verdict stands — absent → 0, attested → 1.
+    const absent = dict({ upload: 200 });
+    expect(admit(draft("uploaded"), absent)).toBe("reject"); // guard fires
+    expect(admit(draft("uploaded"), absent, { seriesMember: true })).toBe(0);
+    const attested = dict({ upload: 200, uploaded: 40 });
+    expect(admit(draft("uploaded"), attested)).toBe("reject");
+    expect(admit(draft("uploaded"), attested, { seriesMember: true })).toBe(1);
+  });
+
+  it("casing never admits top-band singles: capitalized 'The' unflagged → reject", () => {
+    // Ordering untouched (h2.31): casing grants candidacy ONLY. A lone
+    // top-band word stays rejected however it is capitalized — chain-only
+    // requires the run (seriesMember), never casing alone.
+    expect(
+      admit(
+        draft("the", {
+          properName: true,
+          display: "The",
+          casing: "structural-cap",
+        }),
+        dict({ the: 240 }),
+      ),
+    ).toBe("reject");
   });
 });

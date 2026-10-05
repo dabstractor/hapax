@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Core pipeline: run detection, casing classes, tallies, admission, series bigrams",
-          "status": "Planned",
+          "status": "Ready",
           "description": "The ingest→store half of capitalized-series completion (PRD R1). All occurrence-context effects (run membership, casing tallies, band overrides) apply OUTSIDE the per-token admission memo.",
           "tasks": [
             {
@@ -115,14 +115,14 @@
               "type": "Task",
               "id": "P1.M1.T3",
               "title": "Admission: run-member override, top-band chain-only ceiling, 95-band relaxation",
-              "status": "Planned",
+              "status": "Ready",
               "description": "score.ts constants + occurrence-level admission overrides applied outside the per-token admit memo (the load-bearing pitfall).",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T3.S1",
                   "title": "Run-member band bypass + conjugation-guard skip + top-band chain-only ceiling",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S2"
@@ -143,7 +143,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T3.S2",
                   "title": "Single mid-sentence capital: relaxed band max(R_eff, 95) + calibrate-bands Cap column update",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -181,7 +181,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "Pure casing resolver in core + resolver battery",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1"

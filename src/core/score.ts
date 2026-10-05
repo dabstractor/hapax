@@ -151,6 +151,23 @@ export const MID_FREQ_THRESHOLD = 20 as const;
  *  hashes and variable names, not half of the english language." */
 export const PROPER_NOUN_ADMIT_CEILING = 30 as const; // == floor (retired-in-place; scales with retunes)
 
+/** Top-band ceiling for capitalized-run members — spec/04 h2.26 (P1.M1.T3.S1).
+ *  A run member whose dictionary q ≥ this value is CHAIN-ONLY: it never
+ *  gains admission from casing (run or single), is never upserted (the
+ *  store never sees it — it can never become a standalone suggestion), but
+ *  stays in the runs payload so its series bigrams still form ("typing
+ *  'The ' offers 'Fed'"). Baked, NOT configurable (spec/08 h2.57).
+ *
+ *  Calibrated against the shipped artifact (P1.M1.T3.S1, plan 006):
+ *  `node tools/calibrate-bands.mjs the and for with national energy` →
+ *  the=240 / and=219 / for=194 / with=179 (all ≥ 135: chain-only material)
+ *  vs national=90 / energy=94 (both < 135: run-admit at group 1). The
+ *  measured population of q ≥ 135 is 203 of 48,802 words (~0.4% — the
+ *  function-word head only), read from the artifact's score section with
+ *  the same probe the tool uses. Below 135 the first legitimate name
+ *  classes begin; 135 is the tightest legal split of the probe sets. */
+export const PROPER_SERIES_TOP_BAND_CEILING = 135 as const;
+
 /** 2026-10 length gradient (spec/04 h2.26): the flat reject floor holds
  *  through this word length. Nothing below 9 chars changed vs the 2026-09
  *  flat band. Baked per PRD §08. */
@@ -191,9 +208,12 @@ export function rEff(floor: number, len: number): number {
   return floor + (255 - floor) * Math.sqrt((len - REJECT_LEN_FLOOR) / 12);
 }
 
-/** Admission outcome: a rank group (0 = rarest/best … 2 = mid-frequency)
- *  or 'reject' (never enters the store). */
-export type AdmissionResult = RankGroup | "reject";
+/** Admission outcome: a rank group (0 = rarest/best … 2 = mid-frequency),
+ *  'reject' (never enters the store), or 'chain-only' (spec §04 h2.26: a
+ *  capitalized-run member in the dictionary's very top band — never
+ *  upserted, never admitted from casing, but kept in the runs payload so
+ *  its series bigrams form). Only admit()'s seriesMember path returns it. */
+export type AdmissionResult = RankGroup | "reject" | "chain-only";
 
 /** Options for admit(). `rejectCommonness` lets the runtime (pi config,
  *  2026-09) tighten or loosen the reject band WITHOUT a code edit —
@@ -205,6 +225,15 @@ export interface AdmissionOptions {
    *  REJECT_COMMON_THRESHOLD. Higher → more words admitted (looser);
    *  lower → fewer (stricter). */
   rejectCommonness?: number;
+  /** Occurrence is a member of a detected capitalized run (spec §04
+   *  h2.26, P1.M1.T3.S1): replaces the table path entirely — absent →
+   *  group 0, attested below PROPER_SERIES_TOP_BAND_CEILING → group 1
+   *  (any band), at/above it → "chain-only" — and bypasses the
+   *  conjugation guard (casing evidence outranks morphology).
+   *  OCCURRENCE-LEVEL ONLY: callers must never cache the verdict under a
+   *  token key (ingest's memo stays context-free — run membership is
+   *  line context the memo cannot see). */
+  seriesMember?: boolean;
 }
 
 /** English inflection suffixes stripped by the conjugation guard
@@ -309,6 +338,22 @@ export function admit(
     result = 2;
   }
 
+  // Run-member override (spec §04 h2.26, P1.M1.T3.S1): a member of a
+  // detected capitalized run admits REGARDLESS of the commonness band —
+  // the table verdict above is replaced wholesale. Absent → group 0;
+  // attested below the top-band ceiling → group 1 (any band, including
+  // q ≥ the reject floor: "national"-class names); at/above the ceiling
+  // → "chain-only" (never admitted from casing, never upserted — its only
+  // footprint is the runs payload, so series bigrams form). Computed per
+  // OCCURRENCE at run finalization (ingest); never cached under the token
+  // key — run membership is line context, and memoizing it would
+  // permanently admit every later occurrence of that token.
+  if (opts.seriesMember === true) {
+    if (q === null) result = 0;
+    else if (q >= PROPER_SERIES_TOP_BAND_CEILING) result = "chain-only";
+    else result = 1;
+  }
+
   // Conjugation guard (2026-09, "deleted" leak; 2026-10 R_eff alignment):
   // an inflection whose STEM is reject-common rejects too, whatever its
   // own q — the corpus ranks inflections separately (delete=51,
@@ -335,7 +380,21 @@ export function admit(
   // rejectCommonness knob governs the guard through the same resolved
   // rejectAt the table uses. Float compare qs >= guardAt directly — no
   // rounding (rounding shifts ramp boundaries).
-  if (result !== "reject" && !draft.properName) {
+  //
+  // Skip conditions: properName (above) and seriesMember (spec §04
+  // h2.26, P1.M1.T3.S1) — a capitalized-run member bypasses the guard
+  // entirely: casing evidence (the run) outranks morphology, parallel
+  // to the properName skip ("Uploaded Files" admits though upload q ≥
+  // floor; structural-cap line-initial members have properName false,
+  // so the seriesMember flag is what carries the bypass). "chain-only"
+  // is excluded for type-honesty — a chain-only verdict is final and
+  // only arises on the seriesMember path anyway.
+  if (
+    result !== "reject" &&
+    result !== "chain-only" &&
+    !draft.properName &&
+    opts.seriesMember !== true
+  ) {
     const guardAt = rEff(rejectAt, draft.key.length); // the WORD's length
     for (const stem of inflectionStems(draft.key)) {
       const qs = dictionary.lookup(stem);

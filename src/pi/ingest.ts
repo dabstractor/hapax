@@ -17,6 +17,7 @@ import { admit } from "../core/score.js";
 import type { AdmissionResult } from "../core/score.js";
 import type { CandidateStore } from "../core/store.js";
 import type {
+  CasingClass,
   Dictionary,
   GateResult,
   IngestStats,
@@ -118,6 +119,14 @@ export interface RunMember {
    *  ≥2 floor is applied at detection: a lone uppercase-initial member
    *  is never marked. */
   series?: boolean;
+  /** true when this series member's dictionary q sits in the table's very
+   *  top band (q ≥ PROPER_SERIES_TOP_BAND_CEILING, spec §04 h2.26): it is
+   *  NEVER upserted — the store never sees it, so it can never become a
+   *  standalone suggestion — but it STAYS in the runs payload so its
+   *  series bigrams still form ("typing 'The ' offers 'Fed'"). Set only
+   *  on series members, at run finalization (occurrence-level — never
+   *  memoized); recordBigramRuns records its pairs like any member's. */
+  chainOnly?: boolean;
 }
 
 /** One admitted WHOLE token with its span (UTF-16 offsets into the masked
@@ -139,6 +148,20 @@ interface SpanEntry {
   gapRawBefore: string;
   /** the occurrence's raw token text (e.g. "National") */
   rawCasing: string;
+  /** Band-rejected but run-eligible (spec §04 h2.26): admission said
+   *  'reject' yet the draft passed the shape gate and the raw token
+   *  starts uppercase. Such entries count toward cap runs and are
+   *  retro-evaluated with seriesMember at run finalization (occurrence-
+   *  level, NEVER memoized); they never appear in ordinary adjacency
+   *  runs. Cleared when the override retro-admits. */
+  bandRejected?: boolean;
+  /** the occurrence's casing class (from the memoized draft) — the
+   *  finalization override reuses it for the retro draft/Sighting. */
+  casing?: CasingClass;
+  /** set by the finalization override on a chain-only verdict: the entry
+   *  is emitted into the runs payload (series-marked, chainOnly) but is
+   *  never upserted — the store never sees it. */
+  chainOnly?: boolean;
 }
 
 /** What #admitSegment hands back to the line assembler: the raw and post-
@@ -148,7 +171,16 @@ interface SpanEntry {
 interface SegmentResult {
   raw: string;
   masked: string;
-  entries: { key: string; rawCasing: string; start: number; end: number }[];
+  entries: {
+    key: string;
+    rawCasing: string;
+    start: number;
+    end: number;
+    /** run-eligible band rejection — see SpanEntry.bandRejected */
+    bandRejected?: boolean;
+    /** occurrence casing class — see SpanEntry.casing */
+    casing?: CasingClass;
+  }[];
 }
 
 /** Gap test for strict adjacency (PRD 002 §06 h3.6): a run continues only
@@ -218,20 +250,26 @@ interface AdmitMemoEntry {
 function buildMemberRuns(entries: SpanEntry[]): RunMember[][] {
   const inCapRun = capRunMemberIndices(entries);
   const runs: RunMember[][] = [];
-  let cur: RunMember[] = [];
+  let cur: RunMember[] | null = null;
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i]!;
-    if (cur.length > 0 && !WHITESPACE_GAP_RE.test(e.gapBefore)) {
+    const cap = inCapRun.has(i);
+    // Band-rejected occurrences are run-eligible ONLY (spec §04 h2.26):
+    // they count toward cap runs (their capital is run evidence) but never
+    // appear in ordinary (non-cap) runs — ordinary bigram semantics stay
+    // frozen (PRD 002 rules).
+    if (!cap && e.bandRejected) continue;
+    if (cur !== null && !WHITESPACE_GAP_RE.test(e.gapBefore)) {
       runs.push(cur);
-      cur = [];
+      cur = null;
     }
-    cur.push(
-      inCapRun.has(i)
-        ? { key: e.key, rawCasing: e.rawCasing, series: true }
-        : { key: e.key, rawCasing: e.rawCasing },
-    );
+    const member: RunMember = cap
+      ? { key: e.key, rawCasing: e.rawCasing, series: true }
+      : { key: e.key, rawCasing: e.rawCasing };
+    if (cap && e.chainOnly) member.chainOnly = true;
+    (cur ??= []).push(member);
   }
-  if (cur.length > 0) runs.push(cur);
+  if (cur !== null) runs.push(cur);
   return runs;
 }
 
@@ -348,6 +386,8 @@ function appendSegment(
       gapBefore,
       gapRawBefore,
       rawCasing: e.rawCasing,
+      bandRejected: e.bandRejected,
+      casing: e.casing,
     });
   }
   const last = r.entries[r.entries.length - 1]!;
@@ -624,6 +664,13 @@ export class IngestPipeline {
         );
         openTail = appended.tail;
         openTailRaw = appended.tailRaw;
+        // Run-member override BEFORE the payload is built (spec §04
+        // h2.26): chain-only marks / retro-admits land on the entries, then
+        // buildMemberRuns projects them. A disable observed during the
+        // overrides ends the message HERE — no hook (dead runs are
+        // meaningless), same discipline as the post-slice check below.
+        this.#applySeriesOverrides(openLine, ordinal, fromUser);
+        if (this.#isDisabled?.()) return;
         runs.push(...buildMemberRuns(openLine));
         openLine = [];
         openTail = "";
@@ -644,6 +691,10 @@ export class IngestPipeline {
       if (this.#isDisabled?.()) return;
       await this.#yieldFn(); // keystroke path resumes between slices
     }
+    // Run-member override for the unterminated final line, then the
+    // payload — same disable discipline as the in-loop finalizations.
+    this.#applySeriesOverrides(openLine, ordinal, fromUser);
+    if (this.#isDisabled?.()) return;
     runs.push(...buildMemberRuns(openLine)); // unterminated final line
     // Adjacency-run hook — once per message. Empty text never gets here
     // (early return); null-extracted messages never enqueue. The payload
@@ -718,6 +769,13 @@ export class IngestPipeline {
    *  is discarded, `complete` stays false, and the caller replays the
    *  computed prefix once without caching.
    *
+   *  CONTEXT-FREE BY CONTRACT: the memo key is token.raw, so the plan
+   *  must stay a pure function of (raw, dict, rules). Run membership is
+   *  LINE context — the seriesMember override (spec §04 h2.26) is
+   *  deliberately computed per occurrence at run finalization
+   *  (#applySeriesOverrides), never here: a memoized seriesMember verdict
+   *  would permanently admit every later occurrence of that token.
+   *
    *  Every draft is a whole token (2026-10 atomic-identifier rule:
    *  expandCandidates emits exactly one draft), which structurally
    *  retires two former seams — the subword parent clamp (wholeGroup)
@@ -782,8 +840,29 @@ export class IngestPipeline {
       this.#stats.wordsSeen++;
       const result = memo.admits[i];
       if (result === undefined) break; // interrupted plan — computed no further
-      if (result === "reject") continue; // admission reject: simply
-      // not stored (PRD §04 h2.24); no IngestStats field by design.
+      if (result === "reject") {
+        // Band-rejected run-eligible occurrence (spec §04 h2.26): the
+        // draft passed the shape gate and the raw token starts uppercase —
+        // push a marked entry WITHOUT upsert or admitted-count so run
+        // finalization can retro-evaluate it with seriesMember
+        // (occurrence-level; the memo never learns run membership).
+        // Lowercase rejects emit no entry — ordinary adjacency semantics
+        // are frozen (PRD 002 rules).
+        if (UPPER_FIRST_RE.test(token.raw)) {
+          entries.push({
+            key: draft.key,
+            rawCasing: token.raw, // the occurrence's raw text — run casing
+            start: token.start,
+            end: token.end,
+            bandRejected: true,
+            casing: draft.casing,
+          });
+        }
+        continue; // admission reject: simply not stored (PRD §04 h2.24);
+        // no IngestStats field by design — unchanged.
+      }
+      if (result === "chain-only") continue; // unreachable via the memo
+      // (it never passes seriesMember) — kept for type-honesty.
       this.#stats.admitted++;
       entries.push({
         key: draft.key,
@@ -801,6 +880,78 @@ export class IngestPipeline {
         rankGroup: result,
       };
       this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)
+    }
+  }
+
+  /** Run-member admission override (spec §04 h2.26, P1.M1.T3.S1) — applied
+   *  at run FINALIZATION, per OCCURRENCE. The admission memo
+   *  (#computeAdmitMemo) is keyed on token.raw and MUST stay context-free:
+   *  run membership is line context the memo can never see, and memoizing
+   *  a seriesMember verdict would permanently admit every later occurrence
+   *  of that token. For each band-rejected entry that belongs to a
+   *  detected cap run, re-run admit() with seriesMember: true — band AND
+   *  conjugation guard bypassed; the rejectCommonness knob forwards
+   *  exactly as #computeAdmitMemo forwards it (the top-band ceiling itself
+   *  is baked, not knob-scaled — only the absent/attested distinction
+   *  matters here, which the knob cannot change):
+   *    - 0 | 1 → retro-admit: upsert THIS occurrence's Sighting (this
+   *      casing/ordinal/fromUser), count it, and clear the bandRejected
+   *      mark so the entry behaves as admitted from here on;
+   *    - "chain-only" → mark chainOnly on the entry: NO upsert, NO
+   *      stats.admitted — the store never sees the member; it stays in the
+   *      runs payload so recordBigramRuns still forms its series pairs.
+   *  Eagerly-admitted members are never re-upserted or re-grouped: the
+   *  override only touches bandRejected entries (eager admit never
+   *  returns better than group 1 anyway; casing grants candidacy only,
+   *  never ordering — h2.31).
+   *  Disable discipline (BUG-004/NEW-001): admit()'s lookup is the only
+   *  call that can trigger — and fail — the lazy dictionary load; the
+   *  gate is checked before AND after each verdict, and on failure the
+   *  remaining overrides are skipped while the CALLER suppresses
+   *  onAdmittedTokens (a half-admitted message's runs are meaningless
+   *  once the extension is dead). */
+  #applySeriesOverrides(
+    line: SpanEntry[],
+    ordinal: number,
+    fromUser: boolean,
+  ): void {
+    const inCapRun = capRunMemberIndices(line);
+    for (let i = 0; i < line.length; i++) {
+      const e = line[i]!;
+      if (!e.bandRejected || !inCapRun.has(i)) continue;
+      if (this.#isDisabled?.()) return; // BUG-004: dead → stop overriding
+      const casing = e.casing ?? "mid-cap"; // always set at the push site
+      const draft: CandidateDraft = {
+        key: e.key,
+        display: e.rawCasing,
+        properName: casing === "mid-cap", // one derivation, zero drift
+        casing,
+      };
+      const verdict = admit(
+        draft,
+        this.#dictionary,
+        this.#rejectCommonness === undefined
+          ? { seriesMember: true }
+          : { seriesMember: true, rejectCommonness: this.#rejectCommonness },
+      );
+      if (this.#isDisabled?.()) return; // NEW-001: discard lookup-observed failure
+      if (verdict === "chain-only") {
+        e.chainOnly = true; // payload mark only — the store never sees it
+        continue;
+      }
+      if (verdict === "reject") continue; // unreachable on the seriesMember
+      // path (the override replaces the table verdict) — type-honesty.
+      this.#stats.admitted++;
+      this.#store.upsert({
+        key: e.key,
+        display: e.rawCasing,
+        ordinal,
+        fromUser,
+        properName: casing === "mid-cap",
+        casing,
+        rankGroup: verdict,
+      });
+      e.bandRejected = false; // behaves as admitted from here on
     }
   }
 

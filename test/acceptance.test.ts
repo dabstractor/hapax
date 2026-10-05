@@ -1062,69 +1062,100 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
 // BUG-002 history: the 50/20 band retune rejected national (q=90), energy
 // (q=94) and laboratory (q=57) — store.get(...) === undefined and
 // topSuccessors("national") === [], so the PRD's own DoD scenario was
-// unreachable. S1's proper-noun relief band (capitalized sightings with
-// REJECT ≤ q < PROPER_NOUN_ADMIT_CEILING admit at group 2; S2's tuning
-// protocol set the final ceiling value) admits all three again.
+// unreachable. S1's proper-noun relief band later admitted all three, and
+// was retired-in-place in 2026-09 when it leaked prose.
 //
-// Tripwire property: the assertions below are OUTCOME assertions — the
-// ceiling constant is never imported here, so any future retune that
-// re-breaks the phrase fails the sanity test at `store.get(...)`.
+// 2026-10 h2.26 (spec §04, P1.M1.T3.S1): RUN MEMBERSHIP is the restored
+// mechanism. Every phrase word is a member of the six detected capitalized
+// series runs, so all four admit at group 1 regardless of the commonness
+// band (national/energy were floor-band rejects before) — and "visit"
+// (a capitalized run member at q ≥ floor) joins them. The retired relief
+// stays dead: group 1 everywhere proves the table/run path, never relief
+// (group 2). "The" before the phrase (q=240, top band ≥
+// PROPER_SERIES_TOP_BAND_CEILING) is CHAIN-ONLY: never stored, but carried
+// in the runs payload so recordBigramRuns forms the→national. The chain
+// now FORMS — national→renewable→energy→laboratory ×6, the→national and
+// visit→national ×2 — which is the DoD scenario working, and the 'na'
+// probe finally offers National. Casing granted candidacy; ordering is
+// untouched (h2.31).
+//
+// Tripwire property: the assertions below are OUTCOME assertions — no band
+// constant is imported here, so any future retune that re-breaks the
+// phrase fails the sanity test at `store.get(...)`.
 //
 // Fixture sterility (deliberate): every surrounding word is either < 4
-// chars (shape gate), q ≥ 95 at floor length (rejected at/above the flat
-// band), or a lowercase-only band word (the casing-gated relief rejects
-// it) — under the 2026-10 gradient the replayed store holds EXACTLY the
-// two long phrase words (renewable, laboratory, both table group 1), so
-// the successor chains are exact and the 'na' menu has a single behavior.
+// chars (shape gate), q ≥ 30 at floor length (rejected at/above the flat
+// band), or a lowercase-only band word — under the 2026-10 gradient the
+// replayed store holds exactly the phrase words (all four, run-member
+// group 1) plus "visit" (run member, group 1), so the successor chains
+// are exact and the 'na' menu has a single behavior.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("acceptance item 7 — NREL phrase (nrel-chain.jsonl, bugfix 001_0f4b641cf9ce)", () => {
-  // 2026-09 retighten: the proper-noun relief is RETIRED-IN-PLACE (ceiling
-  // == reject band) — retired words must never return via the relief.
-  // 2026-10 gradient (spec/04 h2.26): the two LONG phrase words now admit
-  // via the TABLE at flat group 1 — renewable (9 chars, q=19 < R_eff(9) ≈
-  // 82.15) and laboratory (10 chars, q=57 < R_eff(10) ≈ 111.2) — which is
-  // the owner-measured intent (long attested words carry typing savings),
-  // NOT a relief revival: the rankGroup === 1 assertions below prove the
-  // table (relief would read 2). The floor-length words keep the 2026-09
-  // behavior: national (8 chars, q=90) and energy (6 chars, q=94) reject.
-  // The CHAIN still never forms — rejected energy splits the phrase, so
-  // no two admitted tokens are ever adjacent: bigramSize stays 0,
-  // topSuccessors stays empty, and both probes delegate. Restoring
-  // named-entity completion is an allowlist design question (spec/04).
-  it("relief stays retired; floor words reject; long words admit at table group 1; no chain; probes delegate", async () => {
+  // Relief RETIRED-IN-PLACE (2026-09, ceiling == reject band) — retired
+  // words must never return via the relief; h2.26 run membership is the
+  // mechanism that restored the phrase. Floor-length members
+  // (national 8c/energy 6c, q 90/94) admit via the RUN at group 1 —
+  // the pre-h2.26 behavior rejected them; the long members ride the R_eff
+  // table exactly as before. The chain FORMS now: every series pair is
+  // recorded, including the chain-only "the" → national pair.
+  it("run members admit at group 1 (band bypass, NOT relief); 'The' chain-only still feeds series bigrams; chain forms; probes offer national", async () => {
     const { store, pipeline } = makeChainPipeline(true);
     const entries = parseSessionFixture(`${FIXTURES}/nrel-chain.jsonl`);
     await replayChain(pipeline, entries);
 
-    // Floor lengths (≤ REJECT_LEN_FLOOR): flat band unchanged — reject.
-    for (const w of ["national", "energy"]) {
-      expect(store.get(w), `${w} must reject (floor band, q ≥ 30)`).toBeUndefined();
-    }
-    // Long words ride the R_eff ramp in at flat group 1 (table, NOT the
-    // retired relief — group 2 would mean the relief came back).
-    for (const w of ["renewable", "laboratory"]) {
+    // All four phrase members stored — group 1 everywhere (run-member
+    // override / table; group 2 would mean the retired relief returned).
+    for (const w of ["national", "renewable", "energy", "laboratory"]) {
       const c = store.get(w);
-      expect(c, `${w} admits via the 2026-10 gradient`).toBeDefined();
-      expect(c!.rankGroup, `${w} must be a TABLE admission (group 1), never relief (group 2)`).toBe(1);
-      expect(c!.properName).toBe(true);
+      expect(c, `${w} must store as a run member`).toBeDefined();
+      expect(c!.rankGroup, `${w} must be group 1, never relief (group 2)`).toBe(1);
+      expect(c!.sessionCount).toBe(6);
     }
-    expect(store.size).toBe(2);
-    // The chain never forms: rejected energy separates renewable from
-    // laboratory in every occurrence, so no two admitted tokens are ever
-    // adjacent — no bigram runs, no successors.
-    expect(store.bigramSize).toBe(0);
-    expect(store.topSuccessors("national")).toEqual([]);
-    expect(store.topSuccessors("renewable")).toEqual([]);
+    // "visit" — capitalized run member in two occurrences, q ≥ floor:
+    // admitted by the same override (casing evidence, band bypassed).
+    expect(store.get("visit")).toMatchObject({ rankGroup: 1, sessionCount: 2 });
+    expect(store.size).toBe(5);
 
-    // The PRD's own probe inverts: 'na' → zero candidates.
-    expect(rankMatches(store, "na")).toEqual([]);
+    // The chain FORMS: three series pairs ×6 occurrences...
+    expect(store.bigramSize).toBe(5); // the→national + visit→national + the 3 phrase pairs
+    expect(store.topSuccessors("national")).toEqual([
+      { next: "renewable", count: 6 },
+    ]);
+    expect(store.topSuccessors("renewable")).toEqual([
+      { next: "energy", count: 6 },
+    ]);
+    expect(store.topSuccessors("energy")).toEqual([
+      { next: "laboratory", count: 6 },
+    ]);
+    // ...including the CHAIN-ONLY pair: "The" (q=240, top band) is never
+    // stored but its series bigram still feeds the successor index
+    // (h2.26 — "typing 'The ' offers ...").
+    expect(store.get("the")).toBeUndefined();
+    expect(store.topSuccessors("the")).toEqual([{ next: "national", count: 2 }]);
+    expect(store.topSuccessors("visit")).toEqual([{ next: "national", count: 2 }]);
 
-    // And through the provider: delegation (pi's completion untouched).
+    // The PRD's own probe finally offers: 'na' → National (casing granted
+    // candidacy; ordering untouched — h2.31).
+    const matches = rankMatches(store, "na");
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ key: "national", display: "National" });
+
+    // And through the provider: 'na' is finally LIVE — the DoD scenario
+    // end to end: hapax paints National instead of delegating to pi.
     const current = mockCurrent(SENTINEL);
     const provider = createHapaxProvider(store, cfg(), current);
     const result = await provider.getSuggestions(["na"], 0, 2, opts());
-    expect(result).toBe(SENTINEL);
-    expect(provider.__hapaxLive()).toBeNull();
+    expect(result).toEqual({
+      items: [
+        {
+          value: "National",
+          label: "National",
+          description: expect.stringMatching(/^session x\d+$/),
+        },
+      ],
+      prefix: "na",
+    });
+    expect(provider.__hapaxLive()).not.toBeNull();
   });
 });
