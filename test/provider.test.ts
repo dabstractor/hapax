@@ -228,8 +228,8 @@ describe("never-hijack acceptance (PRD §07)", () => {
       // candidates → the zero-candidate delegate path. Either way pi's
       // quoted-path completion receives the request untouched.
       const store = new CandidateStore();
-      put(store, "nrel", 2, 3, { display: "NREL", properName: true });
-      put(store, "zendesk", 3, 9, { display: "Zendesk" });
+      put(store, "nrel", 2, 3, { display: "NREL", casing: "mid-cap", properName: true });
+      put(store, "zendesk", 3, 9, { display: "Zendesk", casing: "mid-cap" });
       const current = makeCurrent({ getSuggestions: vi.fn(async () => PATH_SENTINEL) });
       const { inner, provider } = makeStack(store, current);
       const lines = ['read "src/co'];
@@ -246,7 +246,7 @@ describe("never-hijack acceptance (PRD §07)", () => {
   describe("case (b) — applyCompletion ALWAYS delegates", () => {
     it("with a live hapax menu → arbitrary args forwarded verbatim, current's return passed through", async () => {
       const store = new CandidateStore();
-      put(store, "zendesk", 3, 9, { display: "Zendesk" });
+      put(store, "zendesk", 3, 9, { display: "Zendesk", casing: "mid-cap" });
       const current = makeCurrent();
       const { inner, provider } = makeStack(store, current);
 
@@ -303,8 +303,8 @@ describe("never-hijack acceptance (PRD §07)", () => {
   describe("case (d) — zero-candidate query → delegation, never a menu", () => {
     it("fragment 'zzzz' qualifies (≥ threshold) but store has no candidates → current's exact return, __hapaxLive() null", async () => {
       const store = new CandidateStore();
-      put(store, "nrel", 2, 3, { display: "NREL", properName: true });
-      put(store, "zendesk", 3, 9, { display: "Zendesk" });
+      put(store, "nrel", 2, 3, { display: "NREL", casing: "mid-cap", properName: true });
+      put(store, "zendesk", 3, 9, { display: "Zendesk", casing: "mid-cap" });
       const current = makeCurrent({ getSuggestions: vi.fn(async () => PATH_SENTINEL) });
       const { inner, provider } = makeStack(store, current);
       const lines = ["zzzz"];
@@ -344,8 +344,8 @@ describe("never-hijack acceptance (PRD §07)", () => {
 
     it("end-to-end: store without common words + lines ending 'the'/'contex' → delegation, zero hapax items", async () => {
       const store = new CandidateStore();
-      put(store, "nrel", 2, 3, { display: "NREL", properName: true });
-      put(store, "zendesk", 3, 9, { display: "Zendesk" }); // store is NOT empty
+      put(store, "nrel", 2, 3, { display: "NREL", casing: "mid-cap", properName: true });
+      put(store, "zendesk", 3, 9, { display: "Zendesk", casing: "mid-cap" }); // store is NOT empty
       const current = makeCurrent({ getSuggestions: vi.fn(async () => PATH_SENTINEL) });
       const { inner, provider } = makeStack(store, current);
 
@@ -393,7 +393,7 @@ describe("never-hijack acceptance (PRD §07)", () => {
   describe("case (g) — case-insensitive match, display casing inserted", () => {
     it("typed 'nre' matches stored NREL — item.value === 'NREL', prefix 'nre', no delegation", async () => {
       const store = new CandidateStore();
-      put(store, "nrel", 2, 3, { display: "NREL", properName: true });
+      put(store, "nrel", 2, 3, { display: "NREL", casing: "mid-cap", properName: true });
       const current = makeCurrent();
       const { inner, provider } = makeStack(store, current);
 
@@ -417,7 +417,7 @@ describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", 
    *  §04 h2.29 progressive-completion order: length before count). */
   const zeStore = (): CandidateStore => {
     const s = new CandidateStore();
-    put(s, "zendesk", 3, 9, { display: "Zendesk" });
+    put(s, "zendesk", 3, 9, { display: "Zendesk", casing: "mid-cap" });
     put(s, "zephyr", 1, 9);
     return s;
   };

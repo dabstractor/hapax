@@ -71,7 +71,10 @@ function topSection(rows: Candidate[]): string[] {
     `  top ${TOP_N} by salience:`,
     ...rows.map(
       (c, i) =>
-        `    ${i + 1}. ${c.display}  ×${c.sessionCount}  group ${c.rankGroup} (${GROUP_LABEL[c.rankGroup]})`,
+        // TODO(P1.M2.T3.S1): tally columns replace this interim form —
+        // completion-time casing resolution (spec 04 h2.32) collapses to
+        // capDisplay-when-present; the dump shows the resolved form only.
+        `    ${i + 1}. ${c.capDisplay !== "" ? c.capDisplay : c.key}  ×${c.sessionCount}  group ${c.rankGroup} (${GROUP_LABEL[c.rankGroup]})`,
     ),
   ];
 }
@@ -117,7 +120,8 @@ function successorsSection(
         .topSuccessors(c.key)
         .map((s) => `${s.next} ×${s.count}`)
         .join(", ");
-      return `  ${c.display} → ${succ}`;
+      // TODO(P1.M2.T3.S1): interim completion-time form (spec 04 h2.32).
+      return `  ${c.capDisplay !== "" ? c.capDisplay : c.key} → ${succ}`;
     }),
   ];
 }
@@ -200,7 +204,8 @@ export function registerAcwordsCommand(
         written = rows
           .map(
             ({ c }) =>
-              `${c.key}\t${c.display}\tx${c.sessionCount}\tg${c.rankGroup}` +
+              // TODO(P1.M2.T3.S1): interim completion-time form.
+              `${c.key}\t${c.capDisplay !== "" ? c.capDisplay : c.key}\tx${c.sessionCount}\tg${c.rankGroup}` +
               `${c.properName ? "\tproper" : ""}${c.userTyped ? "\ttyped" : ""}`,
           )
           .join("\n");

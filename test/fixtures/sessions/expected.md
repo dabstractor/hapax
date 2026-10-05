@@ -95,7 +95,7 @@ history.
 | --- | --- | --- |
 | `kes` | `["kestrel"]` | |
 | `kest` | `["kestrel"]` | |
-| `verd` | `["Verdigris"]` | display casing = most recent sighting |
+| `verd` | `["verdigris"]` | completion-time casing (h2.32): 499 lowercase vs 49 capitalized sightings → the frequency-resolved form is the lowercase key (pre-2026-10-02 recency label was `["Verdigris"]`) |
 | `vertex0` | `["vertex028","vertex025","vertex018","vertex013","vertex017","vertex037","vertex010","vertex006"]` | recency-ranked numbered terms |
 | `sable` | `["sable"]` | |
 | `zeph` | `["zephyr"]` | |

@@ -432,8 +432,14 @@ export function createHapaxProvider(
         // behavior, reachable only past a 20k-store eviction of a
         // recently-seen word. Arming stays lowercase: liveKeyByValue maps
         // the display value to CHAIN_KEY_PREFIX + s.next (the key).
+        // TODO(P1.M2.T2): Successor.nextDisplay logic replaces this
+        // interim fallback — completion-time casing resolution (spec 04
+        // h2.32) collapsed Candidate casing to the tallies; capDisplay
+        // (when a capitalized sighting exists) is the best interim label,
+        // the bare key otherwise (the `||` also covers the empty-
+        // sentinel and evicted-entry cases — never render "").
         const successorDisplay = (s: Successor): string =>
-          store.get(s.next)?.display ?? s.next;
+          store.get(s.next)?.capDisplay || s.next;
         const publishChain = (succ: readonly Successor[], prefix: string) => {
           const items = succ.map((s) => ({
             value: successorDisplay(s), // BARE — pi-tui splices verbatim at prefix ""

@@ -153,7 +153,7 @@ const put = (
  *  threshold, 'ze' paints both, 'zep' live-narrows to zephra. */
 const reproStore = (): CandidateStore => {
   const s = new CandidateStore();
-  put(s, "zendesk", 3, 9, { display: "Zendesk" });
+  put(s, "zendesk", 3, 9, { display: "Zendesk", casing: "mid-cap" });
   put(s, "zephra", 1, 9);
   return s;
 };

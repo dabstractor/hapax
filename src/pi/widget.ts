@@ -664,7 +664,10 @@ export function createVisibilityMachine(
    *    order is preserved by topSuccessors — no re-sort anywhere. */
   const chainShim = (s: Successor): RankedMatch => ({
     key: s.next,
-    display: deps.store.get(s.next)?.display ?? s.next,
+    // TODO(P1.M2.T2): Successor.nextDisplay replaces this interim —
+    // completion-time casing resolution (spec 04 h2.32); capDisplay or
+    // the bare key (the `||` covers the empty sentinel + evicted entry).
+    display: deps.store.get(s.next)?.capDisplay || s.next,
     description: "chain", // provenance marker (provider publishChain parity)
     salience: -s.count,
     sessionCount: s.count,

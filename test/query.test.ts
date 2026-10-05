@@ -158,24 +158,28 @@ describe("rankMatches — empty results (PRD §04)", () => {
   });
 });
 
-describe("rankMatches — case-insensitive prefix, display casing (h2.27)", () => {
+describe("rankMatches — case-insensitive prefix, completion-time display casing (h2.27 × h2.32)", () => {
+  // FIXTURE NOTE: a capitalized display must be tallied as mid-cap — the
+  // casing class is the tally input, so `display: "NREL"` without
+  // `casing: "mid-cap"` is inconsistent fixture data (it would resolve to
+  // the capitalize-KEY fallback "Nrel", correctly per the contract).
   it('uppercase prefix "NRE" finds the lowercase-keyed "nrel" entry', () => {
     const s = new CandidateStore();
-    s.upsert(sighting({ key: "nrel", display: "NREL" }));
+    s.upsert(sighting({ key: "nrel", display: "NREL", casing: "mid-cap" }));
     const [m] = rankMatches(s, "NRE");
     expect(m!.key).toBe("nrel");
-    expect(m!.display).toBe("NREL"); // stored display casing, not the prefix's
+    expect(m!.display).toBe("NREL"); // Shift pressed → the capitalized tally form wins
   });
 
   it("mixed-case prefix works identically", () => {
     const s = new CandidateStore();
-    s.upsert(sighting({ key: "nrel", display: "NREL" }));
+    s.upsert(sighting({ key: "nrel", display: "NREL", casing: "mid-cap" }));
     expect(rankMatches(s, "nRe").map((m) => m.key)).toEqual(["nrel"]);
   });
 
-  it("insertion uses the stored display even when the prefix is lowercase", () => {
+  it("insertion uses the resolved casing form even when the prefix is lowercase (cap-heavy → capDisplay)", () => {
     const s = new CandidateStore();
-    s.upsert(sighting({ key: "nrel", display: "NREL" }));
+    s.upsert(sighting({ key: "nrel", display: "NREL", casing: "mid-cap" })); // cap-heavy: 1 cap vs 0 lower
     expect(rankMatches(s, "nre")[0]!.display).toBe("NREL");
   });
 
@@ -816,14 +820,19 @@ describe("path candidates under the prefix matcher (rule 4d, pre-fuzzy baseline)
     ]);
   });
 
-  it("absolute-path key: pre-first-slash prefix matches; display keeps the leading '/'", () => {
+  it("absolute-path key: pre-first-slash prefix matches; insertion form resolves from the tallies (key verbatim)", () => {
     const s = new CandidateStore();
     put(s, "home/dustin/projects/hapax", 1, 3, {
       display: "/home/dustin/projects/hapax",
     });
     const [m] = rankMatches(s, "home/dus");
     expect(m!.key).toBe("home/dustin/projects/hapax");
-    expect(m!.display).toBe("/home/dustin/projects/hapax"); // edge character rides along (rule 4d)
+    // Completion-time resolution (spec 04 h2.32): the sighting's raw
+    // starts with '/' → classified "lower" (segment.ts classifies on
+    // raw[0] uniformly) → frequency branch → the trimmed KEY. Edge
+    // decoration of the insertion form is P1.M2.T2's display-derivation
+    // territory, not a stored-display read.
+    expect(m!.display).toBe("home/dustin/projects/hapax");
   });
 
   it("a mid-path component is never matchable: 'core' does not return the path", () => {
@@ -1522,3 +1531,76 @@ describe("rankMatches — loose mode (trigger loosening, spec §04 h2.28, plan 0
     ).toEqual([["queryplan", 3]]);
   });
 });
+
+// ── Completion-time display resolution (spec 04 h2.32, PRD R2.1, plan 006 S2) ──
+//
+// RankedMatch.display is resolved AT CONSTRUCTION from the RAW fragment's
+// first letter (captured before any lowercasing) + the candidate's casing
+// tallies — recency never decides it (Candidate.display is gone). The
+// 'Nr' → 'NREL' case pins the rawFirst threading end-to-end: a fragment
+// lowercased before capture would resolve through the frequency branch
+// and silently kill the Shift-preserve rule.
+
+describe("completion-time display resolution (spec 04 h2.32, plan 006 S2)", () => {
+  it("typed-capital fragment completes with the capitalized form ('Nr' → 'NREL', rawFirst threading)", () => {
+    const s = new CandidateStore();
+    put(s, "nrel", 3, 1, { display: "nrel" }); // lowercase-heavy: 3 lower sightings
+    put(s, "nrel", 1, 4, { display: "NREL", casing: "mid-cap" }); // one mid-cap sighting
+    const m = rankMatches(s, "Nr")[0]!;
+    expect(m.key).toBe("nrel"); // matching is case-insensitive as ever
+    expect(m.display).toBe("NREL"); // Shift pressed → capDisplay wins despite the lowerCount lead
+  });
+
+  it("lowercase fragment resolves by conversation frequency: lower-heavy → key, cap-heavy → capDisplay, tie → key", () => {
+    const s = new CandidateStore();
+    put(s, "alpha", 3, 1, { display: "alpha" }); // lower-heavy (3–0)
+    put(s, "bravo", 1, 1, { display: "Bravo", casing: "mid-cap" }); // cap-heavy (1–0)
+    put(s, "charlie", 1, 1, { display: "charlie" });
+    put(s, "charlie", 1, 2, { display: "Charlie", casing: "mid-cap" }); // 1–1 tie
+    expect(rankMatches(s, "al")[0]!.display).toBe("alpha");
+    expect(rankMatches(s, "br")[0]!.display).toBe("Bravo");
+    expect(rankMatches(s, "ch")[0]!.display).toBe("charlie"); // ties resolve DOWN (spec)
+  });
+
+  it("zero-fragment listing resolves every item by the frequency branch ('' first letter)", () => {
+    const s = new CandidateStore();
+    put(s, "alpha", 3, 1, { display: "alpha" }); // lower-heavy → key
+    put(s, "bravo", 1, 1, { display: "Bravo", casing: "mid-cap" }); // cap-heavy → capDisplay
+    const out = rankMatches(s, "");
+    expect(out.map((m) => [m.key, m.display])).toEqual([
+      ["alpha", "alpha"],
+      ["bravo", "Bravo"],
+    ]);
+  });
+
+  it("all-caps form completes verbatim; path keys stay verbatim on the frequency branch", () => {
+    const s = new CandidateStore();
+    put(s, "nrel", 2, 1, { display: "NREL", casing: "mid-cap" }); // capDisplay "NREL" (all caps — untouched)
+    put(s, "src/core/query.ts", 2, 1); // all-lowercase path: no caps → frequency → key verbatim
+    expect(rankMatches(s, "N")[0]!.display).toBe("NREL");
+    expect(rankMatches(s, "sr")[0]!.display).toBe("src/core/query.ts");
+  });
+});
+
+  it("tier-0 anchorless site resolves casing with the SAME rawFirst (parity with the anchored site)", () => {
+    // The tier-0 pass (:647 site) runs when the ANCHORED scan is empty —
+    // the fragment is still the user's typed text, so an uppercase first
+    // letter must preserve Shift THERE too (same rawFirst, one query).
+    // Probe 'sai' has zero anchored results against this store (no key
+    // starts with 'sai'); 'sai' occurs contiguously in 'unsaidlock'
+    // (index 2 → tier-0 score 85 − 40·2/10 = 77 ≥ threshold). The seed is
+    // LOWER-heavy (capCount 1 < lowerCount 2) so the two rawFirst letters
+    // discriminately resolve: 'S' → capDisplay, 's' → key.
+    const s = new CandidateStore();
+    put(s, "unsaidlock", 1, 1, { display: "Unsaidlock", casing: "mid-cap" });
+    put(s, "unsaidlock", 2, 2, { display: "unsaidlock" });
+    expect(rankMatches(s, "sai")[0]!).toMatchObject({
+      key: "unsaidlock", // tier-0 rescue reached the :647 site
+      display: "unsaidlock", // rawFirst 's' → frequency branch → lower-heavy → key
+    });
+    expect(rankMatches(s, "Sai")[0]!.display).toBe("Unsaidlock"); // rawFirst 'S' → Shift preserved at the tier-0 site
+    // The resolver is a pure function of (c, rawFirst) — both sites MUST
+    // agree for any pair; cross-check the pure form directly:
+    expect(resolveCompletionCasing(s.get("unsaidlock")!, "S")).toBe("Unsaidlock");
+    expect(resolveCompletionCasing(s.get("unsaidlock")!, "s")).toBe("unsaidlock");
+  });

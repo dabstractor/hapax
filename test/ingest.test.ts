@@ -236,13 +236,11 @@ describe(
       expect(h.store.get("national")).toMatchObject({
         rankGroup: 1,
         sessionCount: 1,
-        display: "National",
       });
       expect(h.store.get("renewable")).toMatchObject({ rankGroup: 0 });
       expect(h.store.get("energy")).toMatchObject({
         rankGroup: 1,
         sessionCount: 1,
-        display: "Energy",
       });
       expect(h.store.get("laboratory")).toMatchObject({ rankGroup: 1 });
       // stats: 2 eager + 2 retro-admitted; chain-only would add nothing.
@@ -387,7 +385,6 @@ describe(
       expect(h.store.get("zephyr")).toMatchObject({
         rankGroup: 1,
         sessionCount: 1,
-        display: "Zephyr",
       });
       expect(h.pipeline.getStats().admitted).toBe(3); // then + zephyr + checked
 

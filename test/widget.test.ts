@@ -1348,17 +1348,22 @@ const spiedChain = (): ChainMachine & { arm: Mock } => ({
 /** A REAL CandidateStore seeded via upsert (ordinal: currentOrdinal+1
  *  per entry) — the machine's default query (rankMatches) reads this, so
  *  painted records carry real key/tier/display triples instead of the
- *  display-only stubs state.set would hold. */
+ *  display-only stubs state.set would hold. Casing class mirrors
+ *  segment.ts's raw[0] rule: an uppercase-initial display tallies
+ *  mid-cap (consistent casing evidence for the completion-time resolver,
+ *  spec 04 h2.32) — a capitalized display with lowercase tallies would
+ *  be inconsistent fixture data. */
 const seedStore = (entries: readonly (readonly [string, string])[]): CandidateStore => {
   const s = new CandidateStore();
   for (const [key, display] of entries) {
+    const midCap = display.charAt(0) >= "A" && display.charAt(0) <= "Z";
     s.upsert({
       key,
       display,
       ordinal: s.currentOrdinal() + 1,
       fromUser: false,
-      properName: false,
-      casing: "lower",
+      properName: midCap,
+      casing: midCap ? "mid-cap" : "lower",
       rankGroup: 0,
     });
   }

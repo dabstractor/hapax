@@ -8,7 +8,7 @@ describe('core type contracts', () => {
   it('exports the documented vocabulary', () => {
     // Type-level usage only; runtime assertions on values that must type-check.
     const candidate: Candidate = {
-      key: 'nrel', display: 'NREL', sessionCount: 1,
+      key: 'nrel', sessionCount: 1,
       lastSeenOrdinal: 0, firstSeenOrdinal: 0, userTyped: false,
       properName: true, rankGroup: 0 ,
       capCount: 1, lowerCount: 0, capDisplay: 'NREL',

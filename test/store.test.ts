@@ -2,7 +2,8 @@
  * PRD §06 candidate-store suite (P1.M2.T4.S1): the h2.36 upsert contract
  * (absent → create, present → merge), the ordinal counter (monotonic from
  * 1; upsert never advances it — the pipeline owns assignment), casing
- * merging into one entry with most-recent display, sticky OR-in flags,
+ * merging into one entry whose casing lives in the tallies (completion-
+ * time resolution in query.ts; no stored display), sticky OR-in flags,
  * rankGroup min-on-merge, defensive entries()
  * snapshots, and the group histogram. Also the prefix index suite
  * (P1.M2.T4.S2): lazy dirty-flag rebuild, binary-searched prefix ranges
@@ -87,7 +88,6 @@ describe("upsert — absent → create (PRD §06 h2.36)", () => {
     expect(s.size).toBe(1);
     expect(s.get("zzqv")).toEqual({
       key: "zzqv",
-      display: "Zzqv",
       capCount: 1, // mid-cap create: capitalized tally starts at 1
       lowerCount: 0,
       capDisplay: "Zzqv",
@@ -127,15 +127,20 @@ describe("upsert — present → merge (PRD §06 h2.36)", () => {
     expect(s.size).toBe(1);
   });
 
-  it("display refreshes to the most recent casing (most recent wins)", () => {
+  it("casing variants merge into one entry; the tallies accumulate (no stored display)", () => {
     const s = new CandidateStore();
     s.upsert(sighting({ key: "hapax", display: "hapax" }));
-    s.upsert(sighting({ key: "hapax", display: "Hapax" }));
+    s.upsert(sighting({ key: "hapax", display: "Hapax", casing: "mid-cap" }));
     expect(s.size).toBe(1); // casing variants merge into one entry
-    expect(s.get("hapax")!.display).toBe("Hapax");
-    s.upsert(sighting({ key: "hapax", display: "HAPAX" }));
+    expect(s.get("hapax")!.lowerCount).toBe(1);
+    expect(s.get("hapax")!.capCount).toBe(1); // mid-cap sighting counted
+    s.upsert(sighting({ key: "hapax", display: "HAPAX", casing: "mid-cap" }));
     expect(s.size).toBe(1);
-    expect(s.get("hapax")!.display).toBe("HAPAX");
+    expect(s.get("hapax")!.capCount).toBe(2);
+    expect(s.get("hapax")!.capDisplay).toBe("HAPAX"); // 1–1 mid-cap tie → most recent form
+    // No display field exists: the insertion form is resolved at
+    // completion time from these tallies (query.ts, spec 04 h2.32).
+    expect(s.get("hapax")).not.toHaveProperty("display");
   });
 
   it("userTyped is OR-in sticky: false → true → false stays true", () => {
@@ -178,32 +183,32 @@ describe("upsert — present → merge (PRD §06 h2.36)", () => {
   });
 });
 
-describe("path display merge (rule 4d: key trimmed, display keeps edges)", () => {
+describe("path merge (rule 4d: key trimmed — edge variants are ONE entry)", () => {
   // Rule 4d (spec/04:118-174): a path sighting's key is the trimmed
-  // lowercase form while display keeps the ORIGINAL edges — so the same
-  // path re-typed with a different edge style must still merge into ONE
-  // entry (the key space, not the display, decides identity), with the
-  // latest display winning (store.ts upsert: "most recent wins").
+  // lowercase form while the sighting's raw text keeps the ORIGINAL
+  // edges — so the same path re-typed with a different edge style must
+  // still merge into ONE entry (the key space decides identity). The
+  // stored entry carries no display: the insertion form is resolved at
+  // completion time (spec 04 h2.32) from the tallies + live fragment.
   const KEY = "home/dustin/projects/hapax";
 
-  it("edge-variant sightings of one path merge to one entry; most recent display wins", () => {
+  it("edge-variant sightings of one path merge to one entry", () => {
     const s = new CandidateStore();
     s.upsert(sighting({ key: KEY, display: `/${KEY}`, ordinal: 5 }));
     s.upsert(sighting({ key: KEY, display: `${KEY}/`, ordinal: 9 }));
     expect(s.size).toBe(1); // leading-/ and trailing-/ map to ONE key
     const c = s.get(KEY)!;
     expect(c.sessionCount).toBe(2);
-    expect(c.display).toBe(`${KEY}/`); // recency-wins, edges verbatim
     expect(c.lastSeenOrdinal).toBe(9);
     expect(c.firstSeenOrdinal).toBe(5); // merge semantics keep the origin
+    expect(c).not.toHaveProperty("display"); // completion-time resolution owns casing
   });
 
-  it("reverse order still hands display to the latest sighting (trailing-/ first)", () => {
+  it("reverse insertion order still merges to one entry (trailing-/ first)", () => {
     const s = new CandidateStore();
     s.upsert(sighting({ key: KEY, display: `${KEY}/`, ordinal: 3 }));
     s.upsert(sighting({ key: KEY, display: `/${KEY}`, ordinal: 4 }));
     expect(s.size).toBe(1);
-    expect(s.get(KEY)!.display).toBe(`/${KEY}`);
     expect(s.get(KEY)!.lastSeenOrdinal).toBe(4);
   });
 
@@ -231,9 +236,9 @@ describe("get / size / entries (PRD §06)", () => {
     const snapshot = s.entries();
     expect(snapshot).toHaveLength(s.size);
     snapshot[0].sessionCount = 999;
-    snapshot[0].display = "MUTATED";
+    snapshot[0].capCount = 999;
     expect(s.get("hapax")!.sessionCount).toBe(1);
-    expect(s.get("hapax")!.display).toBe("hapax");
+    expect(s.get("hapax")!.capCount).toBe(0);
     // A fresh snapshot taken after the mutation reflects the true state.
     expect(s.entries()[0].sessionCount).toBe(1);
   });
@@ -242,9 +247,10 @@ describe("get / size / entries (PRD §06)", () => {
     const s = new CandidateStore();
     s.upsert(sighting({ ordinal: 1 }));
     const snapshot = s.entries();
-    s.upsert(sighting({ ordinal: 2, display: "Hapax" }));
+    s.upsert(sighting({ ordinal: 2, display: "Hapax", casing: "mid-cap" }));
     expect(snapshot[0].sessionCount).toBe(1);
-    expect(snapshot[0].display).toBe("hapax");
+    expect(snapshot[0].capCount).toBe(0); // snapshot frozen before the mid-cap sighting
+    expect(s.entries()[0].capCount).toBe(1);
     expect(s.entries()[0].sessionCount).toBe(2);
   });
 });
@@ -578,7 +584,6 @@ describe("casing tallies — create per class (spec 06 h2.43)", () => {
     s.upsert(sighting({ casing: "lower" }));
     expect(s.get("hapax")).toEqual({
       key: "hapax",
-      display: "hapax",
       capCount: 0,
       lowerCount: 1,
       capDisplay: "",
@@ -598,7 +603,6 @@ describe("casing tallies — create per class (spec 06 h2.43)", () => {
     );
     expect(s.get("zzqv")).toEqual({
       key: "zzqv",
-      display: "Zzqv",
       capCount: 1,
       lowerCount: 0,
       capDisplay: "Zzqv",
@@ -622,7 +626,6 @@ describe("casing tallies — create per class (spec 06 h2.43)", () => {
     );
     expect(s.get("check")).toEqual({
       key: "check",
-      display: "Check",
       capCount: 1,
       lowerCount: 0,
       capDisplay: "",
@@ -731,19 +734,21 @@ describe("casing tallies — structural-cap conditionality (twin suppression)", 
     expect(c.capCount).toBe(0); // tally untouched…
     expect(c.lowerCount).toBe(1);
     expect(c.sessionCount).toBe(2); // …but BOTH casings count occurrences
-    expect(c.display).toBe("Word"); // recency display (legacy pin)
+    expect(c.capDisplay).toBe(""); // structural form never becomes capDisplay (suppressed post-lowercase)
     expect(c.userTyped).toBe(true); // sticky OR-ins intact
   });
 
-  it("display stays recency-wins (legacy pin — additive migration)", () => {
+  it("mid-cap tallies count even after lowercase; capDisplay keeps the capitalized form", () => {
     const s = new CandidateStore();
     s.upsert(sighting({ display: "foo", casing: "lower" }));
     s.upsert(
       sighting({ display: "Foo", casing: "mid-cap", ordinal: 2 }),
     );
-    expect(s.get("hapax")!.display).toBe("Foo");
+    expect(s.get("hapax")!.capCount).toBe(1); // mid-cap ALWAYS counts (only structural is conditional)
+    expect(s.get("hapax")!.capDisplay).toBe("Foo");
     s.upsert(sighting({ display: "foo", casing: "lower", ordinal: 3 }));
-    expect(s.get("hapax")!.display).toBe("foo");
+    expect(s.get("hapax")!.lowerCount).toBe(2);
+    expect(s.get("hapax")!.capDisplay).toBe("Foo"); // 1–1 capCount vs lowerCount tie → frequency branch resolves to key at query time
   });
 
   it("merge regression: rankGroup min + userTyped stickiness compose with tallies", () => {

@@ -289,7 +289,7 @@ describe("bare-run mask floor 32 (BUG-003 h3.2)", () => {
       );
       expect(
         rankMatches(store, "sr").map((m) => m.display),
-      ).toContain("/srv/continuous/integration/deployments/release");
+      ).toContain("srv/continuous/integration/deployments/release"); // resolved form = the key ('/'-leading raw classifies "lower"; edges are P1.M2.T2)
 
       const leak = makePipeline();
       await leak.pipeline.processText(

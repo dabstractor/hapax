@@ -534,6 +534,13 @@ export function rankMatches(
 ): RankedMatch[] {
   const limit = opts.limit ?? DEFAULT_LIMIT;
   if (limit <= 0) return []; // defensive: nothing can be returned
+  // ORIGINAL-casing first letter of the live query — captured BEFORE any
+  // lowercasing. It feeds resolveCompletionCasing at both construction
+  // sites below (anchored + tier-0): an uppercase fragment letter means
+  // the user pressed Shift, and the Shift-preserve rule (spec 04 h2.32)
+  // must see it. Zero-length fragment → "" → the resolver's frequency
+  // branch (the '#'-alone listing resolves by tallies, never recency).
+  const rawFirst = prefix.charAt(0);
   const lower = prefix.toLowerCase(); // BEFORE prefixRange — it throws on uppercase
   // Anchored-fuzzy scan entry (§04 h2.28 / §06 h2.38, P1.M2.T2.S2): the
   // fragment's first char is matchFragment's exact ANCHOR, so the scan
@@ -593,7 +600,12 @@ export function rankMatches(
       tier,
       m: {
         key: c.key,
-        display: c.display, // insertion form exactly as stored (h2.27; rule 4d edges ride along)
+        // Completion-time casing resolution (spec 04 h2.32, PRD R2.1):
+        // the RAW fragment's first letter + the candidate's casing
+        // tallies decide the display; recency never does. Tab-insert
+        // reads this live result (invariant 2), satisfying "resolved at
+        // completion time".
+        display: resolveCompletionCasing(c, rawFirst),
         description: `session x${c.sessionCount}`, // ASCII x per item contract
         salience: salience(c, ordinal), // exact unquantized value
         sessionCount: c.sessionCount, // order key 2 within a tier (§04 h2.29)
@@ -644,7 +656,11 @@ export function rankMatches(
         tier: 0,
         m: {
           key: c.key,
-          display: c.display,
+          // Completion-time casing resolution (spec 04 h2.32) — the SAME
+          // rawFirst as the anchored path: tier-0 fires on the empty-
+          // anchored path, but the fragment is still the user's typed
+          // text, so an uppercase first letter preserves Shift here too.
+          display: resolveCompletionCasing(c, rawFirst),
           description: `session x${c.sessionCount}`,
           salience: salience(c, ordinal),
           sessionCount: c.sessionCount,

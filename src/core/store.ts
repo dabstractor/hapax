@@ -2,17 +2,23 @@
  * Store — stage 4 of the segment → shapeGate → score → store → query
  * pipeline (PRD §06): the per-session candidate map. One entry per
  * lowercase key — casing variants ("Hapax", "hapax", "HAPAX") merge into
- * a single entry whose `display` reflects the most recent casing seen.
+ * a single entry whose insertion form is derived AT COMPLETION TIME from
+ * the casing tallies (capCount/lowerCount/capDisplay) by query.ts's
+ * resolveCompletionCasing (spec 04 h2.32, PRD R2.1) — recency never
+ * decides it, and no display field is stored.
  *
  * UPSERT SEMANTICS (h2.36, verbatim contract):
  *
- *   Absent  → create { key, display, sessionCount: 1, firstSeenOrdinal,
- *             lastSeenOrdinal, userTyped, properName, rankGroup }.
+ *   Absent  → create { key, casing tallies, sessionCount: 1,
+ *             firstSeenOrdinal, lastSeenOrdinal, userTyped, properName,
+ *             rankGroup }.
  *   Present → mutate in place: sessionCount++, lastSeenOrdinal = ordinal,
- *             display refreshed (most recent wins), userTyped / properName
- *             OR-in (sticky once true, never unset), rankGroup =
- *             min(existing, new) — a word first seen mid-frequency then
- *             seen rare keeps the better (lower) group.
+ *             casing tallies accumulate (capCount/lowerCount/capDisplay
+ *             per h2.43 — the completion-time resolver's input),
+ *             userTyped / properName OR-in (sticky once true, never
+ *             unset), rankGroup = min(existing, new) — a word first seen
+ *             mid-frequency then seen rare keeps the better (lower)
+ *             group.
  *
  * ORDINAL: the pipeline assigns message ordinals (P1.M3.T2) — it calls
  * nextOrdinal() ONCE per message BEFORE processing that message's
@@ -275,7 +281,13 @@ export class CandidateStore {
    *  are evidence, not occurrence counts), and the tallies never gate
    *  the occurrence bookkeeping — a dropped structural sighting is
    *  dropped from TALLIES only. Chain-only members (dictionary top-band,
-   *  P1.M1.T3.S1) never reach upsert — no guard here by contract. */
+   *  P1.M1.T3.S1) never reach upsert — no guard here by contract.
+   *
+   *  MODE A (spec 04 h2.32, PRD R2.1): casing lives ONLY in the tallies
+   *  — there is no stored display and no recency merge (the legacy
+   *  "most recent casing wins" write is gone). The completion-time
+   *  resolver in query.ts (resolveCompletionCasing) derives the insertion
+   *  form from the tallies + the live fragment's first letter. */
   upsert(sighting: Sighting): void {
     const existing = this.#map.get(sighting.key);
     if (!existing) {
@@ -301,7 +313,6 @@ export class CandidateStore {
             : { capCount: 0, lowerCount: 1, capDisplay: "" };
       this.#map.set(sighting.key, {
         key: sighting.key,
-        display: sighting.display,
         ...tallies,
         sessionCount: 1,
         lastSeenOrdinal: sighting.ordinal,
@@ -330,7 +341,6 @@ export class CandidateStore {
     }
     existing.sessionCount++;
     existing.lastSeenOrdinal = sighting.ordinal;
-    existing.display = sighting.display; // most recent casing wins
     existing.userTyped ||= sighting.fromUser; // sticky once true
     existing.properName ||= sighting.properName; // sticky once true
     // A word first seen mid-frequency then seen rare keeps the better

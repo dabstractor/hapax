@@ -373,7 +373,7 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     const offer = await suggest(provider, ["Zorp "], 0, 5);
     expect(offer?.prefix).toBe("");
     expect(offer?.items.map((i) => i.value)).toEqual(
-      store.topSuccessors("zorp").map((s) => store.get(s.next)?.display ?? s.next),
+      store.topSuccessors("zorp").map((s) => store.get(s.next)?.capDisplay || s.next),
     );
     expectSingleWordItems(offer?.items ?? []);
   });

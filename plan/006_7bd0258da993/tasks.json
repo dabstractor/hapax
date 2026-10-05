@@ -174,7 +174,7 @@
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Completion-time casing resolver + display migration",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Pure resolver over (candidate tallies, live fragment first letter), wired where matches are built so downstream .display consumers keep working; then the subtractive removal of Candidate.display.",
               "subtasks": [
                 {
@@ -199,7 +199,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "Wire resolver at match construction (both sites); remove Candidate.display",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1",

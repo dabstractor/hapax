@@ -71,8 +71,8 @@ const put = (
  * alpha ×2 sits older (ordinal 5) and never enters ze* queries. */
 const zeStore = (): CandidateStore => {
   const s = new CandidateStore();
-  put(s, "zendesk", 4, 9, { display: "Zendesk" });
-  put(s, "zendeskagent", 3, 9, { display: "ZendeskAgent" });
+  put(s, "zendesk", 4, 9, { display: "Zendesk", casing: "mid-cap" });
+  put(s, "zendeskagent", 3, 9, { display: "ZendeskAgent", casing: "mid-cap" });
   put(s, "zephyr", 1, 9);
   put(s, "alpha", 2, 5);
   return s;
@@ -90,7 +90,7 @@ const cfg = (over: Partial<HapaxConfig> = {}): HapaxConfig => ({
  *  progressive completion): zephyr (6 chars) > Zendesk (7). */
 const reproStore = (): CandidateStore => {
   const s = new CandidateStore();
-  put(s, "zendesk", 3, 9, { display: "Zendesk" });
+  put(s, "zendesk", 3, 9, { display: "Zendesk", casing: "mid-cap" });
   put(s, "zephyr", 1, 9);
   return s;
 };
@@ -221,7 +221,7 @@ describe("suppression window", () => {
     // Ingest changes membership mid-window WITHOUT moving the anchor:
     // same fragment "ze" (same prefix "#ze"), different set → still
     // suppressed by the REFRESHED window.
-    put(store, "zesty", 2, 9, { display: "Zesty" });
+    put(store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" });
     expect(await emit("ze")).toEqual(ZE); // suppressed — Zesty not shown yet
 
     vi.advanceTimersByTime(60); // t=170: 170−60 ≥ 100 → pending promoted
@@ -276,10 +276,10 @@ describe("superseded pending", () => {
 
     await emit("ze"); // t=0 → ZE painted
     vi.advanceTimersByTime(50);
-    put(store, "zesty", 2, 9, { display: "Zesty" });
+    put(store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" });
     await emit("ze"); // t=50 → same prefix, new set → suppressed, pending=[Ze,Zesty,zephyr]
     vi.advanceTimersByTime(20);
-    put(store, "zeta", 2, 9, { display: "Zeta" });
+    put(store, "zeta", 2, 9, { display: "Zeta", casing: "mid-cap" });
     await emit("ze"); // t=70 → pending superseded by the newest membership
 
     vi.advanceTimersByTime(100); // t=170: timer promotes the newest membership
@@ -409,7 +409,7 @@ describe("dispose", () => {
 
     await emit("ze"); // t=0 → ZE painted
     vi.advanceTimersByTime(50);
-    put(store, "zesty", 2, 9, { display: "Zesty" }); // membership change, same prefix
+    put(store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" }); // membership change, same prefix
     await emit("ze"); // suppressed → pending=[Ze,Zesty,zephyr], timer armed
     expect(vi.getTimerCount()).toBe(1);
 
@@ -504,7 +504,7 @@ describe("prefix-anchor invalidation (BUG-002)", () => {
     const firstPaint = await type(wrapper, "ze"); // paints @"ze"
     void firstPaint;
     vi.advanceTimersByTime(50);
-    put(store, "zesty", 2, 9, { display: "Zesty" }); // membership change only
+    put(store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" }); // membership change only
     const held = await type(wrapper, "ze"); // identical prefix → suppressed
     expect(held!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
     expect(held!.prefix).toBe("ze"); // anchor-safe: buffer still "ze"
@@ -524,7 +524,7 @@ describe("prefix-anchor invalidation (BUG-002)", () => {
 
     await type(wrapper, "ze"); // t=0 → {Zendesk, zephyr}@"ze"
     vi.advanceTimersByTime(50);
-    put(store, "zesty", 2, 9, { display: "Zesty" }); // ingest mid-window
+    put(store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" }); // ingest mid-window
 
     // Prefix identical ("ze"), set differs → suppression must hold (the
     // 4d branch below the anchor exception is untouched).
@@ -574,7 +574,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
     vi.advanceTimersByTime(30);
     // Ingest changes membership mid-window: a NON-forced identical-prefix
     // query would now be suppressed (re-served ZE with its old anchor).
-    put(store, "zesty", 2, 9, { display: "Zesty" });
+    put(store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" });
 
     const forced = await forcedQuery(wrapper, "#ze");
 
@@ -597,7 +597,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
 
     await emit("ze"); // t=0 → ZE painted
     vi.advanceTimersByTime(50);
-    put(store, "zesty", 2, 9, { display: "Zesty" });
+    put(store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" });
     await emit("ze"); // suppressed → pending armed, displayed stays ZE
     expect(vi.getTimerCount()).toBe(1);
 
@@ -620,7 +620,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
 
     await emit("ze"); // t=0 → ZE painted
     vi.advanceTimersByTime(50);
-    put(store, "zesty", 2, 9, { display: "Zesty" });
+    put(store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" });
     await emit("ze"); // suppressed → pending=[Ze,ZeA,Zesty,zephyr], swap armed
     expect(vi.getTimerCount()).toBe(1);
 
@@ -651,7 +651,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
     // timestamp (t=0) the window has elapsed → immediate paint of the new
     // set. Had the forced call painted, lastPaintAt would be 100 and this
     // query would be suppressed (re-serving 3-item ZE instead).
-    put(store, "zesty", 2, 9, { display: "Zesty" });
+    put(store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" });
     expect(await emit("ze")).toEqual(["Zesty", "zephyr", "Zendesk", "ZendeskAgent"]);
     expect(vi.getTimerCount()).toBe(0); // immediate paint — no swap left armed
   });
@@ -661,7 +661,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
 
     await h.emit("ze"); // t=0 → ZE painted
     vi.advanceTimersByTime(50);
-    put(h.store, "zesty", 2, 9, { display: "Zesty" });
+    put(h.store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" });
     await h.emit("ze"); // suppressed → swap armed for the earlier keystroke
     expect(vi.getTimerCount()).toBe(1);
 
@@ -680,7 +680,7 @@ describe("forced results bypass the 100 ms debounce (PRD §07 h3.8)", () => {
 
     await emit("ze"); // t=0 → ZE painted
     vi.advanceTimersByTime(30);
-    put(store, "zesty", 2, 9, { display: "Zesty" });
+    put(store, "zesty", 2, 9, { display: "Zesty", casing: "mid-cap" });
 
     // Identical shape to the forced case above, but WITHOUT force:
     // suppression holds — the displayed set is re-served, the fresh set
@@ -695,7 +695,7 @@ describe("hesitation gate (menuDelayMs — first-paint delay)", () => {
   /** Store: one candidate family so word-start queries have items. */
   const gateStore = (): CandidateStore => {
     const s = new CandidateStore();
-    put(s, "zendesk", 3, 9, { display: "Zendesk" });
+    put(s, "zendesk", 3, 9, { display: "Zendesk", casing: "mid-cap" });
     put(s, "zephyr", 1, 9);
     return s;
   };

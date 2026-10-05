@@ -142,29 +142,30 @@ describe("acwords dump (PRD §08)", () => {
     const store = new CandidateStore();
     const ord = store.nextOrdinal(); // same recency → key-order tie
     see(store, "zendesk", "zendesk", { ordinal: ord });
-    see(store, "nrel", "NREL", { ordinal: ord });
+    see(store, "nrel", "NREL", { ordinal: ord, casing: "mid-cap" });
     const rows = topRows(formatAcwordsDump(store, fakeStats));
 
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toContain("1. NREL");
+    expect(rows[0]).toContain("1. NREL"); // mid-cap tally → resolved form is the capitalized one
     expect(rows[1]).toContain("2. zendesk");
   });
 
-  it("shows the most recent display casing and ×N session counts", () => {
+  it("the dump shows the tallies' capDisplay when a capitalized form exists (×N session counts)", () => {
     const store = new CandidateStore();
     const ord = store.nextOrdinal();
     see(store, "nrel", "nrel", { ordinal: ord });
-    see(store, "nrel", "NREL", { ordinal: ord }); // most recent casing wins
+    see(store, "nrel", "NREL", { ordinal: ord, casing: "mid-cap" }); // capCount 1–1 vs lower → tie → key… but the NEXT sighting breaks it
+    see(store, "nrel", "NREL", { ordinal: ord, casing: "mid-cap" }); // capCount 2 > lowerCount 1 → capDisplay
     const rows = topRows(formatAcwordsDump(store, fakeStats));
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toContain("NREL");
-    expect(rows[0]).not.toMatch(/(^|\s)nrel/); // lowercase form is gone
-    expect(rows[0]).toContain("×2");
+    expect(rows[0]).toContain("NREL"); // resolved form: the capitalized tally form
+    expect(rows[0]).not.toMatch(/(^|\s)nrel( |$)/); // the bare key is not what the dump shows
+    expect(rows[0]).toContain("×3");
     expect(rows[0]).toContain("group 0 (rare)");
   });
 
-  it("renders path candidates with key != display exactly as stored (rule 4d)", () => {
+  it("renders path candidates as their resolved form — the key when no capitalized sighting exists (rule 4d)", () => {
     const store = new CandidateStore();
     const ord = store.nextOrdinal();
     see(store, "home/dustin/projects/hapax", "/home/dustin/projects/hapax", {
@@ -173,10 +174,11 @@ describe("acwords dump (PRD §08)", () => {
     const rows = topRows(formatAcwordsDump(store, fakeStats));
 
     expect(rows).toHaveLength(1);
-    // Display verbatim — the dump prints c.display and never re-derives
-    // it from the key (they differ BEYOND casing for rule-4d paths: the
-    // original leading edge is the insertion form, the key is trimmed).
-    expect(rows[0]).toContain("1. /home/dustin/projects/hapax  ×1");
+    // Interim completion-time form (spec 04 h2.32): capDisplay-when-
+    // present, else the key. A '/'-leading path classifies "lower"
+    // (segment.ts classifies on raw[0]), so the dump shows the trimmed
+    // key; edge-decorated insertion display is P1.M2.T2's territory.
+    expect(rows[0]).toContain("1. home/dustin/projects/hapax  ×1");
     expect(rows[0]).toContain("group 0 (rare)"); // format otherwise unchanged
   });
 
@@ -195,7 +197,7 @@ describe("acwords dump (PRD §08)", () => {
 
   it("never contains words absent from the store snapshot (words only)", () => {
     const populated = new CandidateStore();
-    see(populated, "nrel", "NREL");
+    see(populated, "nrel", "NREL", { casing: "mid-cap" });
     expect(formatAcwordsDump(populated, fakeStats)).toContain("NREL");
 
     const empty = new CandidateStore(); // different store, same stats fixture

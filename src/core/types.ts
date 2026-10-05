@@ -21,9 +21,6 @@ export type RankGroup = 0 | 1 | 2;
 export interface Candidate {
   /** lowercase */
   key: string;
-  /** KEPT (legacy, temporary): most recent casing seen. Removed by
-   *  P1.M2.T1.S2 once the casing resolver replaces all consumers. */
-  display: string;
   /** Capitalized-tally sightings (spec 06 h2.43): mid-cap sightings always
    *  count; a structural-cap (sentence-initial) sighting counts ONLY while
    *  the word has never been seen lowercase. */

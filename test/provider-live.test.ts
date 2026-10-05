@@ -54,7 +54,7 @@ const put = (
  *  first, count only breaks equal-length ties) zephyr sorts FIRST. */
 const zeStore = (): CandidateStore => {
   const s = new CandidateStore();
-  put(s, "zendesk", 3, 9, { display: "Zendesk" });
+  put(s, "zendesk", 3, 9, { display: "Zendesk", casing: "mid-cap" });
   put(s, "zephyr", 1, 9);
   put(s, "alpha", 2, 5);
   return s;

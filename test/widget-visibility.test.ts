@@ -634,16 +634,18 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
     s.recordBigramRuns([["zorpwibble", "quuxblat"]]);
     s.recordBigramRuns([["zorpwibble", "quuxblat"]]);
     s.recordBigramRuns([["zorpwibble", "deltaword"]]);
-    const put = (key: string, display: string): void =>
+    const put = (key: string, display: string): void => {
+      const midCap = display.charAt(0) >= "A" && display.charAt(0) <= "Z";
       s.upsert({
         key,
         display,
         ordinal: s.currentOrdinal() + 1,
         fromUser: false,
-        properName: false,
-        casing: "lower",
+        properName: midCap,
+        casing: midCap ? "mid-cap" : "lower", // consistent casing evidence (spec 04 h2.32 tallies)
         rankGroup: 0,
       });
+    };
     put("zorpwibble", "zorpwibble");
     put("quuxblat", "Quuxblat"); // distinct casing: display comes from the store entry
     put("deltaword", "deltaword");
@@ -939,16 +941,18 @@ describe("R4 — fingerprint release (BUG-003)", () => {
     s.recordBigramRuns([["zorpwibble", "quuxblat"]]);
     s.recordBigramRuns([["zorpwibble", "quuxblat"]]);
     s.recordBigramRuns([["zorpwibble", "deltaword"]]);
-    const put = (key: string, display: string): void =>
+    const put = (key: string, display: string): void => {
+      const midCap = display.charAt(0) >= "A" && display.charAt(0) <= "Z";
       s.upsert({
         key,
         display,
         ordinal: s.currentOrdinal() + 1,
         fromUser: false,
-        properName: false,
-        casing: "lower",
+        properName: midCap,
+        casing: midCap ? "mid-cap" : "lower", // consistent casing evidence (spec 04 h2.32 tallies)
         rankGroup: 0,
       });
+    };
     put("zorpwibble", "zorpwibble");
     put("quuxblat", "Quuxblat");
     put("deltaword", "deltaword");

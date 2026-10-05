@@ -367,7 +367,7 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
       const c = store.get(word);
       expect(c, `${word}: relieved capitalized sighting must store`).toBeDefined();
       expect(c!.rankGroup, `${word}: relief admits at group 2`).toBe(2);
-      expect(c!.display, `${word}: display casing`).toBe(display);
+      expect(c!.capDisplay, `${word}: display casing`).toBe(display);
     }
 
     // ── Positive side, exclusion: capitalized fixture words at/above the
@@ -432,7 +432,10 @@ describe("acceptance item 3 — 100k-token session restores fast (large-100k.jso
     // Rare terms recur across the whole history — they survive replay.
     // 2026-09 retighten: "zephyr" (q=22) rejects at admission now, so the
     // surviving-replay pins are the dictionary-absent pair.
-    expect(rankMatches(store, "verd").map((m) => m.display)).toEqual(["Verdigris"]);
+    // Completion-time casing (spec 04 h2.32): the fixture holds 499
+    // lowercase vs 49 capitalized sightings — the frequency-resolved form
+    // is the lowercase key (the legacy recency display was "Verdigris").
+    expect(rankMatches(store, "verd").map((m) => m.display)).toEqual(["verdigris"]);
     expect(rankMatches(store, "kes").map((m) => m.display)).toEqual(["kestrel"]);
   });
 });
@@ -820,7 +823,7 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     // The vocabulary admits as word candidates (the replay that feeds the
     // bigrams also stores the tokens themselves):
     expect(store.get("zorp")).toBeDefined();
-    expect(store.get("azni")?.display).toBe("AZNI"); // acronym stays a rare word
+    expect(store.get("azni")?.capDisplay).toBe("AZNI"); // acronym stays a rare word
     expect(store.bigramSize).toBeGreaterThan(0);
 
     // The bare word co-presents in the menu (the phrase layer is gone —
@@ -887,7 +890,7 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     // display casing"; PRD §04 case handling) — asserted store-driven,
     // never a hardcoded casing assumption:
     const topNext = store.topSuccessors("zorp")[0]!.next; // "zephra", count 4
-    const topNextDisplay = store.get(topNext)!.display; // "Zephra"
+    const topNextDisplay = store.get(topNext)!.capDisplay; // "Zephra"
     expect(offer1?.prefix).toBe("");
     expect(offer1?.items.map((i) => [i.label, i.value])).toEqual([
       [topNextDisplay, topNextDisplay], // bare, display-cased: pi-tui splices verbatim at prefix ""

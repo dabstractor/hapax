@@ -79,7 +79,6 @@ const draft = (
 /** Fresh 1-sighting group-0 candidate seen at ordinal 1; override any field. */
 const cand = (over: Partial<Candidate> = {}): Candidate => ({
   key: "token",
-  display: "token",
   sessionCount: 1,
   lastSeenOrdinal: 1,
   firstSeenOrdinal: 1,
@@ -604,8 +603,8 @@ describe("evictionScore — slower τ=50 decay (PRD §06; store P1.M2.T4.S3)", (
 describe("compareCandidates — PRD §09 orderings", () => {
   it("§09: frequency beats rare-once — an 8× group-2 word outranks a 1× group-0 word", () => {
     // A = 2·log2(9) + 3 + 0 ≈ 9.34 vs B = 2 + 3 + 1.0 = 6.0.
-    const a = cand({ key: "kerfuffle", display: "kerfuffle", sessionCount: 8, rankGroup: 2 });
-    const b = cand({ key: "zzqv", display: "zzqv" });
+    const a = cand({ key: "kerfuffle", sessionCount: 8, rankGroup: 2 });
+    const b = cand({ key: "zzqv" });
     expect(compareCandidates(a, b, AT)).toBeLessThan(0); // a first
     expect(compareCandidates(b, a, AT)).toBeGreaterThan(0);
   });
@@ -619,22 +618,22 @@ describe("compareCandidates — PRD §09 orderings", () => {
   });
 
   it("§09: userTyped flips a tie — identical candidates split by the sticky 1.5", () => {
-    const typed = cand({ key: "meridian", display: "Meridian", userTyped: true });
-    const untyped = cand({ key: "obelisk", display: "obelisk" });
+    const typed = cand({ key: "meridian", userTyped: true });
+    const untyped = cand({ key: "obelisk" });
     expect(compareCandidates(typed, untyped, AT)).toBeLessThan(0);
     expect(compareCandidates(untyped, typed, AT)).toBeGreaterThan(0);
   });
 
   it("exact salience tie → shorter key first: 'fix' before 'fixpoint'", () => {
-    const fix = cand({ key: "fix", display: "fix" });
-    const fixpoint = cand({ key: "fixpoint", display: "fixpoint" });
+    const fix = cand({ key: "fix" });
+    const fixpoint = cand({ key: "fixpoint" });
     expect(compareCandidates(fix, fixpoint, AT)).toBeLessThan(0);
     expect(compareCandidates(fixpoint, fix, AT)).toBeGreaterThan(0);
   });
 
   it("still tied (equal length) → byte order on the lowercase key: 'abort' before 'abstract'", () => {
-    const abort = cand({ key: "abort", display: "abort" });
-    const abstract = cand({ key: "abstract", display: "abstract" });
+    const abort = cand({ key: "abort" });
+    const abstract = cand({ key: "abstract" });
     expect(compareCandidates(abort, abstract, AT)).toBeLessThan(0);
     expect(compareCandidates(abstract, abort, AT)).toBeGreaterThan(0);
   });
