@@ -71,7 +71,12 @@
  *     genuinely-new result set — and defensively by hide()) and the
  *     arrow cluster is captured with CAROUSEL WRAP at both edges
  *     (applied modularly in the wiring; the old clamp is retired as
- *     unreachable). Escape dismisses + suppresses. Every other key —
+ *     unreachable). Escape dismisses + suppresses in every state but is
+ *     CONSUMED only on an interacted generation — un-entered it rides
+ *     the boundary-pass-through arm (dismiss + suppress + FORWARD
+ *     verbatim: the press reaches the inner editor unchanged — plain-pi
+ *     Esc parity; an editor extension such as a vim layer receives it
+ *     on the first press). Every other key —
  *     Tab and Enter included — forwards verbatim to the enter-submit
  *     proxy; while hidden or empty NOTHING is captured (invariant 1
  *     amendment). Suppression is ONLY ever set through the machine's
@@ -1126,8 +1131,14 @@ export function createVisibilityMachine(
  *  so reaching an edge at all implies an interacted generation. */
 export type WidgetKeyDecision =
   | { action: "navigate"; delta: -1 | 1 } // move the highlight; wraps emerge from the wiring's modular application
-  | { action: "boundary-pass-through" } // un-entered first word + ↑/←: dismiss+suppress+FORWARD (caret moves)
-  | { action: "escape" } // plain Escape: dismiss+consume+suppress
+  // dismiss+suppress+FORWARD (the shared act-and-forward arm): the
+  // un-entered ↑/← on the first word (the caret moves on the press) and
+  // the un-entered Escape (the press reaches the inner editor verbatim
+  // — plain-pi Esc parity)
+  | { action: "boundary-pass-through" }
+  // Escape on an INTERACTED generation: dismiss+consume+suppress (the
+  // exit from the captured arrow cluster)
+  | { action: "escape" }
   | { action: "tab-insert" } // Tab: insert highlighted word, consume
   | { action: "enter-submit" } // Enter: dismiss, then forward (still submits)
   | { action: "forward" }; // everything else — never captured
@@ -1147,7 +1158,12 @@ export type WidgetKeyDecision =
  * boundary checks — the list can shrink between paints):
  *
  *   0. !visible || count ≤ 0                      → forward
- *   1. Escape (any state, any index)              → escape (consumed)
+ *   1. Escape, interacted generation (any index) → escape (consumed)
+ *   1e. Escape, un-entered generation            → boundary-pass-through
+ *      (dismiss + suppress + FORWARD — the press reaches the inner
+ *      editor verbatim; an editor extension such as a vim layer gets
+ *      it on the first press, and stock pi's Esc semantics — cancel
+ *      in-flight request — are identical with or without hapax)
  *   2. ↑/←, un-entered, i = 0                     → boundary-pass-through
  *      (dismiss + suppress + FORWARD — the caret moves on this press)
  *   3. →/↓, un-entered, count = 1                 → forward (nothing to enter)
@@ -1185,7 +1201,14 @@ export function decideWidgetKey(
 ): WidgetKeyDecision {
   if (!visible || count <= 0) return { action: "forward" };
   const i = Math.min(Math.max(highlightIndex, 0), count - 1);
-  if (matchesKey(data, "escape")) return { action: "escape" };
+  if (matchesKey(data, "escape")) {
+    // Two-state Esc: consumed only on an interacted generation (the
+    // safe exit from the captured arrow cluster); un-entered it joins
+    // the boundary-pass-through arm — hapax dismisses + suppresses but
+    // the press FORWARDS verbatim, so Escape's downstream meaning
+    // (vim insert-exit, stock cancel-request) is never altered.
+    return interacted ? { action: "escape" } : { action: "boundary-pass-through" };
+  }
   if (matchesKey(data, "up") || matchesKey(data, "left")) {
     if (!interacted && i === 0) return { action: "boundary-pass-through" };
     // Interior move; an interacted i = 0 (row 5) is ALSO −1 — the WRAP
@@ -1562,8 +1585,9 @@ export function createWidgetEditorFactory(
 
     // T3/S1 — the widget key handler (spec §07 h3.9, 2026-10 model v2):
     // decides BEFORE the enter-submit guard. Consumed = RETURN WITHOUT
-    // delegating (navigate/Escape only — the pass-through arm forwards,
-    // so the caret moves); forwarded keys reach the guard verbatim,
+    // delegating (navigate and interacted-Escape only — the
+    // pass-through arm forwards, so the caret moves / Esc acts
+    // downstream); forwarded keys reach the guard verbatim,
     // exactly once.
     const widgetHandleInput = (data: string): unknown => {
       // Line claim release (spec §07 "Line claim"): the submit key is
@@ -1610,8 +1634,9 @@ export function createWidgetEditorFactory(
         return forwardInput(data);
       }
       if (decision.action === "boundary-pass-through") {
-        // v2 row 2 — one-press plain-pi parity: the un-entered ↑/← at the
-        // first word dismisses AND forwards. Same shape as enter-submit:
+        // v2 rows 1e/2 — one-press plain-pi parity: the un-entered ↑/←
+        // at the first word AND the un-entered Escape dismiss AND
+        // forward. Same shape as enter-submit:
         // the explicit dismissal (suppress until the next word start)
         // lands first via the machine's seam, then the key is FORWARDED
         // (the caret moves on this press) BEFORE the consumed-tick block

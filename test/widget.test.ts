@@ -20,7 +20,11 @@
  *    verbatim (dismiss + suppress + the caret moves on that same press
  *    — one-press plain-pi parity) and →/↓ with nothing to navigate (a
  *    one-word list) forwards with the line staying. Escape dismisses +
- *    suppresses; Tab SYNCHRONOUSLY inserts the highlighted candidate's
+ *    suppresses in every state, but is CONSUMED only once the list is
+ *    ENTERED — un-entered it forwards verbatim after dismissing
+ *    (plain-pi Esc parity: the inner editor receives the press, so a
+ *    vim layer exits insert mode on the FIRST press and stock pi's
+ *    cancel-request semantics are unchanged); Tab SYNCHRONOUSLY inserts the highlighted candidate's
  *    display string over the word/#fragment span (consumed — never
  *    delegated, never debounce-gated, never menu-opening) and Enter
  *    dismisses the line then forwards so the inner editor still
@@ -659,7 +663,8 @@ describe("widget key handling — v2 wiring observables (S2: tick accounting + i
     pt.press(UP);
     expect(pt.state.interacted).toBe(false);
 
-    // Escape: consumed dismissal — never an interaction.
+    // Escape (un-entered here — forwarded): dismissal, never an
+    // interaction.
     const esc = makeKeyHarness();
     esc.show(["alpha", "beta", "gamma"]);
     esc.press(ESC);
@@ -704,38 +709,43 @@ describe("widget key handling — Escape and suppression taxonomy (spec §07 h3.
     expect(h.innerCalls).toEqual([]); // consumed
   });
 
-  it("Escape at EVERY state: un-interacted, interacted, interior, single-word — hides, suppresses, consumed", () => {
-    const expectEscaped = (
-      h: ReturnType<typeof makeKeyHarness>,
-      label: string,
-    ): void => {
-      expect(h.state.hidden, label).toBe(true);
-      expect(h.machine.getState().suppressUntilWordStart, label).toBe(true);
-      expect(h.innerCalls, label).toEqual([]); // consumed
-    };
+  it("Escape: two-state — un-entered forwards verbatim after dismissing; interacted consumes", () => {
+    // Un-entered (the common case): dismiss + suppress AND FORWARD —
+    // plain-pi Esc parity; the inner editor receives the exact bytes.
     const unentered = makeKeyHarness();
     unentered.show(["alpha", "beta", "gamma"]);
     unentered.press(ESC);
-    expectEscaped(unentered, "un-interacted");
+    expect(unentered.state.hidden).toBe(true);
+    expect(unentered.machine.getState().suppressUntilWordStart).toBe(true);
+    expect(unentered.innerCalls).toEqual([ESC]); // forwarded verbatim
 
+    // Un-entered single-word line — same forward.
+    const single = makeKeyHarness();
+    single.show(["solo"]);
+    single.press(ESC);
+    expect(single.state.hidden).toBe(true);
+    expect(single.machine.getState().suppressUntilWordStart).toBe(true);
+    expect(single.innerCalls).toEqual([ESC]);
+
+    // Interacted: CONSUMED — the exit from the captured arrow cluster.
     const interacted = makeKeyHarness();
     interacted.show(["alpha", "beta", "gamma"]);
     interacted.press(RIGHT); // enter the generation
     expect(interacted.state.interacted).toBe(true);
     interacted.press(ESC);
-    expectEscaped(interacted, "interacted (index 1)");
+    expect(interacted.state.hidden).toBe(true);
+    expect(interacted.machine.getState().suppressUntilWordStart).toBe(true);
+    expect(interacted.innerCalls).toEqual([]); // consumed
 
+    // Interacted interior index — consumed from anywhere.
     const interior = makeKeyHarness();
     interior.show(["alpha", "beta", "gamma"]);
     interior.press(DOWN);
     interior.press(DOWN); // index 2
     interior.press(ESC);
-    expectEscaped(interior, "interior index 2");
-
-    const single = makeKeyHarness();
-    single.show(["solo"]);
-    single.press(ESC);
-    expectEscaped(single, "single-word");
+    expect(interior.state.hidden).toBe(true);
+    expect(interior.machine.getState().suppressUntilWordStart).toBe(true);
+    expect(interior.innerCalls).toEqual([]); // consumed
   });
 
   it("a close WITHOUT explicit dismissal (forwarded key → machine closes) never suppresses; onDismissed(false) neither", async () => {
@@ -1252,11 +1262,10 @@ describe("decideWidgetKey — pure decision table v2 (2026-10 arrow model, no ed
     expect(decideWidgetKey(DOWN, true, 3, 99, false)).toEqual({ action: "navigate", delta: 1 });
   });
 
-  it("Escape → escape from any index, either generation", () => {
+  it("Escape: interacted → escape (consumed) from any index; un-entered → boundary-pass-through (dismiss+forward)", () => {
     for (const i of [0, 1, 5]) {
-      for (const entered of [false, true]) {
-        expect(decideWidgetKey(ESC, true, 3, i, entered)).toEqual({ action: "escape" });
-      }
+      expect(decideWidgetKey(ESC, true, 3, i, true)).toEqual({ action: "escape" });
+      expect(decideWidgetKey(ESC, true, 3, i, false)).toEqual({ action: "boundary-pass-through" });
     }
   });
 

@@ -146,15 +146,52 @@ inner editor sees them:
   FIRST word wraps to the LAST, →/↓ on the LAST word wraps to the
   FIRST. The clamp is RETIRED — unreachable: reaching the last word
   requires navigation, which interacts the generation, and
-  interacted edges wrap. Plain Escape is unchanged (always dismiss +
-  suppress) and is the exit once interacted. A genuinely new result
-  set (narrowed, replaced, or otherwise changed) starts a FRESH
+  interacted edges wrap. Plain Escape always dismisses +
+  suppresses, but is consumed only once the generation is
+  interacted — the exit from the captured cluster; un-entered it
+  dismisses and then FORWARDS (Escape handling below). A genuinely
+  new result set (narrowed, replaced, or otherwise changed) starts a FRESH
   generation: the highlight returns to the first word, the
   interaction flag resets with it, and boundary pass-through is
   available again. A pass-through press never sets the flag (no
   movement happened) — a one-word line therefore never becomes
   interacted and keeps full plain-pi arrow behavior. Tab inserts
   and Enter submits are unaffected by the interaction state.
+- **Escape handling (two-state, keyed to the same `interacted`
+  generation flag as the arrows).** Escape always dismisses the
+  line's content and arms rest-of-word suppression through the same
+  seam as every explicit dismissal; whether the press is CONSUMED
+  depends on the generation's interaction state:
+  - **Un-entered generation (the common case — suggestions are
+    showing but no arrow has moved the highlight): the press
+    FORWARDS verbatim to the inner editor after hapax acts.**
+    hapax never changes what Escape does downstream — it only layers
+    the dismissal on top. Parity is exact: with no other
+    key-consuming extension installed, the forwarded Escape cancels
+    the in-flight request precisely as stock pi does, with or without
+    hapax; an editor extension that gives Escape a meaning (a vim
+    layer's insert→normal exit) receives it on the FIRST press — one
+    press both dismisses the suggestion line and leaves insert mode,
+    and no Escape-counting is ever required.
+  - **Entered generation (interacted): the press is CONSUMED —
+    dismiss + suppress, no forwarding.** This is the sole
+    Escape-capture window, and it is load-bearing: the user has
+    deliberately entered the captured arrow cluster (an arrow moved
+    the highlight — a visible state change), and consuming the exit
+    guarantees that leaving the cluster can never cancel the
+    in-flight request. A user who entered the list and then wants
+    Escape's downstream meaning presses Escape again; the entered
+    state is visible, so the second press is never a blind count.
+  - Every genuinely new result set resets the generation — the
+    interaction flag with it — returning Escape to forward mode. The
+    capture window exists only while the line is visible with a
+    non-empty rendered list: a hidden line or a blank claimed row
+    (Line claim above) places no key in hapax's path, and Escape,
+    like every key, forwards untouched. Key matching goes through
+    pi-tui's `matchesKey` (custom keybindings and the kitty protocol
+    keep working); the forwarded data is the verbatim input sequence.
+    The fallback path performs no key handling — Escape behaves
+    exactly as stock pi there.
 - **Explicit dismissal (Escape, boundary pass-through, Tab-accept,
   Enter-submit — all through the same suppression seam) suppresses the
   line for
@@ -200,8 +237,11 @@ inner editor sees them:
 
 Invariant amendment (binding; SPEC.md): the never-hijack invariant's
 sanctioned captures are now Tab while a suggestion is selected, the
-Enter-submits proxy, and — while the result line is visible — the
-four arrows and Escape. Outside those windows, zero key handling.
+Enter-submits proxy, and — once the result line has been ENTERED —
+the four arrows and Escape. Un-entered, no key is ever consumed:
+boundary arrows and Escape dismiss the line AND forward the press
+(the caret moves on the arrow; the forwarded Escape behaves exactly
+as stock pi). Outside those windows, zero key handling.
 
 ### Widget visibility state machine (auto-open, re-based)
 
@@ -508,8 +548,9 @@ path: the line hides at trailing space by its own state machine). pi's
   full stop.
 - Fallback path: Escape, arrows, backspace, space behave exactly as
   stock pi. Widget path: arrows and Escape are consumed only after
-  the list is entered (boundary pass-through above moves the caret
-  on the same press); backspace and space behave as
+  the list is entered (un-entered, boundary pass-through moves the
+  caret on the same press, and Escape dismisses then forwards
+  verbatim — Escape handling above); backspace and space behave as
   stock.
 - Tab with no live suggestion set passes through as a literal Tab.
 - The user can type an entire session and never trigger a menu for common

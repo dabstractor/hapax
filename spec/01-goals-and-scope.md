@@ -101,13 +101,15 @@ matching word (or the 1st character after the trigger char, default `#`).
 - **Tab may insert a top item the debounced popup hasn't painted yet.** The
   computation is deterministic and correct; treated as cosmetic. Revisit only
   if observed in practice (see 07, "Tab-before-paint").
-- **Arrow capture while the result line shows.** The arrow cluster is
-  captured only once the list has been ENTERED (an arrow that moved
-  the highlight); before that, boundary arrows pass through to the
-  editor with the caret moving on the same press (plain-pi parity),
-  and after entry both edges carousel end-to-end, per generation
-  (07). Owner-accepted trade-off, 2026-10; one-press + interaction
-  rules 2026-10.
+- **Arrow and Escape capture while the result line shows.** The arrow
+  cluster and Escape are captured only once the list has been ENTERED
+  (an arrow that moved the highlight); before that, Escape and ↑/← on
+  the first word dismiss the line and forward the press to the editor
+  on the same keypress (plain-pi parity — the forwarded Escape does
+  exactly what it does with no extension installed: an editor
+  extension such as a vim layer leaves insert mode on it; stock pi
+  cancels the in-flight request), and after entry both edges carousel
+  end-to-end with Escape as the consumed exit, per generation (07).
 
 ## UX principles
 
@@ -115,7 +117,13 @@ matching word (or the 1st character after the trigger char, default `#`).
   except that Tab occasionally does something useful and, while the
   result line is visible, the arrow keys navigate it (boundary
   pass-through returns the keys instantly, one press, until the
-  list has been entered — then Escape is the exit; 07).
+  list has been entered — then Escape is the exit; 07). Escape never
+  changes meaning: while the line is visible but un-entered it
+  dismisses the line and forwards the press unchanged — exactly what
+  that press does with no extension installed (an editor extension
+  such as a vim layer leaves insert mode on it; stock pi cancels the
+  in-flight request); once the list has been entered, Escape is the
+  consumed exit (07).
 - The result line is a suggestion surface, never a modal. The arrow
   cluster is consumed only after the list is entered — boundary
   pass-through returns control instantly, one press (07); never any

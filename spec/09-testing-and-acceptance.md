@@ -179,7 +179,12 @@
   list is entered; ↑/← on the first word of an UN-interacted
   generation FORWARDS to the editor — the line dismisses +
   suppresses AND the caret moves on that same press (one-press
-  plain-pi parity; disqualification close does NOT suppress); →/↓
+  plain-pi parity; disqualification close does NOT suppress);
+  un-entered Escape likewise dismisses + suppresses AND FORWARDS
+  verbatim (the inner editor receives the exact bytes — plain-pi Esc
+  parity; stock pi's cancel-request behavior is unchanged by the
+  extension's presence), while an INTERACTED generation's Escape is
+  CONSUMED (dismiss + suppress; the inner editor never sees it); →/↓
   with no word to navigate (one-word line, un-interacted) forwards
   verbatim and the line stays; Tab inserts the highlighted word
   synchronously (never debounce-gated); Enter dismisses then
@@ -192,8 +197,8 @@
   wraps to the FIRST (the clamp is retired — unreachable); a new
   result set resets the flag with the highlight and re-arms
   boundary pass-through; a pass-through press never sets the flag
-  (a one-word line therefore never becomes interacted); plain
-  Escape is unchanged at every state.
+  (a one-word line therefore never becomes interacted); Escape never
+  sets the flag either, in either state.
 - Insertion: replaces the word-regex span or `#fragment` with the
   candidate's display casing.
 - Highlight resets to top on every set change; debounce/hysteresis
@@ -222,8 +227,11 @@
    contiguous-run cousin menus (said→unsaid class, ~5–20% by length,
    narrowing away as typing continues; 04); Tab with no selection =
    literal tab. While the result line is visible only arrows/Escape/Tab
-   are consumed — and arrows only once the list is entered (boundary
-   pass-through otherwise: the caret moves on the same press).
+   are consumed — and arrows and Escape only once the list is entered
+   (un-entered: boundary pass-through moves the caret on the same
+   press, and Escape dismisses then forwards verbatim — with no
+   key-consuming editor extension installed, the forwarded Escape
+   cancels the in-flight request exactly as stock pi does).
 3. **Restore:** `/resume` a 100k+ token session; store rebuilt in background
    (< 100 ms total); completions available within the first second.
 4. **Compaction:** trigger compaction (long session + `/compact`); store
