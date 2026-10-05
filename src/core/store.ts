@@ -212,6 +212,13 @@ const NO_SUCCESSORS: readonly Successor[] = Object.freeze([]);
  *  lowercase key → Candidate, plus the session's message ordinal counter. */
 export class CandidateStore {
   #map = new Map<string, Candidate>();
+  // Casing-tally side map (spec 06 h2.41/h2.43, plan 006): key → (display
+  // form → count) for the capDisplay argmax. NOT part of Candidate — the
+  // spec's shape carries only the tallies; per-form counts are store-
+  // internal evidence. Lifecycle mirrors #map exactly: entries are born
+  // on a key's first mid-cap sighting and deleted in evictIfOverCap's
+  // drop path (a re-created key must never inherit stale form counts).
+  #capForms = new Map<string, Map<string, number>>();
   #ordinal = 0; // last issued message ordinal (0 = none issued yet)
   #sortedKeys: string[] = []; // key index as of the LAST consolidation
   // New keys upserted since the last consolidation. Pushed O(1) by upsert;
@@ -257,16 +264,45 @@ export class CandidateStore {
     return this.#ordinal;
   }
 
-  /** Record one admitted occurrence (PRD §06 h2.36). Creates the entry on
-   *  first sight, merges into it otherwise. The ordinal arrives inside the
-   *  Sighting — this method never advances the counter. O(1) below the
-   *  cap; on overflow it trims back to STORE_CAP via evictIfOverCap(). */
+  /** Record one admitted occurrence (PRD §06 h2.36; casing tallies per
+   *  spec 06 h2.43, plan 006). Creates the entry on first sight, merges
+   *  into it otherwise. The ordinal arrives inside the Sighting — this
+   *  method never advances the counter. O(1) below the cap; on overflow
+   *  it trims back to STORE_CAP via evictIfOverCap().
+   *
+   *  Casing tallies (capCount/lowerCount/capDisplay) accumulate per the
+   *  sighting's casing class: sessionCount counts BOTH casings (tallies
+   *  are evidence, not occurrence counts), and the tallies never gate
+   *  the occurrence bookkeeping — a dropped structural sighting is
+   *  dropped from TALLIES only. Chain-only members (dictionary top-band,
+   *  P1.M1.T3.S1) never reach upsert — no guard here by contract. */
   upsert(sighting: Sighting): void {
     const existing = this.#map.get(sighting.key);
     if (!existing) {
+      // Tally initialization per casing class (spec 06 h2.43 create row):
+      // mid-cap seeds its form count (the capDisplay argmax evidence);
+      // structural seeds the pending-structural counter (purgeable);
+      // lower starts everything at zero/empty. structuralCapCount stays
+      // UNDEFINED at 0 — absent ≡ zero keeps the optional field honest.
+      const tallies =
+        sighting.casing === "mid-cap"
+          ? {
+              capCount: 1,
+              lowerCount: 0,
+              capDisplay: sighting.display,
+            }
+          : sighting.casing === "structural-cap"
+            ? {
+                capCount: 1,
+                lowerCount: 0,
+                capDisplay: "",
+                structuralCapCount: 1,
+              }
+            : { capCount: 0, lowerCount: 1, capDisplay: "" };
       this.#map.set(sighting.key, {
         key: sighting.key,
         display: sighting.display,
+        ...tallies,
         sessionCount: 1,
         lastSeenOrdinal: sighting.ordinal,
         firstSeenOrdinal: sighting.ordinal,
@@ -274,6 +310,12 @@ export class CandidateStore {
         properName: sighting.properName,
         rankGroup: sighting.rankGroup,
       });
+      if (sighting.casing === "mid-cap") {
+        this.#capForms.set(
+          sighting.key,
+          new Map([[sighting.display, 1]]),
+        );
+      }
       // New key — the prefix index (h2.35) picks it up at the next
       // consolidation. Deliberately NOT sorted here: the key is parked in
       // #pending and merged in INDEX_MERGE_BATCH chunks (here, and the tail
@@ -294,6 +336,50 @@ export class CandidateStore {
     // A word first seen mid-frequency then seen rare keeps the better
     // (lower) group.
     existing.rankGroup = Math.min(existing.rankGroup, sighting.rankGroup) as RankGroup;
+    // Casing-tally merge (spec 06 h2.43) — AFTER the occurrence
+    // bookkeeping above, so a dropped structural sighting is dropped
+    // from TALLIES only.
+    switch (sighting.casing) {
+      case "lower": {
+        existing.lowerCount++;
+        if (existing.structuralCapCount) {
+          // Twin suppression: structural contributions vanish wholesale —
+          // SUBTRACTIVELY via the pending-structural counter (the raw
+          // sightings are gone; never recompute). PERMANENT: once
+          // lowerCount > 0, no path resurrects them.
+          existing.capCount -= existing.structuralCapCount;
+          existing.structuralCapCount = 0;
+        }
+        break;
+      }
+      case "mid-cap": {
+        existing.capCount++;
+        const forms = this.#capForms.get(existing.key) ?? new Map();
+        const f = (forms.get(sighting.display) ?? 0) + 1;
+        forms.set(sighting.display, f);
+        this.#capForms.set(existing.key, forms);
+        // capDisplay argmax; ties → the most recently bumped form (>=
+        // against the CURRENT capDisplay's count, which is still in
+        // `forms`). Structural forms never compete — they never touch
+        // #capForms and never set capDisplay.
+        if (
+          existing.capDisplay === "" ||
+          f >= (forms.get(existing.capDisplay) ?? 0)
+        ) {
+          existing.capDisplay = sighting.display;
+        }
+        break;
+      }
+      case "structural-cap":
+        if (existing.lowerCount === 0) {
+          existing.capCount++;
+          existing.structuralCapCount = (existing.structuralCapCount ?? 0) + 1;
+        }
+        // else: dropped entirely from the tallies — the lowercase form is
+        // the word (spec 06 h2.43 twin suppression, permanent);
+        // sessionCount/display/flags above still applied.
+        break;
+    }
     this.evictIfOverCap(); // unconditional but guarded: free below the cap
   }
 
@@ -370,6 +456,11 @@ export class CandidateStore {
     const evicted = scored.slice(0, drop);
     for (const { c } of evicted) {
       this.#map.delete(c.key);
+      // Casing-tally side map dies WITH its candidate: a re-created key
+      // must never inherit stale form counts (the only #capForms leak
+      // vector — entries are born only at upsert, which always creates
+      // the Candidate first).
+      this.#capForms.delete(c.key);
     }
     // Evicted keys linger in #sortedKeys as ghosts until the next
     // consolidation (correct: query.ts skips get() === undefined). A key

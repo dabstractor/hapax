@@ -79,6 +79,7 @@ describe("upsert — absent → create (PRD §06 h2.36)", () => {
         display: "Zzqv",
         ordinal: 3,
         fromUser: true,
+        casing: "mid-cap", // capitalized display → capitalized sighting
         properName: false,
         rankGroup: 0,
       }),
@@ -87,6 +88,9 @@ describe("upsert — absent → create (PRD §06 h2.36)", () => {
     expect(s.get("zzqv")).toEqual({
       key: "zzqv",
       display: "Zzqv",
+      capCount: 1, // mid-cap create: capitalized tally starts at 1
+      lowerCount: 0,
+      capDisplay: "Zzqv",
       sessionCount: 1,
       lastSeenOrdinal: 3,
       firstSeenOrdinal: 3,
@@ -563,5 +567,238 @@ describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
     expect(s.get("w00003")).toBeUndefined();
     expect(s.get("w00256")).toBeDefined();
     expect(s.get("w00257")).toBeDefined();
+  });
+});
+
+// ── casing tallies (spec 06 h2.41/h2.43, plan 006) ─────────────────────────
+
+describe("casing tallies — create per class (spec 06 h2.43)", () => {
+  it("lower create: zero tallies, no capDisplay", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ casing: "lower" }));
+    expect(s.get("hapax")).toEqual({
+      key: "hapax",
+      display: "hapax",
+      capCount: 0,
+      lowerCount: 1,
+      capDisplay: "",
+      sessionCount: 1,
+      lastSeenOrdinal: 1,
+      firstSeenOrdinal: 1,
+      userTyped: false,
+      properName: false,
+      rankGroup: 2,
+    });
+  });
+
+  it("mid-cap create: capCount 1, capDisplay set, no structural residue", () => {
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({ key: "zzqv", display: "Zzqv", casing: "mid-cap" }),
+    );
+    expect(s.get("zzqv")).toEqual({
+      key: "zzqv",
+      display: "Zzqv",
+      capCount: 1,
+      lowerCount: 0,
+      capDisplay: "Zzqv",
+      sessionCount: 1,
+      lastSeenOrdinal: 1,
+      firstSeenOrdinal: 1,
+      userTyped: false,
+      properName: false,
+      rankGroup: 2,
+    });
+  });
+
+  it("structural-cap create: counts toward capCount but NEVER capDisplay", () => {
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({
+        key: "check",
+        display: "Check",
+        casing: "structural-cap",
+      }),
+    );
+    expect(s.get("check")).toEqual({
+      key: "check",
+      display: "Check",
+      capCount: 1,
+      lowerCount: 0,
+      capDisplay: "",
+      structuralCapCount: 1,
+      sessionCount: 1,
+      lastSeenOrdinal: 1,
+      firstSeenOrdinal: 1,
+      userTyped: false,
+      properName: false,
+      rankGroup: 2,
+    });
+  });
+});
+
+describe("casing tallies — mid-cap accumulation and capDisplay argmax", () => {
+  it("majority form leads; a later majority flips capDisplay", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ display: "Zendesk", casing: "mid-cap" }));
+    s.upsert(
+      sighting({ display: "Zendesk", casing: "mid-cap", ordinal: 2 }),
+    );
+    s.upsert(
+      sighting({ display: "ZENDESK", casing: "mid-cap", ordinal: 3 }),
+    );
+    expect(s.get("hapax")!.capCount).toBe(3);
+    expect(s.get("hapax")!.capDisplay).toBe("Zendesk"); // 2–1 majority
+    s.upsert(
+      sighting({ display: "ZENDESK", casing: "mid-cap", ordinal: 4 }),
+    );
+    s.upsert(
+      sighting({ display: "ZENDESK", casing: "mid-cap", ordinal: 5 }),
+    );
+    expect(s.get("hapax")!.capDisplay).toBe("ZENDESK"); // 2–2 tie → most recent
+  });
+
+  it("tie → the most recent sighting's form wins", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ display: "Abc", casing: "mid-cap" }));
+    s.upsert(sighting({ display: "ABC", casing: "mid-cap", ordinal: 2 }));
+    expect(s.get("hapax")!.capDisplay).toBe("ABC"); // 1–1 tie → latest
+    s.upsert(sighting({ display: "Abc", casing: "mid-cap", ordinal: 3 }));
+    expect(s.get("hapax")!.capDisplay).toBe("Abc"); // flip back on the re-tie
+  });
+});
+
+describe("casing tallies — structural-cap conditionality (twin suppression)", () => {
+  it("structural sightings accumulate while no lowercase exists (capDisplay stays empty)", () => {
+    const s = new CandidateStore();
+    for (const ordinal of [1, 2, 3]) {
+      s.upsert(
+        sighting({
+          display: "Check",
+          casing: "structural-cap",
+          ordinal,
+        }),
+      );
+    }
+    expect(s.get("hapax")!.capCount).toBe(3);
+    expect(s.get("hapax")!.lowerCount).toBe(0);
+    expect(s.get("hapax")!.capDisplay).toBe(""); // structural never competes
+  });
+
+  it("PERMANENCE: the first lowercase sighting purges structural contributions forever", () => {
+    const s = new CandidateStore();
+    for (const ordinal of [1, 2, 3]) {
+      s.upsert(
+        sighting({
+          display: "Check",
+          casing: "structural-cap",
+          ordinal,
+        }),
+      );
+    }
+    s.upsert(sighting({ display: "check", casing: "lower", ordinal: 4 }));
+    expect(s.get("hapax")!.capCount).toBe(0); // 3 structural removed wholesale
+    expect(s.get("hapax")!.lowerCount).toBe(1);
+    // A later structural sighting NEVER contributes again.
+    s.upsert(
+      sighting({ display: "Check", casing: "structural-cap", ordinal: 5 }),
+    );
+    expect(s.get("hapax")!.capCount).toBe(0);
+    expect(s.get("hapax")!.capDisplay).toBe("");
+    // Mid-cap after lowercase still counts (only structural is suppressed).
+    s.upsert(
+      sighting({ display: "Check", casing: "mid-cap", ordinal: 6 }),
+    );
+    expect(s.get("hapax")!.capCount).toBe(1);
+    expect(s.get("hapax")!.capDisplay).toBe("Check");
+  });
+
+  it("structural after lowercase: dropped from tallies only — occurrence bookkeeping intact", () => {
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({ key: "word", display: "word", casing: "lower", ordinal: 1 }),
+    );
+    s.upsert(
+      sighting({
+        key: "word",
+        display: "Word",
+        casing: "structural-cap",
+        ordinal: 2,
+        fromUser: true,
+      }),
+    );
+    const c = s.get("word")!;
+    expect(c.capCount).toBe(0); // tally untouched…
+    expect(c.lowerCount).toBe(1);
+    expect(c.sessionCount).toBe(2); // …but BOTH casings count occurrences
+    expect(c.display).toBe("Word"); // recency display (legacy pin)
+    expect(c.userTyped).toBe(true); // sticky OR-ins intact
+  });
+
+  it("display stays recency-wins (legacy pin — additive migration)", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ display: "foo", casing: "lower" }));
+    s.upsert(
+      sighting({ display: "Foo", casing: "mid-cap", ordinal: 2 }),
+    );
+    expect(s.get("hapax")!.display).toBe("Foo");
+    s.upsert(sighting({ display: "foo", casing: "lower", ordinal: 3 }));
+    expect(s.get("hapax")!.display).toBe("foo");
+  });
+
+  it("merge regression: rankGroup min + userTyped stickiness compose with tallies", () => {
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({
+        casing: "mid-cap",
+        display: "Hapax",
+        rankGroup: 2,
+        fromUser: true,
+      }),
+    );
+    s.upsert(
+      sighting({
+        casing: "lower",
+        rankGroup: 0,
+        ordinal: 2,
+      }),
+    );
+    const c = s.get("hapax")!;
+    expect(c.rankGroup).toBe(0); // min merge
+    expect(c.userTyped).toBe(true); // sticky
+    expect(c.capCount).toBe(1); // mid-cap tally survives the merge
+    expect(c.lowerCount).toBe(1);
+    expect(c.sessionCount).toBe(2);
+  });
+});
+
+describe("casing tallies — #capForms eviction sync", () => {
+  it("evicted keys leave no stale form counts behind on re-create", () => {
+    const s = new CandidateStore();
+    const padded = (i: number): string => String(i).padStart(5, "0");
+    // "aa" is the FIRST insert → strictly lowest eviction score → certain
+    // first-batch victim. Its mid-cap form tally must die with it.
+    s.upsert(sighting({ key: "aa", display: "Aa", casing: "mid-cap", rankGroup: 0 }));
+    s.upsert(sighting({ key: "aa", display: "Aa", casing: "mid-cap", ordinal: 2, rankGroup: 0 }));
+    s.upsert(sighting({ key: "aa", display: "Aa", casing: "mid-cap", ordinal: 3, rankGroup: 0 }));
+    for (let i = 0; i <= STORE_CAP; i++) {
+      s.upsert(
+        sighting({
+          key: `w${padded(i)}`,
+          ordinal: s.nextOrdinal(),
+          casing: "lower",
+          rankGroup: 0,
+        }),
+      );
+    }
+    expect(s.get("aa")).toBeUndefined(); // evicted (oldest, lowest score)
+    // Re-create the key: fresh tallies — a stale {Aa: 3} would keep
+    // capDisplay on "Aa" through the AA bump (4 ≥ 2), while fresh counts
+    // hand capDisplay to "AA" (1–2 majority).
+    s.upsert(sighting({ key: "aa", display: "Aa", casing: "mid-cap", rankGroup: 0 }));
+    s.upsert(sighting({ key: "aa", display: "AA", casing: "mid-cap", ordinal: s.currentOrdinal() + 1, rankGroup: 0 }));
+    s.upsert(sighting({ key: "aa", display: "AA", casing: "mid-cap", ordinal: s.currentOrdinal() + 2, rankGroup: 0 }));
+    expect(s.get("aa")!.capDisplay).toBe("AA");
+    expect(s.get("aa")!.capCount).toBe(3); // fresh: 1 + 2, not 3 stale + 3
   });
 });

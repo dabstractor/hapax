@@ -67,14 +67,14 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Store schema: casing tallies + series bigrams",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Additive migration of Candidate to casing tallies (capCount/lowerCount/capDisplay) with structural-contribution permanence semantics, plus series-marked bigrams with run-casing nextDisplay and series-first top-3 retention.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "Candidate casing tallies (additive migration, display kept temporarily)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -93,7 +93,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "Series bigrams: BigramEntry/Successor extension + series-first top-3 retention",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S2",
@@ -122,7 +122,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T3.S1",
                   "title": "Run-member band bypass + conjugation-guard skip + top-band chain-only ceiling",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S2"

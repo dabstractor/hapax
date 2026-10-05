@@ -17,12 +17,30 @@
 export type RankGroup = 0 | 1 | 2;
 
 /** A word admitted to the session store. One entry per lowercase key.
- *  PRD §06 verbatim. */
+ *  PRD §06 verbatim; casing tallies per spec 06 h2.41/h2.43 (plan 006). */
 export interface Candidate {
   /** lowercase */
   key: string;
-  /** most recent casing seen */
+  /** KEPT (legacy, temporary): most recent casing seen. Removed by
+   *  P1.M2.T1.S2 once the casing resolver replaces all consumers. */
   display: string;
+  /** Capitalized-tally sightings (spec 06 h2.43): mid-cap sightings always
+   *  count; a structural-cap (sentence-initial) sighting counts ONLY while
+   *  the word has never been seen lowercase. */
+  capCount: number;
+  /** Lowercase sightings. Once > 0 it is permanent — later structural-cap
+   *  sightings never contribute to capCount again, and the structural
+   *  contributions counted before the first lowercase sighting were
+   *  removed permanently (twin suppression, spec 06 h2.43). */
+  lowerCount: number;
+  /** Most frequent capitalized form; ties → the most recent sighting's
+   *  form. Only MID-CAP sightings compete (structural forms are purgeable
+   *  evidence). Empty string when no valid capitalized sighting exists. */
+  capDisplay: string;
+  /** INTERNAL (not spec'd): pending structural-cap contributions inside
+   *  capCount, removed wholesale at the first lowercase sighting. Never
+   *  serialized, never user-facing; undefined ≡ 0. */
+  structuralCapCount?: number;
   /** occurrences this session */
   sessionCount: number;
   /** message ordinal at last sighting */
