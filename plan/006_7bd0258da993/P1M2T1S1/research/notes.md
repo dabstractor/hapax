@@ -1,0 +1,21 @@
+# Research notes — P1.M2.T1.S1 (plan 006): pure casing resolver in core
+
+## Verified facts
+- `src/core/types.ts` — `Candidate` (L21+): `key` (lowercase), `display` (KEPT legacy, removed by P1.M2.T1.S2), `capCount` (capitalized tally; structural-cap counts only until first lowercase sighting), `lowerCount` (permanent once > 0), `capDisplay` (most frequent capitalized form, ties → most recent sighting; ONLY mid-cap sightings compete; **empty string when no valid capitalized sighting**), `structuralCapCount?` internal, plus sessionCount etc. The resolver's `Pick<Candidate, 'key'|'capCount'|'lowerCount'|'capDisplay'>` input therefore needs NO structuralCapCount (that's upsert bookkeeping, already netted out of the effective capCount? CHECK: capCount includes pending structural contributions until twin suppression — the RESOLVER just consumes capCount as-is per the spec's "occurred more often in the conversation"; spec h2.32 doesn't distinguish structural vs mid for counting frequency).
+- `RankedMatch` (types.ts:199–219): {key, display, description, salience, sessionCount, tier?} — display is filled at TWO match-construction sites (query.ts :531 anchored/gated loop, :582 tier-0 anchorless pass) per architecture/02 §4–5; that wiring is P1.M2.T1.S2, NOT this task.
+- Consumer inventory (architecture/02 §5): ~22 `.display` sites across provider/widget/ingest/debug — all keep working unchanged while S2 later swaps the source; this task only ADDS the pure resolver.
+- architecture/02 §1–3: no resolver exists anywhere; src/core must never import from pi (architecture invariant, types.ts header).
+- Predecessors (Complete per task tree): P1.M1.T1.S1 casing classes, P1.M1.T1.S2 run walk + enriched payload, P1.M1.T2.S1 casing tallies in store (additive migration, display kept). Parallel: P1.M1.T3.S2 (mid-cap relaxed band 95 in score.ts + ingest occurrence override) — different file areas (score.ts/ingest.ts/calibrate tool); no conflict.
+- Test conventions (architecture/02 §7): vitest describe/it with spec-cite titles, long doc header; pure-function tests need no store — but building Candidates via hand literals is idiomatic. Battery rides in test/query.test.ts (resolver's home module) or a dedicated describe; query.test.ts already imports from ../src/core/query.js.
+- Placement decision: `src/core/query.ts` (completion-time concern; S2 wires it there; T2.T2 successor labels and T3 debug import from core/query.js). Alternative (own module casing.ts) rejected: query.ts is the natural consumer home and the module is pure already.
+
+## Rule spec (spec §04 h2.32 verbatim + item contract)
+- Signature: `export function resolveCompletionCasing(c: Pick<Candidate, 'key'|'capCount'|'lowerCount'|'capDisplay'>, fragmentFirstLetter: string): string`
+- UPPERCASE fragment (fragmentFirstLetter in A–Z): capitalized form wins; user's Shift press never overridden.
+  - capDisplay !== "" → return capDisplay VERBATIM ('Nr' + 'NREL' → 'NREL'; 'Nr' + 'National' → 'National'). "Only the first letter is adapted, the rest from the winning form's spelling" — capDisplay already starts uppercase, so nothing further to adapt.
+  - capDisplay === "" (no capitalized sightings) → capitalize the key's first letter: key.charAt(0).toUpperCase() + key.slice(1).
+- LOWERCASE fragment or ZERO-fragment (""): frequency branch — capCount > lowerCount → capDisplay (cap-only word: completes capitalized); lowerCount > capCount → key; TIE → key (lowercase). Note lowerCount=0 ∧ capCount=0 impossible for a stored candidate but key is the safe fallback.
+- All-caps words ('NREL') fall out: all-caps sightings are uppercase-first occurrences → counted in capCount with capDisplay 'NREL' → cap-only → verbatim.
+- Paths/technical literals: no casing variance — lowercase sightings only → capCount 0 → key returned verbatim (display edges are S2's concern via trim fields, NOT the resolver's — resolver works on tallies only). Pin with a test.
+- Non-letter fragmentFirstLetter (defensive): treat as the frequency branch (spec only defines uppercase vs everything-else).
+- Pathological: capCount > 0 but capDisplay ""? Per the Candidate contract capDisplay is non-empty iff a valid capitalized sighting exists — but write the code defensively: frequency branch wins by capCount → if capDisplay empty, capitalize key (never return ""). Pin with a test.

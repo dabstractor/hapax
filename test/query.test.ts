@@ -32,6 +32,11 @@
  * candidate loop, default-60 admitting ONLY tier-1's single-1-char-hole
  * class (2026-10 gap-size retune), and the zero-fragment bypass
  * (scan-sequencing note in that describe).
+ *
+ * The resolveCompletionCasing describe (plan 006 P1.M2.T1.S1, spec §04
+ * h2.32) is pure-function only — hand-built casing-tally literals, no
+ * store, no mocks. The resolver is exported-but-unconsumed until S2
+ * wires it at the match-construction sites.
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -47,6 +52,7 @@ import {
   DEFAULT_LIMIT,
   matchFragment,
   rankMatches,
+  resolveCompletionCasing,
   TIER0_BASE_SCORE,
   TIER0_SKIP_FACTOR,
   TIER1_BASE_SCORE,
@@ -944,6 +950,170 @@ describe("matchFragment — anchored fuzzy (PRD §04 h2.28, plan 003)", () => {
       );
       expect(r.score).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+describe("resolveCompletionCasing — spec §04 h2.32 (PRD R2)", () => {
+  // Hand-built casing-tally literals (the Pick<Candidate,…> shape the
+  // resolver consumes) — no store, no mocks. capDisplay === "" is the
+  // "no valid capitalized sighting" sentinel (Candidate contract).
+  const cand = (
+    over: Partial<{
+      key: string;
+      capCount: number;
+      lowerCount: number;
+      capDisplay: string;
+    }> = {},
+  ) => ({ key: "k", capCount: 0, lowerCount: 0, capDisplay: "", ...over });
+
+  it("UPPERCASE fragment: the capitalized form wins even when lowercase dominated ('Nr' + NREL)", () => {
+    // The user's Shift press is never overridden (h2.32): capCount 5 <
+    // lowerCount 9, yet 'Nr' must complete 'NREL', not 'nrel'.
+    expect(
+      resolveCompletionCasing(
+        cand({ key: "nrel", capDisplay: "NREL", capCount: 5, lowerCount: 9 }),
+        "N",
+      ),
+    ).toBe("NREL");
+  });
+
+  it("UPPERCASE fragment: only the first letter is adapted ('Nr' + National)", () => {
+    expect(
+      resolveCompletionCasing(
+        cand({
+          key: "national",
+          capDisplay: "National",
+          capCount: 2,
+          lowerCount: 4,
+        }),
+        "N",
+      ),
+    ).toBe("National");
+  });
+
+  it("UPPERCASE fragment with no capitalized sighting → capitalize the key", () => {
+    expect(
+      resolveCompletionCasing(
+        cand({ key: "zendesk", capDisplay: "", capCount: 0, lowerCount: 7 }),
+        "Z",
+      ),
+    ).toBe("Zendesk");
+  });
+
+  it("UPPERCASE fragment: the winning form's spelling wins wholesale ('Z' + 'Z_lwlock')", () => {
+    expect(
+      resolveCompletionCasing(
+        cand({ key: "z_lwlock", capDisplay: "Z_lwlock", capCount: 3, lowerCount: 1 }),
+        "Z",
+      ),
+    ).toBe("Z_lwlock");
+  });
+
+  it("FREQUENCY branch: capCount wins → capDisplay", () => {
+    expect(
+      resolveCompletionCasing(
+        cand({ key: "noria", capDisplay: "Noria", capCount: 5, lowerCount: 2 }),
+        "n",
+      ),
+    ).toBe("Noria");
+  });
+
+  it("FREQUENCY branch: lowerCount wins → key verbatim", () => {
+    expect(
+      resolveCompletionCasing(
+        cand({ key: "noria", capDisplay: "Noria", capCount: 2, lowerCount: 9 }),
+        "n",
+      ),
+    ).toBe("noria");
+  });
+
+  it("FREQUENCY branch: ties → lowercase", () => {
+    expect(
+      resolveCompletionCasing(
+        cand({ key: "noria", capDisplay: "Noria", capCount: 4, lowerCount: 4 }),
+        "n",
+      ),
+    ).toBe("noria");
+  });
+
+  it("cap-only word (never seen lowercase) completes capitalized", () => {
+    expect(
+      resolveCompletionCasing(
+        cand({ key: "noria", capDisplay: "Noria", capCount: 3, lowerCount: 0 }),
+        "n",
+      ),
+    ).toBe("Noria");
+  });
+
+  it("all-caps words complete verbatim (every sighting counts as capitalized)", () => {
+    expect(
+      resolveCompletionCasing(
+        cand({ key: "nrel", capDisplay: "NREL", capCount: 4, lowerCount: 0 }),
+        "n",
+      ),
+    ).toBe("NREL");
+  });
+
+  it("zero-fragment ('') — the '#'-alone listing path — takes the frequency branch", () => {
+    const capWins = cand({ key: "noria", capDisplay: "Noria", capCount: 5, lowerCount: 2 });
+    const lowerWins = cand({ key: "noria", capDisplay: "Noria", capCount: 2, lowerCount: 5 });
+    expect(resolveCompletionCasing(capWins, "")).toBe("Noria");
+    expect(resolveCompletionCasing(lowerWins, "")).toBe("noria");
+  });
+
+  it("paths: verbatim on the frequency branch (lowercase-only tallies)", () => {
+    expect(
+      resolveCompletionCasing(
+        cand({
+          key: "src/core/query.ts",
+          capDisplay: "",
+          capCount: 0,
+          lowerCount: 5,
+        }),
+        "s",
+      ),
+    ).toBe("src/core/query.ts");
+  });
+
+  it("paths: a typed CAPITAL first letter capitalizes — never-override outranks verbatim (h2.32)", () => {
+    // Pinned judgment call: the uppercase branch with empty capDisplay
+    // capitalizes the key's first letter ('Src/core/query.ts'). Path
+    // verbatim-ness holds on the frequency branch (paths only ever have
+    // lowercase tallies); here the USER typed a capital, and h2.32's
+    // never-override rule outranks path casing. Keep this pin so a
+    // future "fix" doesn't fork the rules.
+    expect(
+      resolveCompletionCasing(
+        cand({
+          key: "src/core/query.ts",
+          capDisplay: "",
+          capCount: 0,
+          lowerCount: 5,
+        }),
+        "S",
+      ),
+    ).toBe("Src/core/query.ts");
+  });
+
+  it("DEFENSIVE: capCount > 0 with empty capDisplay never returns ''", () => {
+    expect(
+      resolveCompletionCasing(
+        cand({ key: "noria", capDisplay: "", capCount: 4, lowerCount: 1 }),
+        "n",
+      ),
+    ).toBe("Noria");
+    expect(
+      resolveCompletionCasing(
+        cand({ key: "noria", capDisplay: "", capCount: 4, lowerCount: 1 }),
+        "N",
+      ),
+    ).toBe("Noria");
+  });
+
+  it("DEFENSIVE: non-letter fragment first letter takes the frequency branch", () => {
+    const lowerWins = cand({ key: "noria", capDisplay: "Noria", capCount: 2, lowerCount: 6 });
+    expect(resolveCompletionCasing(lowerWins, "#")).toBe("noria");
+    expect(resolveCompletionCasing(lowerWins, "/")).toBe("noria");
   });
 });
 

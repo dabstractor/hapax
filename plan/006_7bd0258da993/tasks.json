@@ -174,14 +174,14 @@
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Completion-time casing resolver + display migration",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Pure resolver over (candidate tallies, live fragment first letter), wired where matches are built so downstream .display consumers keep working; then the subtractive removal of Candidate.display.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "Pure casing resolver in core + resolver battery",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1"
@@ -199,7 +199,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "Wire resolver at match construction (both sites); remove Candidate.display",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T2.S1",
@@ -229,7 +229,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "Fallback provider: series-first zero-char offers + close-on-space typed arming",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S2",

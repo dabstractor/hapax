@@ -77,7 +77,7 @@
 
 import { salience } from "./score.js";
 import type { CandidateStore } from "./store.js";
-import type { RankedMatch } from "./types.js";
+import type { Candidate, RankedMatch } from "./types.js";
 
 /** Max results per query — menu height (PRD §04 h2.26: top 8). Baked,
  *  not config (§08): named constant, no magic 8 inline. */
@@ -340,6 +340,71 @@ export function matchFragment(f: string, c: string): MatchResult | null {
 export interface RankedSortRecord {
   tier: number;
   m: RankedMatch;
+}
+
+/** Completion-time casing resolution (spec §04 h2.32; PRD R2). Pure:
+ *  consumes the candidate's casing tallies plus the live fragment's
+ *  first letter — never the store, never recency. Exported-but-
+ *  unconsumed until P1.M2.T1.S2 wires it at the two match-construction
+ *  sites (and removes the legacy `Candidate.display`); the successor
+ *  labels (P1.M2.T2) and /acwords (P1.M2.T3) resolve through it too.
+ *
+ *  Rules (pinned; spec 04 h2.32):
+ *   - UPPERCASE fragment first letter: the capitalized form wins — the
+ *     user's Shift press is never overridden. capDisplay verbatim when
+ *     a valid capitalized sighting exists ('Nr' + capDisplay 'NREL' →
+ *     'NREL'; + 'National' → 'National' — only the first letter is
+ *     adapted and the rest comes from the winning form's spelling;
+ *     capDisplay already starts uppercase); otherwise the key's first
+ *     letter is capitalized.
+ *   - Lowercase or ZERO-length fragment (''): the form that occurred
+ *     more often wins (capCount vs lowerCount); ties → lowercase; a
+ *     word seen only capitalized completes capitalized. All-caps words
+ *     ('NREL') complete verbatim (their sightings all count as
+ *     capitalized occurrences). Paths/technical literals have no
+ *     casing variance — lowercase-only tallies return the key
+ *     verbatim. (A typed CAPITAL first letter still capitalizes a path
+ *     key — the never-override rule outranks path verbatim-ness, which
+ *     holds on the frequency branch; pinned in the battery.)
+ *   - Defensive: a non-letter first letter takes the frequency branch;
+ *     capCount > 0 with empty capDisplay falls back to capitalizing
+ *     the key (never returns "").
+ *
+ *  capCount is consumed AS STORED (it may include pending structural-cap
+ *  contributions — upsert bookkeeping owns that via structuralCapCount;
+ *  the spec's "occurred more often" reads the tallies, and twin
+ *  suppression keeps them honest once a lowercase sighting lands).
+ *  Only the FIRST letter is ever adapted — the winning form's spelling
+ *  wins wholesale. O(1), no pi imports, no store access.
+ *
+ *  @param c the candidate's casing tallies (capDisplay === "" is the
+ *    "no valid capitalized sighting" sentinel)
+ *  @param fragmentFirstLetter the live fragment's first character, any
+ *    casing ("" on the zero-fragment listing path — frequency branch)
+ *  @returns the display form to insert
+ */
+export function resolveCompletionCasing(
+  c: Pick<Candidate, "key" | "capCount" | "lowerCount" | "capDisplay">,
+  fragmentFirstLetter: string,
+): string {
+  const upper = fragmentFirstLetter >= "A" && fragmentFirstLetter <= "Z";
+  if (upper) {
+    // UPPERCASE fragment: the Shift press is never overridden — the
+    // capitalized form wins (capDisplay verbatim; capitalize-key
+    // fallback when no valid capitalized sighting exists).
+    return c.capDisplay !== ""
+      ? c.capDisplay
+      : c.key.charAt(0).toUpperCase() + c.key.slice(1);
+  }
+  // Frequency branch (lowercase, zero-fragment, non-letter —
+  // defensive): the form that occurred more often wins; ties →
+  // lowercase (spec: ties resolve down).
+  if (c.capCount > c.lowerCount) {
+    return c.capDisplay !== ""
+      ? c.capDisplay
+      : c.key.charAt(0).toUpperCase() + c.key.slice(1); // defensive: never ""
+  }
+  return c.key; // lowercase wins or ties
 }
 
 /** Total order over the result list — the 2026-10 owner rule (spec
