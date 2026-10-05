@@ -546,6 +546,46 @@ export class IngestPipeline {
     this.#pending.length = 0;
   }
 
+  /** Drop the pending ingest queue WITHOUT tearing the pipeline down
+   *  (spec 05 "Branch navigation rebuild" step 2 / P2.M1.T1.S2):
+   *  /tree branch navigation discards the texts sitting in the 300 ms
+   *  debounce window — they are pre-navigation messages, and any of them
+   *  on the new path is re-captured by the snapshot replay while any
+   *  other is dead branch, so "discard is always correct: never loses a
+   *  live word, never double-counts" (spec 05 h2.37 step 2; step 4's
+   *  gate side lives on provider.ts StartupGateHandle).
+   *
+   *  CONTRAST with dispose(): dispose is the session_shutdown teardown —
+   *  after it the pipeline is DEAD for the rest of the session. This is
+   *  the branch-navigation drop — afterwards the pipeline stays LIVE:
+   *  the next onMessageEnd schedules a fresh debounce and drains
+   *  normally. Consumed by P2.M1.T2.S1's session_tree handler.
+   *
+   *  #admitMemo SURVIVES deliberately: entries are admission plans pure
+   *  per raw token (dictionary + rules are session-constant — the
+   *  dictionary is NOT reloaded on session_tree), so replaying the new
+   *  branch re-hits identical plans; clearing would only slow the
+   *  rebuild. (Session-lifetime, capped at ADMIT_MEMO_CAP, never
+   *  persisted.) #stats are session-lifetime diagnostics (getStats →
+   *  /acwords), NOT per-branch state — also not reset.
+   *
+   *  An in-flight #drain is deliberately NOT cancelled (same as
+   *  dispose): it cannot be interrupted and needn't be — it completes
+   *  its CURRENT item and loops out on the emptied queue. COMPOSITION
+   *  NOTE for the caller (P2.M1.T2.S1): after discardPending(),
+   *  `await flush()` settles only once that in-flight drain has
+   *  finished — await it in the background rebuild BEFORE store.reset()
+   *  so the straggler item's upserts land in the OLD store and are then
+   *  dropped wholesale (keeps the handler's synchronous work
+   *  sub-millisecond per h2.37's performance note). */
+  discardPending(): void {
+    if (this.#timer !== null) {
+      timers.clearTimeout(this.#timer);
+      this.#timer = null;
+    }
+    this.#pending.length = 0;
+  }
+
   /** Fire the debounce immediately and await the full drain (PRD §05;
    *  for tests and P1.M3.T2.S3 restore replay). Cancels any pending
    *  timer; messages arriving later start their own fresh debounce. */

@@ -324,7 +324,7 @@
               "type": "Task",
               "id": "P2.M1.T1",
               "title": "Primitives: CandidateStore.reset() + IngestPipeline.discardPending() + re-armable gate",
-              "status": "Ready",
+              "status": "Complete",
               "description": "The three seams the session_tree handler needs: an in-place store reset, a soft pending-queue discard, and a gate that can re-arm under the same ≤500 ms bound.",
               "subtasks": [
                 {
@@ -347,7 +347,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T1.S2",
                   "title": "IngestPipeline.discardPending() + re-armable startup gate",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: dispose() at src/pi/ingest.ts:353-363 clears the timer + empties #pending but is teardown; debounce fields are #pending FIFO / #timer / #drain / #debounceMs = 300 (onMessageEnd :331-345); an in-flight #drain loops out safely on the emptied queue. createStartupGate at src/pi/provider.ts:793 wraps getSuggestions with Promise.race([settled, timeout maxWaitMs = 500]) and settles ONCE (ready.then flips settled on resolve OR reject — replay errors never wedge); it has NO re-arm today. The widget gate IS already re-armable (armGate, widget.ts:668-673 and :955-958, bound to the injected restoreReady promise) (architecture/03 §R3, §gate).\n2. INPUT: none (existing seams).\n3. LOGIC: Implement the pipeline/gate halves of spec 05 h2.37 + 07 h3.12 gate reuse. (a) Add IngestPipeline.discardPending(): clear the debounce timer + empty #pending WITHOUT tearing down the pipeline (dispose's body minus teardown); document that #admitMemo survives (token-intrinsic, context-free — safe across rebuilds) and stats counters are session-lifetime diagnostics (not reset). (b) Gate re-arm: extend createStartupGate (or add an equivalent gate-holder) with arm(newReady) that UN-settles an already-settled gate under the SAME ≤ 500 ms bound, forced (options.force) requests waiting too — so session_tree gating is the startup gate verbatim, per 07 h3.12; the widget path re-arms via its existing armGate bound to a fresh restoreReady-style promise. Startup-gate battery extension rides here (test/startup-gate.test.ts): re-arm waits again incl. forced, rejected replay never wedges, onSettled fires exactly once per arming. Mocking: gate tests with controllable promises per existing conventions.\n4. OUTPUT: discardPending() + the re-arm seam, consumed by P2.M1.T2.S1.\n5. DOCS: [Mode A] JSDoc on discardPending() (ingest.ts — note the contrast with dispose()) and on the gate re-arm seam (provider.ts:793). Rides with the work.",

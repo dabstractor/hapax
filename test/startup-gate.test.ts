@@ -111,6 +111,117 @@ describe("createStartupGate", () => {
     await gate.getSuggestions(["ze"], 0, 2, { signal: new AbortController().signal });
     expect(base.calls).toEqual(["q:ze"]);
   });
+
+  // ── Re-arm battery (P2.M1.T1.S2 — spec 07 h3.12 / spec 05 h2.37 step 4):
+  // the SAME gate object serves the session_tree replay window via arm().
+
+  it("re-arm: a SETTLED gate waits again — forced requests included", async () => {
+    const base = fakeBase();
+    const first = deferred();
+    const gate = createStartupGate(base, first.promise);
+    first.resolve();
+    await first.promise;
+    await gate.getSuggestions(["ze"], 0, 2, { signal: new AbortController().signal });
+    expect(base.calls).toEqual(["q:ze"]); // sanity: settled → pass-through
+
+    const second = deferred();
+    gate.arm(second.promise); // un-settle for the /tree replay window
+    const normal = gate.getSuggestions(["ze"], 0, 2, { signal: new AbortController().signal });
+    const forced = gate.getSuggestions(["ze"], 0, 2, { signal: new AbortController().signal, force: true });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(base.calls).toEqual(["q:ze"]); // BOTH queries still waiting — forced included
+
+    second.resolve();
+    await Promise.all([normal, forced]);
+    expect(base.calls).toEqual(["q:ze", "q:ze", "q:ze:force"]); // queried in call order
+  });
+
+  it("re-armed wait is BOUNDED again (≤ maxWaitMs per arming)", async () => {
+    vi.useFakeTimers();
+    try {
+      const base = fakeBase();
+      const first = deferred();
+      const gate = createStartupGate(base, first.promise, 500);
+      first.resolve();
+      await first.promise;
+      await gate.getSuggestions(["pre"], 0, 3, { signal: new AbortController().signal }); // sanity: settled
+      gate.arm(new Promise<void>(() => {})); // never settles
+      const p = gate.getSuggestions(["ze"], 0, 2, { signal: new AbortController().signal });
+      const pending = vi.waitFor(() => expect(base.calls.length).toBe(0), { timeout: 50 });
+      await pending.catch(() => {});
+      await vi.advanceTimersByTimeAsync(500);
+      await p;
+      expect(base.calls).toEqual(["q:pre", "q:ze"]); // cap elapsed → query anyway
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a REJECTED re-arm promise never wedges the gate", async () => {
+    const base = fakeBase();
+    const first = deferred();
+    const gate = createStartupGate(base, first.promise);
+    first.resolve();
+    await first.promise;
+    await gate.getSuggestions(["pre"], 0, 3, { signal: new AbortController().signal }); // sanity: settled
+    let reject!: () => void;
+    const doomed = new Promise<void>((_, r) => {
+      reject = r;
+    });
+    gate.arm(doomed);
+    reject(); // a failed /tree replay must still settle the arming
+    await gate.getSuggestions(["ze"], 0, 2, { signal: new AbortController().signal });
+    expect(base.calls).toEqual(["q:pre", "q:ze"]);
+  });
+
+  it("each arming settles exactly once — sequencing across a chain of armings", async () => {
+    const base = fakeBase();
+    const first = deferred();
+    const gate = createStartupGate(base, first.promise);
+    first.resolve();
+    await first.promise;
+    await gate.getSuggestions(["aa"], 0, 2, { signal: new AbortController().signal });
+
+    const second = deferred();
+    gate.arm(second.promise);
+    second.resolve(); // arming 2 settles via resolve
+    await gate.getSuggestions(["bb"], 0, 2, { signal: new AbortController().signal });
+
+    let rejectThird!: () => void;
+    const third = new Promise<void>((_, r) => {
+      rejectThird = r;
+    });
+    gate.arm(third);
+    rejectThird(); // arming 3 settles via reject
+    await gate.getSuggestions(["cc"], 0, 2, { signal: new AbortController().signal });
+
+    const fourth = deferred();
+    gate.arm(fourth.promise); // arming 4 held → the next query waits
+    const held = gate.getSuggestions(["dd"], 0, 2, { signal: new AbortController().signal });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(base.calls.length).toBe(3); // still waiting on arming 4
+    fourth.resolve();
+    await held;
+    expect(base.calls).toEqual(["q:aa", "q:bb", "q:cc", "q:dd"]);
+  });
+
+  it("arm while still unsettled REPLACES the readiness (never queues)", async () => {
+    const base = fakeBase();
+    const gate = createStartupGate(base, new Promise<void>(() => {})); // startup never settles
+    const p1 = deferred();
+    gate.arm(p1.promise); // a /tree lands during the unfinished startup replay
+    const p2 = deferred();
+    gate.arm(p2.promise); // replaces p1 — p1 never resolves
+    const q = gate.getSuggestions(["ze"], 0, 2, { signal: new AbortController().signal });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(base.calls).toEqual([]); // waiting on p2 only
+    p2.resolve();
+    await q;
+    expect(base.calls).toEqual(["q:ze"]);
+  });
 });
 
 describe("restoreFromHistory onSettled (exactly once, always)", () => {

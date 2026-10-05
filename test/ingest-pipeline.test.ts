@@ -130,6 +130,10 @@ function makePipeline(
     chunkBytes?: number;
     onAdmittedTokens?: (runs: readonly (readonly RunMember[])[]) => void;
     withYieldFn?: boolean;
+    /** Full yield override (P2.M1.T1.S2 in-flight-drain staging): a
+     *  blocking yieldFn lets a test freeze the drain mid-queue
+     *  deterministically. Takes precedence over the counting yield. */
+    yieldFn?: () => Promise<void>;
   } = {},
 ): Harness {
   const store = new CandidateStore();
@@ -137,13 +141,15 @@ function makePipeline(
   const pipeline = new IngestPipeline({
     store,
     dictionary: stubDict(),
-    ...(opts.withYieldFn === false
-      ? {}
-      : {
-          yieldFn: async () => {
-            counts.yields++;
-          },
-        }),
+    ...(opts.yieldFn !== undefined
+      ? { yieldFn: opts.yieldFn }
+      : opts.withYieldFn === false
+        ? {}
+        : {
+            yieldFn: async () => {
+              counts.yields++;
+            },
+          }),
     ...(opts.chunkBytes !== undefined ? { chunkBytes: opts.chunkBytes } : {}),
     ...(opts.onAdmittedTokens ? { onAdmittedTokens: opts.onAdmittedTokens } : {}),
   });
@@ -390,6 +396,99 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
  * check the successor index, so a bridged bigram can never hide behind a
  * well-shaped runs array.
  */
+describe("discardPending — branch-navigation queue drop (spec 05 h2.37 / P2.M1.T1.S2)", () => {
+  beforeEach(() => {
+    // Same rule as the debounce suite: fake ONLY the timer pair — the
+    // drain's yield path must meet the real setImmediate.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("drops queued texts and the armed timer — nothing drains", async () => {
+    const h = makePipeline();
+    h.pipeline.onMessageEnd(userMsg("lwlock"));
+    h.pipeline.onMessageEnd(userMsg("norias"));
+    const statsBefore = h.pipeline.getStats(); // queued text never touched stats
+    h.pipeline.discardPending();
+    expect(vi.getTimerCount()).toBe(0); // armed debounce cancelled
+    await drainNow(h); // flush finds an empty queue — nothing drains
+    expect(h.store.currentOrdinal()).toBe(0);
+    expect(h.store.get("lwlock")).toBeUndefined();
+    expect(h.store.get("norias")).toBeUndefined();
+    expect(h.pipeline.getStats()).toEqual(statsBefore);
+  });
+
+  it("pipeline stays LIVE: post-discard messages ingest normally", async () => {
+    const h = makePipeline();
+    h.pipeline.onMessageEnd(userMsg("granite"));
+    h.pipeline.discardPending(); // pre-navigation text dropped…
+    h.pipeline.onMessageEnd(userMsg("lwlock")); // …post-navigation text ingests
+    expect(vi.getTimerCount()).toBe(1); // fresh debounce armed — unlike dispose()
+    await drainNow(h);
+    expect(h.store.get("lwlock")).toBeDefined();
+    expect(h.store.get("granite")).toBeUndefined();
+    expect(h.store.currentOrdinal()).toBe(1); // exactly the post-discard message
+  });
+
+  it("stats survive (session-lifetime diagnostics, not branch state)", async () => {
+    const h = makePipeline();
+    h.pipeline.onMessageEnd(userMsg("lwlock"));
+    await drainNow(h);
+    const snapshot = h.pipeline.getStats(); // getStats() returns a copy
+    expect(snapshot.wordsSeen).toBeGreaterThan(0); // sanity: real counts accrued
+    h.pipeline.onMessageEnd(userMsg("norias")); // queued, then discarded
+    h.pipeline.discardPending();
+    await drainNow(h);
+    expect(h.pipeline.getStats()).toEqual(snapshot); // nothing accrued for the drop
+  });
+
+  it("admission memo survives: re-ingesting the same raw token skips the dictionary lookup", async () => {
+    const base = stubDict();
+    const lookup = vi.fn((word: string) => base.lookup(word)); // spy keeps Mock type
+    const store = new CandidateStore();
+    const h: Harness = { pipeline: new IngestPipeline({ store, dictionary: { ...base, lookup } }), store, counts: { yields: 0 } };
+    h.pipeline.onMessageEnd(userMsg("granite"));
+    await drainNow(h);
+    const lookups = lookup.mock.calls.length;
+    expect(lookups).toBeGreaterThan(0); // sanity: the plan was computed once
+    h.pipeline.discardPending();
+    h.pipeline.onMessageEnd(userMsg("granite")); // same raw token, post-discard
+    await drainNow(h);
+    expect(h.store.get("granite")?.sessionCount).toBe(2); // occurrence still replayed
+    expect(h.store.currentOrdinal()).toBe(2); // one ordinal per message, live pipeline
+    expect(lookup).toHaveBeenCalledTimes(lookups); // memo hit — plan not recomputed
+  });
+
+  it("an in-flight drain completes only its CURRENT item; the rest of the queue is never processed", async () => {
+    let openGate!: () => void;
+    const gate = new Promise<void>((r) => {
+      openGate = r;
+    });
+    let yields = 0;
+    const h = makePipeline({
+      chunkBytes: 8,
+      yieldFn: async () => {
+        yields++;
+        if (yields === 1) await gate; // freeze the drain after slice 1
+      },
+    });
+    h.pipeline.onMessageEnd(userMsg("lwlock norias invert zeta")); // 25 chars / 8B = 4 slices
+    vi.advanceTimersByTime(300); // drain starts slice 1, blocks in the blocking yield
+    await vi.waitFor(() => expect(yields).toBe(1));
+    h.pipeline.onMessageEnd(userMsg("alpha")); // queues behind the in-flight drain
+    h.pipeline.discardPending(); // drops "alpha"; A's drain keeps its current text
+    openGate();
+    await h.pipeline.flush(); // quiesce: drain finishes A, loops out on the emptied queue
+    expect(h.store.get("lwlock")).toBeDefined(); // current item fully ingested
+    expect(h.store.get("alpha")).toBeUndefined(); // queued-behind text never processed
+    expect(h.store.currentOrdinal()).toBe(1); // A's message ordinal only
+    await drainNow(h); // a final drain is a no-op — queue is empty
+    expect(h.store.currentOrdinal()).toBe(1);
+  });
+});
+
 describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

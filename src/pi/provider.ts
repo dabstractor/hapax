@@ -795,23 +795,52 @@ export function createChainMachine(): ChainMachine {
  * `ready` is a promise that resolves when replay settles; callers pass
  * an already-resolved promise when no restore is needed (fresh
  * sessions), making the gate a no-op there.
+ *
+ * RE-ARM (spec 07 h3.12 verbatim reuse / P2.M1.T1.S2): the registered
+ * provider closure is permanent for the process (addAutocompleteProvider
+ * has no unregister — architecture/03 §R3), so the session_tree branch
+ * rebuild serves its second waiting window through the SAME gate: arm()
+ * un-settles it and swaps in a fresh readiness promise. Every
+ * getSuggestions call observing the un-settled state — forced requests
+ * included — races the CURRENT arming's promise against a FRESH ≤
+ * maxWaitMs timer, so the bound applies per arming automatically, and
+ * each arming settles exactly once (resolve OR reject both flip).
+ * Consumed by P2.M1.T2.S1; the widget path re-arms by recomposition
+ * instead (spec 07 h2.46).
  */
+/** Re-arm handle for the startup gate (spec 07 h3.12: "The session_tree
+ *  branch rebuild (05) reuses this gate verbatim: during the replay
+ *  window every query path — forced requests included — waits under the
+ *  same ≤ 500 ms bound"). The gate is what makes the in-place store
+ *  rebuild unobservable (spec 05 h2.37 step 4). */
+export interface StartupGateHandle {
+  /** Un-settle the gate and bind a new readiness promise. Waiters
+   *  already in flight keep their existing race (old promise + their
+   *  own ≤ maxWaitMs timeout) — bounded by construction, never
+   *  retroactively held. */
+  arm(newReady: Promise<void>): void;
+}
+
 export function createStartupGate<
   T extends AutocompleteProvider & { __hapaxLive: () => unknown; __hapaxKey: (v: string) => unknown },
->(base: T, ready: Promise<void>, maxWaitMs = 500): T {
+>(base: T, ready: Promise<void>, maxWaitMs = 500): T & StartupGateHandle {
   let settled = false;
-  const settledPromise = ready.then(
-    () => {
-      settled = true;
-    },
-    () => {
-      settled = true; // replay errors must never wedge the gate
-    },
-  );
+  const onSettled = (): void => {
+    settled = true;
+  };
+  let settledPromise = ready.then(onSettled, onSettled); // reject settles too — replay errors must never wedge the gate (every arming)
   void settledPromise; // fire-and-forget; getSuggestions re-awaits as needed
 
   const gate = {
     ...base, // closure-based provider: method refs copy safely
+    arm(newReady: Promise<void>): void {
+      // Re-arm (07 h3.12): un-settle + swap readiness. In-flight waiters
+      // keep their existing race (old promise + own ≤ maxWaitMs timeout)
+      // by design — bounded, never retroactively held.
+      settled = false;
+      settledPromise = newReady.then(onSettled, onSettled);
+      void settledPromise; // CRITICAL: attach on every arming
+    },
     async getSuggestions(
       lines: string[],
       cursorLine: number,
@@ -827,7 +856,7 @@ export function createStartupGate<
       return base.getSuggestions(lines, cursorLine, cursorCol, options);
     },
   };
-  return gate as T;
+  return gate as T & StartupGateHandle;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
