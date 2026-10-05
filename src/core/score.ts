@@ -77,7 +77,7 @@
  */
 
 import type { CandidateDraft } from "./segment.js";
-import type { Candidate, Dictionary, RankGroup } from "./types.js";
+import type { Candidate, CasingClass, Dictionary, RankGroup } from "./types.js";
 
 /** Reject at/above this commonness rank — dictionary-ATTESTED English
  *  is near-disqualifying evidence (2026-09 retighten): hapax exists to
@@ -168,6 +168,29 @@ export const PROPER_NOUN_ADMIT_CEILING = 30 as const; // == floor (retired-in-pl
  *  classes begin; 135 is the tightest legal split of the probe sets. */
 export const PROPER_SERIES_TOP_BAND_CEILING = 135 as const;
 
+/** Relaxed band for single mid-sentence capitals — spec/04 h2.28
+ *  ("Casing-evidence admission (single mid-sentence capitals)", P1.M1.T3.S2).
+ *  An occurrence whose casing class is "mid-cap" (capital NOT at a
+ *  structural start — the properName condition) is admitted when
+ *  q < max(R_eff(len), this value): the floor eases from 30 to 95 while
+ *  the length ramp still rides above unchanged (max, not replacement —
+ *  at len 10 R_eff ≈ 121.9 already exceeds 95 and stays authoritative).
+ *  Attested below the band → group 1, absent → group 0 — casing admits,
+ *  never ranks. Structural-start capitals get NO relaxation (their
+ *  "structural-cap" occurrences admit exactly as the lowercase form).
+ *  Baked, NOT configurable (spec/08 h2.57 "capitalized-series admission
+ *  band (95)"). OCCURRENCE-LEVEL ONLY: callers must never cache a
+ *  casing-relaxed verdict under a token key (ingest's memo stays
+ *  context-free — casing is sentence context the memo cannot see).
+ *  Calibrated against the shipped artifact:
+ *  `node tools/calibrate-bands.mjs national energy echo the windows` →
+ *  national q=90, energy q=94, echo q=58, windows q=76 (all < 95: the Cap
+ *  column admits at group 1 — the NREL name class the retired relief
+ *  existed for, plus the mid-frequency capitalized-prose class h2.28
+ *  deliberately re-admits at g1/never ranks), the q=240 (≥ 95: Cap
+ *  column REJECT). */
+export const MID_CAP_RELAXED_BAND = 95 as const;
+
 /** 2026-10 length gradient (spec/04 h2.26): the flat reject floor holds
  *  through this word length. Nothing below 9 chars changed vs the 2026-09
  *  flat band. Baked per PRD §08. */
@@ -234,6 +257,17 @@ export interface AdmissionOptions {
    *  token key (ingest's memo stays context-free — run membership is
    *  line context the memo cannot see). */
   seriesMember?: boolean;
+  /** Occurrence casing class (spec §04 h2.28, P1.M1.T3.S2): a "mid-cap"
+   *  occurrence (capital NOT at a structural start — the properName
+   *  condition) admits under the relaxed band max(R_eff(len),
+   *  MID_CAP_RELAXED_BAND) instead of the plain R_eff; "structural-cap"
+   *  and "lower" occurrences (and omitted) use the plain threshold —
+   *  zero relaxation for structural starts. OCCURRENCE-LEVEL ONLY:
+   *  callers must never cache the verdict under a token key (ingest's
+   *  memo stays context-free — casing is sentence context the memo
+   *  cannot see; one memoized mid-cap admit would loosen every later
+   *  structural-start occurrence of the same token). */
+  casing?: CasingClass;
 }
 
 /** English inflection suffixes stripped by the conjugation guard
@@ -317,10 +351,19 @@ export function admit(
   // R_eff rides the RESOLVED floor so the knob scales the whole curve;
   // float compare (q integer ≥ rEff float) — no rounding (2026-10).
   const threshold = rEff(rejectAt, draft.key.length);
+  // Single mid-sentence capital (spec §04 h2.28): max(), never a swap —
+  // ramp lengths whose R_eff already exceeds 95 keep their stricter
+  // threshold; only sub-95 floors lift to 95. "structural-cap"/"lower"/
+  // omitted → the plain threshold (structural starts get NO relaxation).
+  // Float compare, never rounded — rounding shifts ramp boundaries.
+  const eff =
+    opts.casing === "mid-cap"
+      ? Math.max(threshold, MID_CAP_RELAXED_BAND)
+      : threshold;
   const q = dictionary.lookup(draft.key);
   let result: AdmissionResult;
   if (q === null) result = 0;
-  else if (q >= threshold) result = "reject";
+  else if (q >= eff) result = "reject";
   else result = 1; // flat — the 2026-10 gradient deleted the MID demotion row
 
   // Proper-noun relief (BUG-002): capitalized whole tokens below the
@@ -329,6 +372,9 @@ export function admit(
   // precede the reject early-return (after it this branch is dead code);
   // every draft is a whole token since the 2026-10 atomic-identifier
   // rule (the old whole-token-only condition is vacuous).
+  // Still provably dead under the mid-cap band (P1.M1.T3.S2): a mid-cap
+  // reject now requires q ≥ max(R_eff, 95) > PROPER_NOUN_ADMIT_CEILING,
+  // so the q < ceiling condition can never hold on the reject path.
   if (
     result === "reject" &&
     draft.properName &&

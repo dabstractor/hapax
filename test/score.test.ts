@@ -36,6 +36,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  MID_CAP_RELAXED_BAND,
   MID_FREQ_THRESHOLD,
   PROPER_NOUN_ADMIT_CEILING,
   PROPER_SERIES_TOP_BAND_CEILING,
@@ -750,6 +751,124 @@ describe("run-member admission (spec §04 h2.26 seriesMember, P1.M1.T3.S1)", () 
         }),
         dict({ the: 240 }),
       ),
+    ).toBe("reject");
+  });
+});
+
+// --- single mid-sentence capital (spec §04 h2.28, P1.M1.T3.S2) ---------------
+
+/** Mid-cap occurrence draft: capital NOT at a structural start — properName
+ *  IS the mid-cap condition (segment.ts derives both from the token), so
+ *  the guard skip and the band ride the same evidence. */
+const midCap = (key: string): CandidateDraft =>
+  draft(key, {
+    casing: "mid-cap",
+    properName: true,
+    display: key[0]!.toUpperCase() + key.slice(1),
+  });
+
+/** Structural-start capital: uppercase first char, properName FALSE —
+ *  h2.28 grants this class NO relaxation; it must verdict identically to
+ *  the lowercase form. */
+const structuralCap = (key: string): CandidateDraft =>
+  draft(key, {
+    casing: "structural-cap",
+    properName: false,
+    display: key[0]!.toUpperCase() + key.slice(1),
+  });
+
+describe("single mid-sentence capital — relaxed band max(R_eff, 95) (spec §04 h2.28)", () => {
+  it("pins the exported band constant (baked, not configurable — spec/08 h2.57)", () => {
+    expect(MID_CAP_RELAXED_BAND).toBe(95);
+  });
+
+  it("boundary at floor-hold length: q = band−1 admits g1; q = band rejects (float compare)", () => {
+    // len ≤ 8 → R_eff = floor 30; the mid-cap class lifts the effective
+    // threshold exactly to MID_CAP_RELAXED_BAND — no rounding, so the
+    // band itself rejects and band−1 admits at flat group 1.
+    const d = dict({
+      zephyr: MID_CAP_RELAXED_BAND - 1,
+      strata: MID_CAP_RELAXED_BAND,
+    });
+    expect(admit(midCap("zephyr"), d, { casing: "mid-cap" })).toBe(1);
+    expect(admit(midCap("strata"), d, { casing: "mid-cap" })).toBe("reject");
+  });
+
+  it("spec exemplar: mid-sentence 'Zephyr' (q=94) admits g1 while lowercase 'zephyr' rejects", () => {
+    const d = dict({ zephyr: 94 });
+    expect(admit(midCap("zephyr"), d, { casing: "mid-cap" })).toBe(1);
+    expect(admit(draft("zephyr"), d)).toBe("reject"); // plain floor 30
+  });
+
+  it("max rule: ramp lengths ride ABOVE the band — no loosening at len 10", () => {
+    // len 10 → R_eff ≈ 121.86 > 95: the effective threshold stays R_eff,
+    // so the band cannot admit q values the ramp itself would reject.
+    // Probes sit strictly below/above the float (never rounded).
+    const at = rEff(REJECT_COMMON_THRESHOLD, 10);
+    const qBelow = Math.floor(at); // 121 < 121.86…
+    const d = dict({ government: qBelow, everything: qBelow + 1 });
+    expect(admit(midCap("government"), d, { casing: "mid-cap" })).toBe(1);
+    expect(admit(midCap("everything"), d, { casing: "mid-cap" })).toBe("reject");
+  });
+
+  it("structural-start capitals get NO relaxation — verdicts identical to lowercase", () => {
+    const d = dict({ zephyr: 94, national: 90 });
+    expect(admit(structuralCap("zephyr"), d)).toBe("reject");
+    expect(admit(draft("zephyr"), d)).toBe("reject");
+    expect(admit(structuralCap("national"), d)).toBe("reject");
+    expect(admit(draft("national"), d)).toBe("reject");
+  });
+
+  it("'national'-class single (q=90, mid-cap) admits g1; absent mid-cap admits g0", () => {
+    expect(admit(midCap("national"), dict({ national: 90 }), { casing: "mid-cap" })).toBe(1);
+    expect(admit(midCap("zorpia"), dict({}), { casing: "mid-cap" })).toBe(0); // absent → rarest
+  });
+
+  it("non-series top-band single: mid-cap stays plain reject (chain-only needs the run)", () => {
+    // q ≥ ceiling 135 ⇒ q ≥ band, so max(R_eff, 95) rejects regardless;
+    // chain-only arises ONLY on the seriesMember path (S1) — casing alone
+    // never produces it, and casing cannot corrupt the series path either
+    // (the override replaces the table path wholesale, ignoring opts.casing).
+    const top = dict({
+      thewardish: PROPER_SERIES_TOP_BAND_CEILING,
+      national: 90,
+    });
+    expect(admit(midCap("thewardish"), top, { casing: "mid-cap" })).toBe("reject");
+    expect(admit(midCap("thewardish"), top, { casing: "mid-cap", seriesMember: true })).toBe(
+      "chain-only",
+    );
+    expect(admit(midCap("national"), top, { casing: "mid-cap", seriesMember: true })).toBe(1);
+  });
+
+  it("casing omitted (legacy callers) → plain threshold, byte-identical back-compat", () => {
+    const d = dict({ zephyr: 94 });
+    expect(admit(draft("zephyr"), d)).toBe("reject");
+    expect(admit(draft("zephyr"), d, {})).toBe("reject");
+    expect(
+      admit(draft("zephyr"), d, { rejectCommonness: REJECT_COMMON_THRESHOLD }),
+    ).toBe("reject");
+  });
+
+  it("conjugation guard: mid-cap skips it (properName), lowercase takes it", () => {
+    // Attested inflection: 'Uploaded' mid-sentence skips the guard AND
+    // rides the band (uploaded=94 < 95 → g1); lowercase 'uploaded'
+    // table-rejects (94 ≥ floor 30; stem upload=200 seals it).
+    const attested = dict({ upload: 200, uploaded: 94 });
+    expect(admit(midCap("uploaded"), attested, { casing: "mid-cap" })).toBe(1);
+    expect(admit(draft("uploaded"), attested)).toBe("reject");
+    // Absent inflection of a reject-common stem: mid-cap admits g0 (the
+    // properName skip), lowercase rejects via the guard (upload=200 ≥ 30).
+    const absent = dict({ upload: 200 });
+    expect(admit(midCap("uploaded"), absent, { casing: "mid-cap" })).toBe(0);
+    expect(admit(draft("uploaded"), absent)).toBe("reject");
+  });
+
+  it("the retired relief stays dead on the mid-cap path (every mid-cap reject has q ≥ 95 > ceiling)", () => {
+    // A mid-cap reject requires q ≥ max(R_eff, 95); the relief needs
+    // q < PROPER_NOUN_ADMIT_CEILING (30) on the reject path — unreachable,
+    // so no mid-cap reject can resurface at group 2.
+    expect(
+      admit(midCap("zephyr"), dict({ zephyr: MID_CAP_RELAXED_BAND }), { casing: "mid-cap" }),
     ).toBe("reject");
   });
 });

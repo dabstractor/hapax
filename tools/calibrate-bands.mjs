@@ -44,6 +44,7 @@ import { dirname, join } from "node:path";
 import { loadDictionary, DICT_VERSION } from "../src/core/dictionary.ts";
 import {
   admit,
+  MID_CAP_RELAXED_BAND,
   MID_FREQ_THRESHOLD,
   REJECT_COMMON_THRESHOLD,
   REJECT_LEN_FLOOR,
@@ -65,6 +66,20 @@ const tsvPath = join(root, "tools", "corpus", "en-50k.tsv");
 // a word (or its stem, per the conjugation guard) rejects when its
 // q ≥ R_eff(len(word)), so to drop "lists" (q=49, 5 chars → floor hold)
 // set rejectCommonness to 49; longer words keep their ramped thresholds.
+//
+// Cap column (spec/04 h2.26–h2.28, P1.M1.T3.S1/S2): Cap verdicts follow
+// the 95 relaxed band (MID_CAP_RELAXED_BAND) + the top-band chain-only
+// ceiling for capitalized OCCURRENCES — i.e. "what happens to this word
+// when capitalized mid-sentence". Structural-start capitals admit as the
+// lc column shows (h2.28 grants them no relaxation).────
+// The manual tuning dial for admission: print each word's dictionary q
+// (null = absent → rarest, group 0), its own threshold rEff(R, len), and
+// its verdict under the CURRENT constants, then exit. Use it to pick a
+// rejectCommonness value in ~/.pi/agent/hapax.json (or .pi/hapax.json):
+// the knob moves the floor R and the whole R_eff curve scales from it —
+// a word (or its stem, per the conjugation guard) rejects when its
+// q ≥ R_eff(len(word)), so to drop "lists" (q=49, 5 chars → floor hold)
+// set rejectCommonness to 49; longer words keep their ramped thresholds.
 const words = process.argv.slice(2);
 if (words.length > 0) {
   const dict = loadDictionary(dictPath);
@@ -76,7 +91,8 @@ if (words.length > 0) {
   console.log(
     `word → q → verdict under R_eff(len), R=${REJECT_COMMON_THRESHOLD} ` +
       `(hold ≤${REJECT_LEN_FLOOR}, admit-all ≥${REJECT_LEN_FULL}, ` +
-      `ramp: R + (255−R)·√((len−8)/12))  (lc | Cap)`,
+      `ramp: R + (255−R)·√((len−8)/12); Cap: mid-cap band ${MID_CAP_RELAXED_BAND})  ` +
+      `(lc | Cap)`,
   );
   const capDraft = (key) => ({
     key,
@@ -87,10 +103,15 @@ if (words.length > 0) {
     const lower = w.toLowerCase();
     const q = dict.lookup(lower);
     const verdict = admit(draft(lower), dict);
-    const cap = admit(capDraft(lower), dict);
+    // Mid-cap occurrence (P1.M1.T3.S2): the relaxed band + ceiling rules
+    // ride the casing option — the retired relief's flat verdict is gone.
+    const cap = admit(capDraft(lower), dict, { casing: "mid-cap" });
     const qText = q === null ? "absent" : String(q);
     const eff = rEff(REJECT_COMMON_THRESHOLD, lower.length);
-    const fmt = (v) => (v === "reject" ? "REJECT" : `g${v}`);
+    // chain-only only arises on the seriesMember path, but the formatter
+    // stays type-honest for it (P1.M1.T3.S1).
+    const fmt = (v) =>
+      v === "reject" ? "REJECT" : v === "chain-only" ? "CHAIN-ONLY" : `g${v}`;
     console.log(
       `  ${w.padEnd(16)} len=${lower.length} q=${qText.padEnd(6)} ` +
         `R_eff=${eff >= 256 ? "admit-all" : eff.toFixed(0)}  ` +

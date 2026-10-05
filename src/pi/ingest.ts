@@ -841,6 +841,78 @@ export class IngestPipeline {
       const result = memo.admits[i];
       if (result === undefined) break; // interrupted plan — computed no further
       if (result === "reject") {
+        // Single mid-sentence capital (spec §04 h2.28, P1.M1.T3.S2): the
+        // casing class is OCCURRENCE context, derived from THIS token's
+        // sentenceStart — never read off the memoized draft (draft.casing
+        // carries the FIRST-seen occurrence's class; keying the relaxation
+        // on it would let one sighting loosen — or refuse to loosen —
+        // every later occurrence of the same raw token: exactly the memo
+        // hazard the seriesMember design documents, so the memo itself
+        // stays context-free and this override mirrors S1's retro pattern:
+        // per-occurrence re-run, occurrence-correct draft). Mid-cap
+        // occurrences re-run admit() under the relaxed band
+        // max(R_eff, MID_CAP_RELAXED_BAND):
+        //   0 | 1 → admitted for THIS occurrence (upsert + stats.admitted;
+        //     no bandRejected mark — it is a plain store candidate, never
+        //     a run retro-evaluation target);
+        //   "reject" | "chain-only" → falls through to the run-eligible
+        //     bandRejected push below (S1's run finalization owns those:
+        //     a run member still gets its seriesMember re-run; a single
+        //     over the ceiling just stays out of the store).
+        // Structural-cap and lowercase occurrences keep the memo verdict
+        // untouched — zero relaxation for structural starts.
+        const occurrenceCasing: CasingClass = !UPPER_FIRST_RE.test(token.raw)
+          ? "lower"
+          : token.sentenceStart
+            ? "structural-cap"
+            : "mid-cap"; // one derivation, mirroring expandCandidates
+        if (occurrenceCasing === "mid-cap") {
+          if (this.#isDisabled?.()) break; // BUG-004: dead before the lookup
+          // Occurrence-correct draft (display is the same as-seen raw for
+          // every occurrence of this token; properName = the mid-cap
+          // condition — one derivation, zero drift, as in the series
+          // override).
+          const retryDraft: CandidateDraft = {
+            key: draft.key,
+            display: draft.display,
+            properName: true, // === (casing === "mid-cap") by construction
+            casing: occurrenceCasing,
+          };
+          const retry = admit(
+            retryDraft,
+            this.#dictionary,
+            this.#rejectCommonness === undefined
+              ? { casing: occurrenceCasing }
+              : {
+                  casing: occurrenceCasing,
+                  rejectCommonness: this.#rejectCommonness,
+                },
+          );
+          if (this.#isDisabled?.()) break; // NEW-001: lookup-observed failure
+          if (retry === 0 || retry === 1) {
+            this.#stats.admitted++;
+            entries.push({
+              key: draft.key,
+              rawCasing: token.raw, // the occurrence's raw text — run casing
+              start: token.start,
+              end: token.end,
+            });
+            const sighting: Sighting = {
+              key: draft.key,
+              display: draft.display,
+              ordinal,
+              fromUser,
+              properName: retryDraft.properName,
+              casing: retryDraft.casing,
+              rankGroup: retry,
+            };
+            this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)
+            continue;
+          }
+          // retry === "reject" | "chain-only": no upsert, no admitted
+          // count — chain-only singles have no series context here (runs
+          // finalize elsewhere), so over the ceiling they simply stay out.
+        }
         // Band-rejected run-eligible occurrence (spec §04 h2.26): the
         // draft passed the shape gate and the raw token starts uppercase —
         // push a marked entry WITHOUT upsert or admitted-count so run

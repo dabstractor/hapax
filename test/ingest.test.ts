@@ -362,3 +362,105 @@ describe(
     });
   },
 );
+
+// --- single mid-sentence capital (spec §04 h2.28, P1.M1.T3.S2) ---------------
+
+/** The casing-class override is OCCURRENCE context; the admission memo is
+ *  keyed on token.raw and must never learn it. These pins hold for BOTH
+ *  first-sighting orders. */
+describe(
+  "single mid-sentence capital — occurrence-level relaxation (spec §04 h2.28, P1.M1.T3.S2)",
+  () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("mid-sentence 'Zephyr' (q=94) stores at g1; lowercase 'zephyr' never stores", async () => {
+      const h = makeRunPipeline({ zephyr: 94 });
+      h.pipeline.onMessageEnd(userMsg("then Zephyr checked"));
+      await h.drain();
+      // then/checked: absent → g0 eagerly; Zephyr: band-rejected in the
+      // memo (94 ≥ floor 30) → mid-cap retry lifts the band to 95 → g1.
+      expect(h.store.get("zephyr")).toMatchObject({
+        rankGroup: 1,
+        sessionCount: 1,
+        display: "Zephyr",
+      });
+      expect(h.pipeline.getStats().admitted).toBe(3); // then + zephyr + checked
+
+      const lc = makeRunPipeline({ zephyr: 94 });
+      lc.pipeline.onMessageEnd(userMsg("then zephyr checked"));
+      await lc.drain();
+      expect(lc.store.get("zephyr")).toBeUndefined(); // plain floor 30
+      expect(lc.pipeline.getStats().admitted).toBe(2); // then + checked only
+    });
+
+    it("memo purity, order A: structural-start 'Zephyr' stays out; the later mid-sentence occurrence admits", async () => {
+      const h = makeRunPipeline({ zephyr: 94 });
+      h.pipeline.onMessageEnd(userMsg("Zephyr checked")); // structural-cap
+      await h.drain();
+      expect(h.store.get("zephyr")).toBeUndefined(); // no relaxation
+      h.pipeline.onMessageEnd(userMsg("then Zephyr checked")); // mid-cap
+      await h.drain();
+      // Same raw token — the memoized plan said reject; the occurrence
+      // override re-runs admit() with THIS occurrence's casing.
+      expect(h.store.get("zephyr")).toMatchObject({
+        rankGroup: 1,
+        sessionCount: 1, // the structural occurrence added no sighting
+      });
+    });
+
+    it("memo purity, order B (reverse): mid-sentence admits; the later structural-start occurrence adds no sighting", async () => {
+      const h = makeRunPipeline({ zephyr: 94 });
+      h.pipeline.onMessageEnd(userMsg("then Zephyr checked"));
+      await h.drain();
+      const firstOrdinal = h.store.get("zephyr")!.lastSeenOrdinal;
+      expect(h.store.get("zephyr")!.rankGroup).toBe(1);
+      h.pipeline.onMessageEnd(userMsg("Zephyr checked")); // structural
+      await h.drain();
+      // A memoized mid-cap verdict must NOT loosen the structural
+      // occurrence: no new sighting, no count bump, same ordinal.
+      expect(h.store.get("zephyr")).toMatchObject({
+        rankGroup: 1,
+        sessionCount: 1,
+        lastSeenOrdinal: firstOrdinal,
+      });
+    });
+
+    it("mid-cap absent word stores at g0 (casing never ranks)", async () => {
+      const h = makeRunPipeline({});
+      h.pipeline.onMessageEnd(userMsg("then Quuxblat checked"));
+      await h.drain();
+      expect(h.store.get("quuxblat")).toMatchObject({ rankGroup: 0 });
+    });
+
+    it("mid-cap single over the band stays out (no store entry, no admitted count)", async () => {
+      const h = makeRunPipeline({ zephyr: 150 });
+      h.pipeline.onMessageEnd(userMsg("then Zephyr checked"));
+      await h.drain();
+      // 150 ≥ max(rEff(30,6)=30, 95) → still rejected after the retry;
+      // a singleton is below the ≥2 cap-run floor, so the run machinery
+      // never retro-admits it either. No upsert, no stats.admitted.
+      expect(h.store.get("zephyr")).toBeUndefined();
+      expect(h.pipeline.getStats().admitted).toBe(2); // then + checked only
+    });
+
+    it("conjugation guard: mid-sentence 'Uploaded' (stem upload=200) admits; lowercase 'uploaded' rejects", async () => {
+      // Mid-sentence 'Uploaded' is properName (the mid-cap condition) →
+      // the guard is skipped → absent → g0. Lowercase 'uploaded' hits the
+      // guard (upload=200 ≥ rEff(30,8)) and rejects.
+      const h = makeRunPipeline({ upload: 200 });
+      h.pipeline.onMessageEnd(userMsg("then Uploaded files"));
+      await h.drain();
+      expect(h.store.get("uploaded")).toMatchObject({ rankGroup: 0 });
+
+      const lc = makeRunPipeline({ upload: 200 });
+      lc.pipeline.onMessageEnd(userMsg("then uploaded files"));
+      await lc.drain();
+      expect(lc.store.get("uploaded")).toBeUndefined();
+    });
+  },
+);

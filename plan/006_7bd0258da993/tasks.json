@@ -115,7 +115,7 @@
               "type": "Task",
               "id": "P1.M1.T3",
               "title": "Admission: run-member override, top-band chain-only ceiling, 95-band relaxation",
-              "status": "Ready",
+              "status": "Complete",
               "description": "score.ts constants + occurrence-level admission overrides applied outside the per-token admit memo (the load-bearing pitfall).",
               "subtasks": [
                 {
@@ -143,7 +143,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T3.S2",
                   "title": "Single mid-sentence capital: relaxed band max(R_eff, 95) + calibrate-bands Cap column update",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1"
