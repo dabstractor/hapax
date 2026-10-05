@@ -178,8 +178,16 @@ describe("backward compatibility (no gate wired)", () => {
     // whenever no gate is wired.
     expect(store.size).toBe(4);
     expect(pipeline.getStats().admitted).toBe(4);
+    // Widened payload (plan 006): members carry {key, rawCasing}; the
+    // keys projection (index.ts's shim) is byte-identical to the old
+    // string[][] contract.
     expect(onAdmittedTokens).toHaveBeenCalledWith([
-      ["alpha", "beta", "gamma", "delta"],
+      [
+        { key: "alpha", rawCasing: "alpha" },
+        { key: "beta", rawCasing: "beta" },
+        { key: "gamma", rawCasing: "gamma" },
+        { key: "delta", rawCasing: "delta" },
+      ],
     ]);
   });
 });

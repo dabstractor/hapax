@@ -468,7 +468,8 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     const pipeline = new IngestPipeline({
       store: s,
       dictionary: loadDictionary(resolveDictPath()),
-      onAdmittedTokens: (lines: string[][]) => s.recordBigramRuns(lines),
+      onAdmittedTokens: (lines) =>
+            s.recordBigramRuns(lines.map((r) => r.map((m) => m.key))),
     });
     store = s;
     await replay(pipeline, entries);

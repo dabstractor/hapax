@@ -206,9 +206,16 @@ export default function hapax(pi: ExtensionAPI): void {
       // still ingests candidates; this hook only feeds the bigram
       // layer), and before_agent_start's chain?.reset() is already
       // no-op-safe when the layer is disabled (idle machine).
+      // Plan 006 widening: the payload now carries RunMembers
+      // ({key, rawCasing, series?}) — the shim projects keys so
+      // recordBigramRuns' input stays byte-identical until P1.M1.T2.S2
+      // consumes the enrichment (series casing + cap-run marks).
       ...(config.enableChaining
         ? {
-            onAdmittedTokens: (runs) => sessionStore.recordBigramRuns(runs),
+            onAdmittedTokens: (runs) =>
+              sessionStore.recordBigramRuns(
+                runs.map((r) => r.map((m) => m.key)),
+              ),
           }
         : {}),
     });

@@ -491,7 +491,9 @@ describe("perf gate e — DEFAULT-config restore (bigram capture ON), 100k-token
     const pipeline = new IngestPipeline({
       store,
       dictionary: dict,
-      onAdmittedTokens: (lines) => store.recordBigramRuns(lines),
+      onAdmittedTokens: (lines) =>
+        // index.ts's shim: members → keys (plan 006 payload widening)
+        store.recordBigramRuns(lines.map((r) => r.map((m) => m.key))),
     });
 
     const t0 = performance.now();

@@ -114,7 +114,8 @@ describe("path tokens as whole-token run members (rule 4d)", () => {
       store,
       dictionary,
       yieldFn: async () => {},
-      onAdmittedTokens: (runs) => store.recordBigramRuns(runs),
+      onAdmittedTokens: (runs) =>
+        store.recordBigramRuns(runs.map((r) => r.map((m) => m.key))),
     });
     // ONE line — a \n finalizes the line and would break the run
     // (ingest.ts line handling); single-space gap keeps strict adjacency.
@@ -135,7 +136,8 @@ describe("path tokens as whole-token run members (rule 4d)", () => {
       store,
       dictionary,
       yieldFn: async () => {},
-      onAdmittedTokens: (runs) => store.recordBigramRuns(runs),
+      onAdmittedTokens: (runs) =>
+        store.recordBigramRuns(runs.map((r) => r.map((m) => m.key))),
     });
     // WHITESPACE_GAP_RE is /^[ \t]+$/ — the ", " gap between the two
     // tokens fails it, so splitRuns cuts the run before the path.
@@ -234,7 +236,8 @@ describe("BUG-006 — same-call cap drain through the real ingest path", () => {
       store,
       dictionary,
       yieldFn: async () => {},
-      onAdmittedTokens: (runs) => store.recordBigramRuns(runs),
+      onAdmittedTokens: (runs) =>
+        store.recordBigramRuns(runs.map((r) => r.map((m) => m.key))),
     });
     // 11,000 single-pair lines — each line is one run, every pair distinct.
     // 'v0ax'/'v0bx' pass the shape gate (4 chars, 4 distinct chars →

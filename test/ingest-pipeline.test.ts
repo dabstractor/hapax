@@ -21,7 +21,22 @@ import {
   REJECT_COMMON_THRESHOLD,
 } from "../src/core/score.js";
 import type { Dictionary } from "../src/core/types.js";
-import { IngestPipeline, type AgentMessage } from "../src/pi/ingest.js";
+import {
+  IngestPipeline,
+  type AgentMessage,
+  type RunMember,
+} from "../src/pi/ingest.js";
+
+/** The index.ts shim under the widened payload (members → keys): the
+ *  EXACT input recordBigramRuns received before the widening and still
+ *  receives — pinned throughout by the adjacency tests below. */
+const keyRuns = (runs: readonly (readonly RunMember[])[]): string[][] =>
+  runs.map((r) => r.map((m) => m.key));
+
+/** The cap-run view of a captured payload: rawCasings of series-marked
+ *  members, in document order (spec §04 h2.26 run membership). */
+const markedCasings = (runs: readonly (readonly RunMember[])[]): string[] =>
+  runs.flat().filter((m) => m.series === true).map((m) => m.rawCasing);
 
 // --- fixture helpers: minimal valid pi messages (copied from ingest.test.ts;
 // --- test files are self-contained) -----------------------------------------
@@ -113,7 +128,7 @@ interface Harness {
 function makePipeline(
   opts: {
     chunkBytes?: number;
-    onAdmittedTokens?: (runs: string[][]) => void;
+    onAdmittedTokens?: (runs: readonly (readonly RunMember[])[]) => void;
     withYieldFn?: boolean;
   } = {},
 ): Harness {
@@ -261,7 +276,7 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
   });
 
   it("calls onAdmittedTokens once per message with adjacency runs of whole-token keys", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(userMsg("lwlock deltaWave"));
     h.pipeline.onMessageEnd(assistantMsg([{ type: "text", text: "invert" }]));
@@ -270,8 +285,13 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     // Whole tokens only ("delta"/"wave" subwords excluded), doc order,
     // one call per message. Runs hold ≥ 1 word: "context" admitted nothing
     // (COMMON reject), so its runs array is empty (the old per-line shape
-    // emitted []s).
-    expect(calls).toEqual([[["lwlock", "deltawave"]], [["invert"]], []]);
+    // emitted []s). The payload carries members; through the index shim
+    // the store input is byte-identical to the pre-widening string[][].
+    expect(calls.map(keyRuns)).toEqual([
+      [["lwlock", "deltawave"]],
+      [["invert"]],
+      [],
+    ]);
     // Role plumbing: user → userTyped sticky, assistant → not.
     expect(h.store.get("lwlock")?.userTyped).toBe(true);
     expect(h.store.get("invert")?.userTyped).toBe(false);
@@ -379,19 +399,19 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
   });
 
   it("chains whitespace-only gaps — single space, mixed space/tab, 3-word run", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(userMsg("lwlock deltaWave"));
     h.pipeline.onMessageEnd(userMsg("lwlock \t deltaWave")); // space+tab+space
     h.pipeline.onMessageEnd(userMsg("lwlock norias invert"));
     await drainNow(h);
-    expect(calls).toEqual([
+    expect(calls.map(keyRuns)).toEqual([
       [["lwlock", "deltawave"]],
       [["lwlock", "deltawave"]],
       [["lwlock", "norias", "invert"]],
     ]);
     // A 3-word run yields BOTH adjacent-pair bigrams via the real wiring.
-    h.store.recordBigramRuns(calls[2]!);
+    h.store.recordBigramRuns(keyRuns(calls[2]!));
     expect(h.store.topSuccessors("lwlock")).toEqual([{ next: "norias", count: 1 }]);
     expect(h.store.topSuccessors("norias")).toEqual([{ next: "invert", count: 1 }]);
   });
@@ -399,22 +419,22 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
   it.each([",", ";", ":", ".", "!", "?", "—", "–", "…", "|"])(
     "clause punctuation %j breaks the run",
     async (p) => {
-      const calls: string[][][] = [];
+      const calls: (readonly (readonly RunMember[])[])[] = [];
       const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
       h.pipeline.onMessageEnd(userMsg(`lwlock${p} quuxblat`));
       await drainNow(h);
-      expect(calls).toEqual([[["lwlock"], ["quuxblat"]]]);
-      h.store.recordBigramRuns(calls[0]!);
+      expect(calls.map(keyRuns)).toEqual([[["lwlock"], ["quuxblat"]]]);
+      h.store.recordBigramRuns(keyRuns(calls[0]!));
       expect(h.store.topSuccessors("lwlock")).toEqual([]); // no cross bigram
     },
   );
 
   it("backtick-quoted words never chain", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(userMsg("`lwlock` `quuxblat`"));
     await drainNow(h);
-    expect(calls).toEqual([[["lwlock"], ["quuxblat"]]]);
+    expect(calls.map(keyRuns)).toEqual([[["lwlock"], ["quuxblat"]]]);
   });
 
   it.each([
@@ -425,7 +445,7 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     ['"', '"'],
     ["'", "'"],
   ])("words entering/leaving %s…%s never chain to neighbors outside", async (open, close) => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(
       userMsg(`invert ${open}lwlock quuxblat${close} granite`),
@@ -433,22 +453,22 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     await drainNow(h);
     // The inner pair chains; both boundary words are fenced off by the
     // bracket characters in their gaps.
-    expect(calls).toEqual([[["invert"], ["lwlock", "quuxblat"], ["granite"]]]);
+    expect(calls.map(keyRuns)).toEqual([[["invert"], ["lwlock", "quuxblat"], ["granite"]]]);
   });
 
   it.each(["/", "\\", "=", "+", "&", "%", "#", "*", "@", "-", "~", "^"])(
     "symbol %j between two words breaks the run",
     async (s) => {
-      const calls: string[][][] = [];
+      const calls: (readonly (readonly RunMember[])[])[] = [];
       const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
       h.pipeline.onMessageEnd(userMsg(`lwlock ${s} quuxblat`));
       await drainNow(h);
-      expect(calls).toEqual([[["lwlock"], ["quuxblat"]]]);
+      expect(calls.map(keyRuns)).toEqual([[["lwlock"], ["quuxblat"]]]);
     },
   );
 
   it("digit runs and hexish tokens break the chain ACROSS them", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     // "v2" is gate-rejected (low entropy: H("v2") = 1.0 < 1.5 — since the
     // 2026 floor drop it is length-legal but entropy-killed) → pure gap
@@ -458,11 +478,11 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     // only consecutive pairs bigram, so lwlock→quuxblat never happens.
     h.pipeline.onMessageEnd(userMsg("lwlock 0f3a9c2 quuxblat"));
     await drainNow(h);
-    expect(calls).toEqual([
+    expect(calls.map(keyRuns)).toEqual([
       [["lwlock"], ["quuxblat"]],
       [["lwlock", "0f3a9c2", "quuxblat"]],
     ]);
-    h.store.recordBigramRuns([...calls[0]!, ...calls[1]!]);
+    h.store.recordBigramRuns([...keyRuns(calls[0]!), ...keyRuns(calls[1]!)]);
     expect(h.store.topSuccessors("lwlock")).toEqual([
       { next: "0f3a9c2", count: 1 },
     ]);
@@ -473,7 +493,7 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
   });
 
   it("a rejected word between two admitted words breaks the run (no stopword bridging)", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     // "of" rejects at ADMISSION (COMMON since the 2026 floor drop — the
     // shipped dictionary attests it at q=230) — its TEXT stays in the gap
@@ -482,11 +502,11 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     h.pipeline.onMessageEnd(userMsg("United States of America"));
     h.pipeline.onMessageEnd(userMsg("lwlock the quuxblat"));
     await drainNow(h);
-    expect(calls).toEqual([
+    expect(calls.map(keyRuns)).toEqual([
       [["united", "states"], ["america"]],
       [["lwlock"], ["quuxblat"]],
     ]);
-    h.store.recordBigramRuns(calls[0]!);
+    h.store.recordBigramRuns(keyRuns(calls[0]!));
     expect(h.store.topSuccessors("united")).toEqual([
       { next: "states", count: 1 },
     ]);
@@ -494,7 +514,7 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
   });
 
   it("ZorpWibbleEngine, quuxblat never chains (the stopword-bridge bug class)", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(userMsg("ZorpWibbleEngine, quuxblat"));
     h.pipeline.onMessageEnd(userMsg("ZorpWibbleEngine, the quuxblat"));
@@ -503,28 +523,28 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     // first message's line array produced the bridged bigram. ("the"
     // rejects at admission under the COMMON stub, as it does under the
     // shipped dictionary since the floor drop.)
-    expect(calls).toEqual([
+    expect(calls.map(keyRuns)).toEqual([
       [["zorpwibbleengine"], ["quuxblat"]],
       [["zorpwibbleengine"], ["quuxblat"]],
     ]);
-    h.store.recordBigramRuns(calls[0]!);
+    h.store.recordBigramRuns(keyRuns(calls[0]!));
     expect(h.store.topSuccessors("zorpwibbleengine")).toEqual([]);
   });
 
   it("newline breaks runs; blank lines yield nothing (no empty arrays); one call per message", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(userMsg("lwlock norias\ninvert granite"));
     h.pipeline.onMessageEnd(userMsg("lwlock\n\ninvert\n"));
     await drainNow(h);
-    expect(calls).toEqual([
+    expect(calls.map(keyRuns)).toEqual([
       [["lwlock", "norias"], ["invert", "granite"]],
       [["lwlock"], ["invert"]], // the blank line emits NO empty run
     ]);
   });
 
   it("a chunk boundary inside a whitespace gap still chains", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     // "lwlock" + 6 spaces + "quuxblat", sliced at 12: slice 1 ends exactly
     // at the gap's end ("lwlock      "), slice 2 starts at "quuxblat".
     const h = makePipeline({
@@ -534,15 +554,15 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     h.pipeline.onMessageEnd(userMsg("lwlock      quuxblat"));
     await drainNow(h);
     expect(h.counts.yields).toBe(2); // the boundary really happened
-    expect(calls).toEqual([[["lwlock", "quuxblat"]]]); // gap carried → chains
-    h.store.recordBigramRuns(calls[0]!);
+    expect(calls.map(keyRuns)).toEqual([[["lwlock", "quuxblat"]]]); // gap carried → chains
+    h.store.recordBigramRuns(keyRuns(calls[0]!));
     expect(h.store.topSuccessors("lwlock")).toEqual([
       { next: "quuxblat", count: 1 },
     ]);
   });
 
   it("a chunk boundary inside a punctuation gap still breaks", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     // "lwlock, quuxblat" sliced at 8: slice 1 ends mid-gap ("lwlock, ").
     // The comma must survive the carry (openTail) and break the run.
     const h = makePipeline({
@@ -552,11 +572,11 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     h.pipeline.onMessageEnd(userMsg("lwlock, quuxblat"));
     await drainNow(h);
     expect(h.counts.yields).toBe(2);
-    expect(calls).toEqual([[["lwlock"], ["quuxblat"]]]);
+    expect(calls.map(keyRuns)).toEqual([[["lwlock"], ["quuxblat"]]]);
   });
 
   it("a chunk boundary never breaks a run — only '\\n' does", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     // "lwlock norias invert" cut after each token (7-char slices): two
     // chunk boundaries, zero newlines — still ONE run with all words.
     const h = makePipeline({
@@ -566,15 +586,15 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     h.pipeline.onMessageEnd(userMsg("lwlock norias invert"));
     await drainNow(h);
     expect(h.counts.yields).toBe(3); // boundaries really happened
-    expect(calls).toEqual([[["lwlock", "norias", "invert"]]]);
+    expect(calls.map(keyRuns)).toEqual([[["lwlock", "norias", "invert"]]]);
     // The pairs SPANNING the slice boundaries survive recording.
-    h.store.recordBigramRuns(calls[0]!);
+    h.store.recordBigramRuns(keyRuns(calls[0]!));
     expect(h.store.topSuccessors("norias")).toEqual([{ next: "invert", count: 1 }]);
     expect(h.store.topSuccessors("lwlock")).toEqual([{ next: "norias", count: 1 }]);
   });
 
   it("a chunk boundary INSIDE a token carries it whole (BUG-004): no junk half, bigram chains", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     // "lwlock Zorpwibble quuxblat" (26 chars) sliced at 12: the seam at
     // offset 12 falls inside "Zorpwibble" ("Zorpw" | "ibble"). Slice 1
     // carries "Zorpw"; slice 2 processes "Zorpwibble " whole; slice 2
@@ -594,34 +614,34 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     expect(h.store.get("ibble")).toBeUndefined();
     expect(h.store.get("zorpw")).toBeUndefined();
     // The run stitched across the boundary → the bigram forms.
-    expect(calls).toEqual([[["lwlock", "zorpwibble", "quuxblat"]]]);
-    h.store.recordBigramRuns(calls[0]!);
+    expect(calls.map(keyRuns)).toEqual([[["lwlock", "zorpwibble", "quuxblat"]]]);
+    h.store.recordBigramRuns(keyRuns(calls[0]!));
     expect(h.store.topSuccessors("zorpwibble")).toEqual([
       { next: "quuxblat", count: 1 },
     ]);
   });
 
   it("repeated runs double the successor count", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(userMsg("lwlock norias"));
     h.pipeline.onMessageEnd(userMsg("lwlock norias"));
     await drainNow(h);
-    expect(calls).toEqual([[["lwlock", "norias"]], [["lwlock", "norias"]]]);
-    h.store.recordBigramRuns(calls[0]!);
-    h.store.recordBigramRuns(calls[1]!);
+    expect(calls.map(keyRuns)).toEqual([[["lwlock", "norias"]], [["lwlock", "norias"]]]);
+    h.store.recordBigramRuns(keyRuns(calls[0]!));
+    h.store.recordBigramRuns(keyRuns(calls[1]!));
     expect(h.store.topSuccessors("lwlock")).toEqual([{ next: "norias", count: 2 }]);
   });
 
   it("runs hold one whole-token key per token (2026-10 atomicity)", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(userMsg("deltaWave standalone"));
     await drainNow(h);
     // "deltaWave" is atomic — ONE key, in the run; no fragment keys
     // (delta/wave are absent from the stub dict and would admit as
     // drafts) ever exist.
-    expect(calls).toEqual([[["deltawave", "standalone"]]]);
+    expect(calls.map(keyRuns)).toEqual([[["deltawave", "standalone"]]]);
     expect(h.store.get("deltawave")).toBeDefined();
     expect(h.store.get("standalone")).toBeDefined();
     expect(h.store.get("delta")).toBeUndefined();
@@ -629,7 +649,7 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
   });
 
   it("multi-block messages produce runs per line (extractText joins with '\\n')", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(
       userMsg([
@@ -638,16 +658,16 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
       ]),
     );
     await drainNow(h);
-    expect(calls).toEqual([[["lwlock", "norias"], ["invert"]]]);
+    expect(calls.map(keyRuns)).toEqual([[["lwlock", "norias"], ["invert"]]]);
   });
 
   it("no callback for empty text or null-extraction messages", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
     h.pipeline.onMessageEnd(toolResultMsg()); // null extraction → never queued
     h.pipeline.onMessageEnd(userMsg("")); // empty text → processText early-return
     await drainNow(h);
-    expect(calls).toEqual([]);
+    expect(calls.map(keyRuns)).toEqual([]);
     expect(h.store.currentOrdinal()).toBe(0); // no ordinal issued either
   });
 });
@@ -780,7 +800,7 @@ describe("trailing-'_' literals store once — no duplicate candidates (BUG-002,
 // vacuously. All use direct processText (no debounce), like BUG-002 above.
 describe("chunk-boundary token carry (BUG-004, PRD h3.3)", () => {
   it("REAL 64KB scale: a token at offset 65536-5 is admitted whole — no junk half, bigram chains", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     // The PRD repro shape: 'Zorpwibble quuxblat ' starts 5 bytes before the
     // 65536 seam ("Zorpw" ends slice 1, "ibble" starts slice 2), followed by
     // 70000 filler bytes. The LEFT filler is SPACES, deliberately: the token
@@ -800,15 +820,15 @@ describe("chunk-boundary token carry (BUG-004, PRD h3.3)", () => {
     expect(h.store.get("zorpw")).toBeUndefined();
     expect(h.store.get("quuxblat")).toBeDefined();
     // The stitched line forms ONE adjacency run spanning the boundary.
-    expect(calls).toEqual([[["zorpwibble", "quuxblat"]]]);
-    h.store.recordBigramRuns(calls[0]!);
+    expect(calls.map(keyRuns)).toEqual([[["zorpwibble", "quuxblat"]]]);
+    h.store.recordBigramRuns(keyRuns(calls[0]!));
     expect(h.store.topSuccessors("zorpwibble")).toEqual([
       { next: "quuxblat", count: 1 },
     ]);
   });
 
   it("small-chunk analogue: seam inside 'Zor|pwibble' stitches to one token (fast pin, independent of the 64KB constant)", async () => {
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     // 27 chars at chunkBytes 8: slice 1 = "zzqv Zor" (seam carries "Zor"),
     // slice 2 processes "Zorpwibble ", slice 3 = "quuxblat" (final, carries
     // nothing). Same seam CLASS as the 64KB repro, different cut point than
@@ -822,8 +842,8 @@ describe("chunk-boundary token carry (BUG-004, PRD h3.3)", () => {
     expect(h.store.get("zorpwibble")?.sessionCount).toBe(1);
     expect(h.store.get("ibble")).toBeUndefined();
     expect(h.store.get("pwibble")).toBeUndefined();
-    expect(calls).toEqual([[["zzqv", "zorpwibble", "quuxblat"]]]);
-    h.store.recordBigramRuns(calls[0]!);
+    expect(calls.map(keyRuns)).toEqual([[["zzqv", "zorpwibble", "quuxblat"]]]);
+    h.store.recordBigramRuns(keyRuns(calls[0]!));
     expect(h.store.topSuccessors("zorpwibble")).toEqual([
       { next: "quuxblat", count: 1 },
     ]);
@@ -857,7 +877,7 @@ describe("chunk-boundary token carry (BUG-004, PRD h3.3)", () => {
     // 'zionite\\nmarble' at chunkBytes 8: slice 1 ends with the newline —
     // not a class char, so nothing carries; the newline still structurally
     // splits the runs (candidate + run-side view of :554's rule).
-    const calls: string[][][] = [];
+    const calls: (readonly (readonly RunMember[])[])[] = [];
     const h = makePipeline({
       chunkBytes: 8,
       onAdmittedTokens: (runs) => calls.push(runs),
@@ -866,7 +886,7 @@ describe("chunk-boundary token carry (BUG-004, PRD h3.3)", () => {
     expect(h.counts.yields).toBe(2);
     expect(h.store.get("zionite")?.sessionCount).toBe(1);
     expect(h.store.get("marble")?.sessionCount).toBe(1);
-    expect(calls).toEqual([[["zionite"], ["marble"]]]);
+    expect(calls.map(keyRuns)).toEqual([[["zionite"], ["marble"]]]);
   });
 
   it("seam inside a HYPHEN token: 'well-known-path' stitches to ONE whole token ('-' IS a class char)", async () => {
@@ -928,5 +948,176 @@ describe("chunk-boundary token carry (BUG-004, PRD h3.3)", () => {
     expect(h.store.get("aaaa")).toBeUndefined();
     expect(h.store.get("zqx")).toBeUndefined();
     expect(h.store.size).toBe(1); // the secret left NO residue
+  });
+});
+
+// --- capitalized-run detection (spec §04 h2.26, plan 006 P1.M1.T1.S2) -------
+
+/**
+ * The payload's series marks carry spec h2.26 run membership to the hook:
+ * a run is a maximal ≥2-member sequence of whole tokens on one line where
+ * every token's RAW text begins with an uppercase ASCII letter (structural
+ * start irrelevant — line-initial and after-punctuation members count) and
+ * adjacent members are separated by plain spaces/tabs in BOTH the masked
+ * and the raw segment. Raw-gap purity is the masked-secret break: layer-1
+ * masking blanks secrets to spaces (the masked gap looks adjacent — and
+ * stays adjacent for bigrams, unchanged), but the raw gap still holds the
+ * secret's bytes, so cap runs split around it. Gate-rejected members emit
+ * no span entry and pollute the following gap — comma/quote/symbol/
+ * secret-shaped breaks all fall out of gap purity. All words below are
+ * dict-absent under stubDict → admitted; membership is casing-only.
+ */
+describe("capitalized-run detection (spec §04 h2.26)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("the spec series: consecutive capitals chain with raw casings preserved; a lowercase member breaks", async () => {
+    const calls: (readonly (readonly RunMember[])[])[] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(
+      userMsg("Visit National Renewable Energy Laboratory today"),
+    );
+    await drainNow(h);
+    // ONE adjacency run (all plain-space gaps); the series marks chain
+    // Visit→Laboratory (every member's raw first char is uppercase) and
+    // 'today' (lowercase) breaks. Raw casings are the tokens as typed.
+    expect(calls).toHaveLength(1);
+    const run = [...calls[0]!];
+    expect(run).toHaveLength(1); // one adjacency run on the line
+    expect(run[0]!.map((m) => m.key)).toEqual([
+      "visit",
+      "national",
+      "renewable",
+      "energy",
+      "laboratory",
+      "today",
+    ]);
+    expect(markedCasings(calls[0]!)).toEqual([
+      "Visit",
+      "National",
+      "Renewable",
+      "Energy",
+      "Laboratory",
+    ]);
+  });
+
+  it("the spec exemplar proper: four members, casing verbatim", async () => {
+    const calls: (readonly (readonly RunMember[])[])[] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("National Renewable Energy Laboratory"));
+    await drainNow(h);
+    expect(markedCasings(calls[0]!)).toEqual([
+      "National",
+      "Renewable",
+      "Energy",
+      "Laboratory",
+    ]);
+    // Keys are the lowercase store keys; rawCasing the occurrence casing.
+    expect(calls[0]![0]!.map((m) => [m.key, m.rawCasing])).toEqual([
+      ["national", "National"],
+      ["renewable", "Renewable"],
+      ["energy", "Energy"],
+      ["laboratory", "Laboratory"],
+    ]);
+  });
+
+  it("run floor ≥2: a lone capitalized word emits NO run (no series mark)", async () => {
+    const calls: (readonly (readonly RunMember[])[])[] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("visiting ZorpWibble again"));
+    await drainNow(h);
+    expect(calls.map(keyRuns)).toEqual([[["visiting", "zorpwibble", "again"]]]);
+    expect(markedCasings(calls[0]!)).toEqual([]); // one uppercase member ≠ run
+  });
+
+  it("comma break: 'ZorpWibbleEngine, quuxblat' yields NO run", async () => {
+    const calls: (readonly (readonly RunMember[])[])[] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("ZorpWibbleEngine, quuxblat"));
+    await drainNow(h);
+    // The comma splits the adjacency itself; neither piece is a run.
+    expect(calls.map(keyRuns)).toEqual([[["zorpwibbleengine"], ["quuxblat"]]]);
+    expect(markedCasings(calls[0]!)).toEqual([]);
+  });
+
+  it("line-initial run detected (structural start does NOT exclude members)", async () => {
+    const calls: (readonly (readonly RunMember[])[])[] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("Alpha Beta gamma"));
+    await drainNow(h);
+    expect(calls.map(keyRuns)).toEqual([[["alpha", "beta", "gamma"]]]);
+    expect(markedCasings(calls[0]!)).toEqual(["Alpha", "Beta"]); // gamma breaks
+  });
+
+  it("after-punctuation run detected ('Done. Alpha Beta')", async () => {
+    const calls: (readonly (readonly RunMember[])[])[] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("Done. Alpha Beta"));
+    await drainNow(h);
+    expect(calls.map(keyRuns)).toEqual([[["done"], ["alpha", "beta"]]]);
+    // 'Done' is line-initial uppercase but alone (the period breaks) —
+    // below the floor, unmarked; Alpha Beta is the run.
+    expect(markedCasings(calls[0]!)).toEqual(["Alpha", "Beta"]);
+  });
+
+  it("intervening word breaks: 'Alpha the Beta' yields NO run", async () => {
+    const calls: (readonly (readonly RunMember[])[])[] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    h.pipeline.onMessageEnd(userMsg("Alpha the Beta"));
+    await drainNow(h);
+    expect(calls.map(keyRuns)).toEqual([[["alpha"], ["beta"]]]); // 'the' COMMON-rejected
+    expect(markedCasings(calls[0]!)).toEqual([]);
+  });
+
+  it("secret-shaped member splits the run (gate-rejected → gap pollution)", async () => {
+    const calls: (readonly (readonly RunMember[])[])[] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    // sk- prefix, 14 payload chars: under the 32-char layer-1 window (NOT
+    // masked) but SECRET_PREFIXES-rejected at the gate → no span entry;
+    // its raw bytes pollute the gaps on both sides.
+    h.pipeline.onMessageEnd(userMsg("Alpha sk-abcdef123456 Beta"));
+    await drainNow(h);
+    expect(calls.map(keyRuns)).toEqual([[["alpha"], ["beta"]]]);
+    expect(markedCasings(calls[0]!)).toEqual([]);
+  });
+
+  it("MASKED secret splits the run (raw-gap purity — the layer-1 pitfall)", async () => {
+    const calls: (readonly (readonly RunMember[])[])[] = [];
+    const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
+    // 32 payload chars: layer-1 maskSecrets blanks it to spaces BEFORE
+    // tokenize — no token, and the MASKED gap is pure whitespace (which is
+    // why bigrams still chain across it, unchanged). The RAW gap holds the
+    // secret's bytes → the cap run MUST split. Testing the masked gap
+    // here would silently pass; the raw-gap check is the pin.
+    h.pipeline.onMessageEnd(userMsg("Alpha sk-abcdefghijklmnopabcdefghijklmnop Beta"));
+    await drainNow(h);
+    expect(calls.map(keyRuns)).toEqual([[["alpha", "beta"]]]); // bigrams unchanged
+    expect(markedCasings(calls[0]!)).toEqual([]); // …but the cap run split
+  });
+
+  it("newline breaks; a chunk boundary does NOT (openLine/openTail carry)", async () => {
+    const calls: (readonly (readonly RunMember[])[])[] = [];
+    const h = makePipeline({
+      chunkBytes: 8, // 'Alpha Be' | 'ta gamma' — the seam lands MID-WORD
+      onAdmittedTokens: (runs) => calls.push(runs),
+    });
+    h.pipeline.onMessageEnd(userMsg("Alpha Beta\nGamma Delta"));
+    await drainNow(h);
+    expect(h.counts.yields).toBe(3); // 22 chars / 8 = three slices, two seams — both carried
+    // ONE call (per message); the newline broke the LINE — two runs in
+    // the one payload — while the chunk seams broke NOTHING:
+    expect(calls.map(keyRuns)).toEqual([
+      [["alpha", "beta"], ["gamma", "delta"]],
+    ]);
+    expect(markedCasings(calls[0]!)).toEqual([
+      "Alpha",
+      "Beta",
+      "Gamma",
+      "Delta",
+    ]); // each line's run survived its seam; the newline split the cap runs
   });
 });

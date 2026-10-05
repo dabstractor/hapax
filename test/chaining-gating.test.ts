@@ -139,8 +139,8 @@ function makeChainPipeline(enableChaining: boolean): {
     dictionary: loadDictionary(resolveDictPath()),
     ...(enableChaining
       ? {
-          onAdmittedTokens: (lines: string[][]) =>
-            store.recordBigramRuns(lines),
+          onAdmittedTokens: (lines) =>
+            store.recordBigramRuns(lines.map((r) => r.map((m) => m.key))),
         }
       : {}),
   });

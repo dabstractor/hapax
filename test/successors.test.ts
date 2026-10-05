@@ -65,7 +65,9 @@ function makeSuccPipeline(rejects: (w: string) => boolean = () => false): {
   const pipeline = new IngestPipeline({
     store,
     dictionary,
-    onAdmittedTokens: (runs) => store.recordBigramRuns(runs),
+    onAdmittedTokens: (runs) =>
+      // index.ts's shim: members → keys (plan 006 payload widening)
+      store.recordBigramRuns(runs.map((r) => r.map((m) => m.key))),
   });
   return { store, pipeline };
 }
