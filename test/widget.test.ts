@@ -850,7 +850,14 @@ const emptyStore = {
 } as unknown as CandidateStore;
 
 const makeInsertHarness = (
-  seed: { lines: string[]; line: number; col: number; noCaret?: boolean } = {
+  seed: {
+    lines: string[];
+    line: number;
+    col: number;
+    noCaret?: boolean;
+    piMenuOpen?: boolean;
+    piMenuProbeThrows?: boolean;
+  } = {
     lines: ["ze"],
     line: 0,
     col: 2,
@@ -885,6 +892,16 @@ const makeInsertHarness = (
       calls.push(`caret:${c}`);
       buf.col = c;
     };
+  }
+  // P3.M1.T1.S1 — OPT-IN knob for the Tab-deferral probe. Absent by
+  // DEFAULT: existing tests keep today's exact double (no member — the
+  // widget's probe reads undefined and stays inert).
+  if (seed.piMenuProbeThrows) {
+    raw.isShowingAutocomplete = (): boolean => {
+      throw new Error("probe");
+    };
+  } else if (seed.piMenuOpen) {
+    raw.isShowingAutocomplete = (): boolean => true;
   }
   const pinned = new Proxy(raw, {
     get(target, prop) {
@@ -1115,6 +1132,68 @@ describe("widget key handling — Tab inserts the highlighted word (spec §07 h2
     (h.editor.render as (w: number) => string[])(40);
     expect(h.setHits()).toBe(0); // the inner instance was NEVER written to
     expect(h.innerCalls).toEqual(["\r", "x"]); // only the forwarded keys
+  });
+
+  it("Tab while pi's OWN menu is open (isShowingAutocomplete() === true) FORWARDS verbatim: the inner receives the Tab bytes, NO setText/caret edit, the line stays visible, no suppression, machine untouched (P3.M1.T1.S1)", async () => {
+    const h = makeInsertHarness({
+      lines: ["ze"],
+      line: 0,
+      col: 2,
+      piMenuOpen: true,
+    });
+    h.show(["Zendesk", "zephyr"]); // hapax line armed AND pi's menu open — deferral keys on the MENU, not the line
+    let dismissedCalls = 0;
+    const realDismissed = h.machine.onDismissed.bind(h.machine);
+    h.machine.onDismissed = (explicit: boolean): void => {
+      dismissedCalls += 1;
+      realDismissed(explicit);
+    };
+
+    const out = h.press("\t");
+
+    expect(out).toBe("inner:\t"); // forwarded verbatim — pi's menu accepts its highlighted item
+    expect(h.innerCalls).toEqual(["\t"]); // exactly one delegation
+    expect(h.calls).toEqual([`inner:${JSON.stringify("\t")}`]); // NO setText, NO caret edit
+    expect(h.state.hidden).toBe(false); // pure forward — the hapax line is NOT dismissed
+    expect(dismissedCalls).toBe(0); // the machine's dismissal seam never fired
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false); // no suppression
+    expect(h.state.interacted).toBe(false); // only navigate ever sets it
+    expect(h.onKeystroke).toHaveBeenCalledTimes(1); // ONE tick via the guard's seam — never double-ticked
+    await Promise.resolve(); // W1 fix: let the deferred machine tick settle
+  });
+
+  it("deferral probe inert when pi's menu is closed/absent (no isShowingAutocomplete member): Tab still inserts the highlighted word", () => {
+    // Default harness: the double has NO isShowingAutocomplete member —
+    // every pre-existing case exercises exactly this shape; pinned here
+    // explicitly so a regression in the probe's absence-never-inserts
+    // behavior cannot hide behind the other cases.
+    const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
+    h.show(["Zendesk"]);
+
+    h.press("\t");
+
+    expect(h.calls).toEqual([`setText:${JSON.stringify("Zendesk")}`, "caret:7"]);
+    expect(h.innerCalls).toEqual([]); // consumed — nothing delegated
+  });
+
+  it("a THROWING isShowingAutocomplete never breaks input: falls through to the normal tab-insert path", () => {
+    const h = makeInsertHarness({
+      lines: ["ze"],
+      line: 0,
+      col: 2,
+      piMenuProbeThrows: true,
+    });
+    h.show(["Zendesk"]);
+
+    let out: unknown;
+    expect(() => {
+      out = h.press("\t");
+    }).not.toThrow();
+
+    expect(out).toBeUndefined(); // consumed end-to-end
+    expect(h.calls).toEqual([`setText:${JSON.stringify("Zendesk")}`, "caret:7"]); // the insert still landed
+    expect(h.buf.lines).toEqual(["Zendesk"]);
+    expect(h.state.hidden).toBe(true); // full acceptance, as if the probe never existed
   });
 });
 

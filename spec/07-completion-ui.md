@@ -227,7 +227,11 @@ inner editor sees them:
   letter is preserved — only the first letter adapts; typed lowercase
   inserts the winning form verbatim): stock `applyCompletion`
   semantics, reimplemented on the widget path because no provider
-  item exists there.
+  item exists there — UNLESS the inner editor's own autocomplete menu
+  is open (`isShowingAutocomplete`): the Tab forwards verbatim and
+  pi's menu accepts its item; deferral keys on the menu's actual open
+  state, never on context classification (the hesitation race can
+  re-arm the widget line while pi's menu is open).
 - **Enter ALWAYS submits, never inserts** — the Enter-submits proxy
   rule extends to the widget: Enter dismisses the line, then forwards
   the keystroke so the inner editor submits.
@@ -466,8 +470,10 @@ fills a fresh one) with no transient double-store memory spike.
 ### Tab-open gesture: root cause (traced) and mitigation
 
 (FALLBACK PATH ONLY — on the widget path Tab is consumed by the editor
-proxy before this editor branch can run, and no provider answers word
-fragments, so no stock menu can open for them; the bug class is
+proxy before this editor branch can run (except while pi's own menu is
+open, when the widget defers the Tab verbatim — see "Tab inserts the
+highlighted word" under Widget key handling), and no provider answers
+word fragments, so no stock menu can open for them; the bug class is
 structurally absent there.)
 
 The "Tab opens the menu" gesture originates in **pi-tui's editor**

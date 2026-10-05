@@ -1618,6 +1618,33 @@ export function createWidgetEditorFactory(
       } catch {
         return forwardInput(data); // decision hiccup → degrade to forward
       }
+      /**
+       * Tab-deferral (P3.M1.T1.S1; spec 07 h2.46 + h2.51). pi's OWN
+       * autocomplete menu is open → the Tab is pi's, never hapax's: forward
+       * verbatim so the stock menu accepts its highlighted item. Keyed on the
+       * menu's ACTUAL open state (isShowingAutocomplete), not context
+       * classification — the forced-file and slash-argument surfaces are
+       * unclassified, and the menuDelayMs race can re-arm the widget line
+       * while pi's menu is open (repro case 3). Reads forward through the
+       * enter-submit proxy to the real editor (editor.ts:111-115 precedent);
+       * fully defensive — a missing member or throw falls through to the
+       * normal tab-insert path (worst case inert). Placed after decideWidgetKey
+       * (its decision is vetoed, keeping the pure table free of editor state)
+       * and before any insert/suppress/tick/arming executes: a forwarded
+       * deferral ticks the clock exactly once (guard seam) and mutates
+       * nothing — no dismissal, no suppression, no interacted, no arming.
+       */
+      try {
+        if (
+          decision.action === "tab-insert" &&
+          (innerRecord.isShowingAutocomplete as (() => boolean) | undefined)
+            ?.() === true
+        ) {
+          return forwardInput(data);
+        }
+      } catch {
+        /* deferral probe hiccup → fall through to the normal tab-insert path */
+      }
       if (decision.action === "forward") return forwardInput(data);
       if (decision.action === "enter-submit") {
         // S2 — dismiss-then-forward (spec §07 h2.48: Enter ALWAYS

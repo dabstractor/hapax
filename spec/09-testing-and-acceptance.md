@@ -187,9 +187,11 @@
   CONSUMED (dismiss + suppress; the inner editor never sees it); →/↓
   with no word to navigate (one-word line, un-interacted) forwards
   verbatim and the line stays; Tab inserts the highlighted word
-  synchronously (never debounce-gated); Enter dismisses then
-  forwards (submits); every other key forwards verbatim; the inner
-  instance is NEVER mutated (v1 regression pin).
+  synchronously (never debounce-gated); Tab with pi's own menu open
+  (`isShowingAutocomplete() === true`) forwards verbatim — never
+  inserts a hapax word over an open stock menu (P3.M1.T1.S1); Enter
+  dismisses then forwards (submits); every other key forwards
+  verbatim; the inner instance is NEVER mutated (v1 regression pin).
   Interaction carousel (2026-10; spec 07): the first
   highlight-MOVING arrow press (→/↓ entering an un-interacted
   multi-word line) marks the generation interacted — from then on
