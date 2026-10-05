@@ -310,14 +310,14 @@
       "type": "Phase",
       "id": "P2",
       "title": "Branch-hygiene rebuild on session_tree (PRD R3)",
-      "status": "Ready",
+      "status": "Complete",
       "description": "Wire the spec'd /tree reaction: the store and successor index become a pure function of the active branch's replayable history — guarded, gated in-place rebuild with rebind and line-claim release. INDEPENDENT of P1 (may land before or after); purity assertions automatically cover tallies/series once P1 has landed.",
       "milestones": [
         {
           "type": "Milestone",
           "id": "P2.M1",
           "title": "session_tree wiring, gated in-place rebuild, rebind, purity",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Store reset + pipeline queue-discard + re-armable gate primitives, then the session_tree handler (guard, discard, snapshot, rebuild, rebind, claim release), then the spec-09-mandated purity battery.",
           "tasks": [
             {
@@ -366,7 +366,7 @@
               "type": "Task",
               "id": "P2.M1.T2",
               "title": "session_tree handler: guarded gated in-place rebuild + rebind + claim release; purity battery",
-              "status": "Ready",
+              "status": "Complete",
               "description": "The handler itself (event table, guard, discard, snapshot, rebuild via restoreFromHistory, gate re-arm, dual-path rebind, claim release) and the spec-09-mandated branch-purity/rebuild acceptance battery.",
               "subtasks": [
                 {
@@ -398,7 +398,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S2",
                   "title": "Branch-purity + rebuild acceptance battery (spec/09-mandated)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M1.T2.S1"
