@@ -27,7 +27,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CandidateStore, EVICT_BATCH, STORE_CAP } from "../src/core/store.js";
+import {
+  CandidateStore,
+  EVICT_BATCH,
+  INDEX_MERGE_BATCH,
+  STORE_CAP,
+} from "../src/core/store.js";
 import { evictionScore } from "../src/core/score.js";
 import type { Sighting } from "../src/core/types.js";
 
@@ -805,5 +810,222 @@ describe("casing tallies — #capForms eviction sync", () => {
     s.upsert(sighting({ key: "aa", display: "AA", casing: "mid-cap", ordinal: s.currentOrdinal() + 2, rankGroup: 0 }));
     expect(s.get("aa")!.capDisplay).toBe("AA");
     expect(s.get("aa")!.capCount).toBe(3); // fresh: 1 + 2, not 3 stale + 3
+  });
+});
+
+// ── reset() — branch-purity drop (spec 06 h2.42 / P2.M1.T1.S1) ─────────────
+
+/**
+ * Scripted mixed ingest sequence S, public API ONLY — the exact replay
+ * chain the session_tree handler will use (nextOrdinal per fake message,
+ * upserts with that ordinal, then recordBigramRuns; recordBigramRuns
+ * reads currentOrdinal() inside). Ingredients (spec 06 h2.42: the purity
+ * equivalence only proves what the sequence exercises):
+ *   - all three casing classes; twin suppression (structural-cap then
+ *     lower — capCount collapses via the pending-structural counter);
+ *   - multi-form mid-cap argmax incl. a 2–2 tie resolved by recency
+ *     (the #capForms side-map evidence);
+ *   - userTyped (fromUser) + properName stickiness; rankGroup min-merge;
+ *   - ordinal gaps (a nextOrdinal() with no upserts);
+ *   - repeated bigrams (count > 1, within and across messages);
+ *   - top-3 successor displacement (a 4th distinct successor drops);
+ *   - INDEX_MERGE_BATCH + 44 distinct keys (a consolidation fires
+ *     mid-replay) with a sub-batch #pending tail left at the end — both
+ *     stores must lag identically.
+ */
+function applySeq(s: CandidateStore): void {
+  let o = s.nextOrdinal(); // message 1: casing classes + flags + bigrams
+  s.upsert(sighting({ key: "hapax", ordinal: o, casing: "lower", rankGroup: 2 }));
+  s.upsert(
+    sighting({
+      key: "zorpwibble",
+      display: "ZorpWibble",
+      ordinal: o,
+      casing: "mid-cap",
+      rankGroup: 1,
+      properName: true,
+    }),
+  );
+  s.upsert(
+    sighting({
+      key: "typed",
+      ordinal: o,
+      casing: "lower",
+      rankGroup: 0,
+      fromUser: true,
+    }),
+  );
+  s.upsert(
+    sighting({
+      key: "twins",
+      display: "Twins",
+      ordinal: o,
+      casing: "structural-cap",
+      rankGroup: 2,
+    }),
+  );
+  s.recordBigramRuns([["hapax", "zorpwibble"], ["zorpwibble", "typed"]]);
+
+  o = s.nextOrdinal(); // message 2: twin suppression + rankGroup min-merge
+  s.upsert(
+    sighting({ key: "twins", display: "Twins", ordinal: o, casing: "lower", rankGroup: 2 }),
+  );
+  s.upsert(sighting({ key: "hapax", ordinal: o, casing: "lower", rankGroup: 0 }));
+  s.upsert(
+    sighting({ key: "vendor", display: "Vendor", ordinal: o, casing: "mid-cap", rankGroup: 2 }),
+  );
+  s.recordBigramRuns([["typed", "twins"], ["twins", "vendor"]]);
+
+  o = s.nextOrdinal(); // message 3: multi-form argmax, tie → recency
+  s.upsert(
+    sighting({ key: "vendor", display: "VENDOR", ordinal: o, casing: "mid-cap", rankGroup: 2 }),
+  );
+  s.upsert(
+    sighting({ key: "vendor", display: "Vendor", ordinal: o, casing: "mid-cap", rankGroup: 2 }),
+  );
+  s.upsert(
+    sighting({ key: "vendor", display: "VENDOR", ordinal: o, casing: "mid-cap", rankGroup: 2 }),
+  );
+  s.recordBigramRuns([["vendor", "hub"]]);
+
+  o = s.nextOrdinal(); // message 4: successor displacement begins
+  s.upsert(sighting({ key: "hub", ordinal: o, casing: "lower", rankGroup: 1 }));
+  s.recordBigramRuns([["hub", "alpha"]]);
+  o = s.nextOrdinal(); // ordinal GAP — no upserts; replay must reproduce it
+  s.recordBigramRuns([["hub", "alpha"]]); // repeated bigram, count 2
+  s.recordBigramRuns([["hub", "bravo"], ["hub", "charlie"]]);
+  s.recordBigramRuns([["hub", "zulu"]]); // 4th distinct → sorted-tail drop
+
+  o = s.nextOrdinal(); // message 5: INDEX_MERGE_BATCH + 44 distinct keys —
+  for (let i = 0; i < INDEX_MERGE_BATCH + 44; i++) {
+    // a consolidation fires mid-batch (upsert merges at exactly the batch
+    // size), leaving a sub-batch pending tail below
+    s.upsert(
+      sighting({
+        key: `bulk${String(i).padStart(4, "0")}`,
+        ordinal: o,
+        casing: "lower",
+        rankGroup: 0,
+      }),
+    );
+  }
+  s.recordBigramRuns([["bulk0000", "bulk0001"]]);
+
+  o = s.nextOrdinal(); // message 6: sub-batch tail — #pending non-empty at end
+  for (let i = 0; i < 10; i++) {
+    s.upsert(
+      sighting({
+        key: `tail${String(i).padStart(4, "0")}`,
+        ordinal: o,
+        casing: "lower",
+        rankGroup: 1,
+      }),
+    );
+  }
+  s.recordBigramRuns([["tail0000", "hapax"], ["tail0000", "hapax"]]); // count 2
+}
+
+/** Bigram-cap flood (case 3): 10,050 distinct bigrams in one message —
+ *  past BIGRAM_CAP = 10,000, so #evictBigramsIfOverCap runs, builds the
+ *  lazy #bigramEvictHeap wholesale, and drains to cap (successors.test.ts
+ *  fabricated-runs precedent; the store takes admitted keys on faith). */
+function applyFlood(s: CandidateStore): void {
+  const o = s.nextOrdinal();
+  s.upsert(sighting({ key: "anchor", ordinal: o, casing: "lower", rankGroup: 1 }));
+  const runs: string[][] = [];
+  for (let i = 0; i < 10_050; i++) {
+    runs.push([`f${String(i).padStart(5, "0")}`, "end"]);
+  }
+  s.recordBigramRuns(runs);
+}
+
+/** The full branch-purity comparison battery (spec 06 h2.42): every
+ *  observable surface, exact toEqual / toBe. topSuccessors() is compared
+ *  per word over the union of both stores' entry keys — the documented
+ *  comparison surface (architecture/02 §8); there is no bigram dump API
+ *  and none is needed. */
+function expectPurityEquivalent(a: CandidateStore, b: CandidateStore): void {
+  expect(a.entries()).toEqual(b.entries());
+  expect(a.sortedKeysSnapshot()).toEqual(b.sortedKeysSnapshot());
+  expect(a.size).toBe(b.size);
+  expect(a.bigramSize).toBe(b.bigramSize);
+  expect(a.currentOrdinal()).toBe(b.currentOrdinal());
+  expect(a.rankGroupHistogram()).toEqual(b.rankGroupHistogram());
+  const words = new Set([...a.entries(), ...b.entries()].map((c) => c.key));
+  for (const w of words) {
+    expect(a.topSuccessors(w)).toEqual(b.topSuccessors(w));
+  }
+}
+
+describe("reset() — branch-purity drop (spec 06 h2.42 / P2.M1.T1.S1)", () => {
+  it("empties every public surface; nextOrdinal() restarts at 1", () => {
+    const s = new CandidateStore();
+    applySeq(s);
+    expect(s.size).toBeGreaterThan(0);
+    expect(s.bigramSize).toBeGreaterThan(0);
+    s.reset();
+    expect(s.size).toBe(0);
+    expect(s.entries()).toEqual([]);
+    expect(s.sortedKeysSnapshot()).toEqual([]);
+    expect(s.bigramSize).toBe(0);
+    expect(s.topSuccessors("hapax")).toEqual([]);
+    expect(s.get("hapax")).toBeUndefined();
+    expect(s.rankGroupHistogram()).toEqual({ 0: 0, 1: 0, 2: 0 });
+    expect(s.prefixRange("a")).toEqual([0, 0]);
+    expect(s.currentOrdinal()).toBe(0);
+    expect(s.nextOrdinal()).toBe(1); // replay re-issues 1..N like a fresh store
+  });
+
+  it("reset-then-replay ≡ fresh-store-replay (purity, spec 06 h2.42)", () => {
+    const rebuilt = new CandidateStore();
+    applySeq(rebuilt);
+    rebuilt.reset(); // wholesale drop — dead-branch words cannot linger
+    applySeq(rebuilt); // replay S through the identical public chain
+    const fresh = new CandidateStore();
+    applySeq(fresh); // the fresh /resume of the same branch
+    expectPurityEquivalent(rebuilt, fresh);
+  });
+
+  it("bigram-cap flood: reset re-lazy-ifies the eviction heap", () => {
+    const rebuilt = new CandidateStore();
+    applyFlood(rebuilt);
+    expect(rebuilt.bigramSize).toBe(10_000); // saturated + drained: heap built
+    rebuilt.reset();
+    applyFlood(rebuilt);
+    const fresh = new CandidateStore();
+    applyFlood(fresh);
+    expect(rebuilt.bigramSize).toBe(10_000);
+    expect(fresh.bigramSize).toBe(10_000);
+    expectPurityEquivalent(rebuilt, fresh);
+  });
+
+  it("#capForms isolation: re-created keys inherit no stale form counts", () => {
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({ key: "acme", display: "Acme", casing: "mid-cap", rankGroup: 2 }),
+    );
+    s.upsert(
+      sighting({ key: "acme", display: "Acme", casing: "mid-cap", ordinal: 2, rankGroup: 2 }),
+    );
+    expect(s.get("acme")!.capDisplay).toBe("Acme"); // argmax from {Acme: 2}
+    s.reset();
+    const o = s.nextOrdinal();
+    s.upsert(
+      sighting({ key: "acme", display: "ACME", casing: "mid-cap", ordinal: o, rankGroup: 2 }),
+    );
+    // A stale {Acme: 2} tally would keep capDisplay on "Acme" (1 ≥ 2
+    // fails the argmax bump); fresh evidence hands it to "ACME".
+    expect(s.get("acme")!.capDisplay).toBe("ACME");
+    expect(s.get("acme")!.capCount).toBe(1); // fresh tally, not 2 stale + 1
+  });
+
+  it("reset on a fresh store is a safe no-op (empty-consolidation edge)", () => {
+    const s = new CandidateStore();
+    s.reset();
+    expect(s.prefixRange("")).toEqual([0, 0]); // query path on the reset store
+    applySeq(s);
+    const fresh = new CandidateStore();
+    applySeq(fresh);
+    expectPurityEquivalent(s, fresh);
   });
 });

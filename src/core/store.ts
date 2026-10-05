@@ -23,8 +23,10 @@
  * ORDINAL: the pipeline assigns message ordinals (P1.M3.T2) — it calls
  * nextOrdinal() ONCE per message BEFORE processing that message's
  * sightings and stamps them into each Sighting. upsert never advances the
- * counter; nextOrdinal() starts at 1 and is strictly monotonic, never
- * reset. currentOrdinal() is the read-only view for consumers (eviction,
+ * counter; nextOrdinal() starts at 1 and is strictly monotonic — only
+ * reset() (the h2.42 wholesale drop, the sole zeroing path) restarts it
+ * at 0, so a post-reset replay re-issues 1..N exactly like a fresh
+ * store. currentOrdinal() is the read-only view for consumers (eviction,
  * P1.M2.T4.S3; restore replay, P1.M3.T2.S3; /acwords, P1.M3.T4.S1).
  *
  * PREFIX INDEX (P1.M2.T4.S2, PRD §06 h2.35): a sorted array of lowercase
@@ -258,8 +260,10 @@ export class CandidateStore {
   // re-validate), and rebuilt when stale-node dirt exceeds the live map.
   #bigramEvictHeap: EvictNode[] | null = null;
 
-  /** Issue the next message ordinal: 1, 2, 3… strictly monotonic, never
-   *  reset. The ingest pipeline calls this once per message. */
+  /** Issue the next message ordinal: 1, 2, 3… strictly monotonic;
+   *  reset() (the h2.42 wholesale drop) is the ONLY path that zeroes the
+   *  counter — a post-reset replay re-issues 1..N like a fresh store.
+   *  The ingest pipeline calls this once per message. */
   nextOrdinal(): number {
     return ++this.#ordinal;
   }
@@ -268,6 +272,56 @@ export class CandidateStore {
    *  Read-only — advancing happens only through nextOrdinal(). */
   currentOrdinal(): number {
     return this.#ordinal;
+  }
+
+  /** Wholesale in-place drop — spec 06 "Branch purity (2026-10 owner
+   *  rule)" (PRD h2.42), the "old store is dropped" half of spec 05
+   *  "Branch navigation rebuild (`session_tree`)" step 4 ("the old store
+   *  is dropped first and the replay fills a fresh store"): every private
+   *  field is re-assigned to its field-initializer value — the word map,
+   *  the #capForms casing-tally evidence (a re-created key must not
+   *  inherit stale form counts), the ordinal counter, the prefix index
+   *  (#sortedKeys / #pending / #tombstones die together — nothing to
+   *  reconcile), the bigram map, the successor index, and the bigram
+   *  eviction heap (back to null, its exact "not yet built" lazy state).
+   *
+   *  PURITY EQUIVALENCE: reset() followed by replaying the branch
+   *  snapshot through the normal public chain (nextOrdinal() → upsert()
+   *  → recordBigramRuns()) yields a store deep-equal to a fresh
+   *  CandidateStore fed the same sequence — "a rebuilt store is identical
+   *  to a fresh /resume of the same branch" (spec 06 h2.42, pinned in
+   *  tests, 09). The #ordinal re-zero is the hinge: replay re-issues
+   *  ordinals 1..N exactly as a fresh store would, so replayed
+   *  firstSeenOrdinal / lastSeenOrdinal — and every eviction score
+   *  derived from them — line up bit-for-bit. Eviction during replay is
+   *  deterministic for identical sequences (same order, same salience
+   *  inputs).
+   *
+   *  MECHANICS: wholesale O(1) reference replacement — the old structures
+   *  are dropped, never cleared in place and never consolidated first
+   *  (h2.42: "replaced WHOLESALE, in-place"); GC reaps them.
+   *
+   *  CALLER CONTRACT (spec 05 step 4 / spec 07): the session_tree handler
+   *  discards the pending ingest queue, calls reset(), then replays the
+   *  branch snapshot oldest→newest; every query path is held at the gate
+   *  until replay settle, so the emptied intermediate state is never
+   *  observable. Live topSuccessors() arrays handed out before reset are
+   *  orphaned by design (they reference the dropped successor index);
+   *  sanctioned readers never hold one across the gate. Consumed by
+   *  P2.M1.T2.S1's session_tree handler — no caller is wired before it.
+   *
+   *  RAM-only by construction: no I/O, no new imports, nothing beyond
+   *  these nine in-memory re-assignments (no-persistence discipline). */
+  reset(): void {
+    this.#map = new Map();
+    this.#capForms = new Map();
+    this.#ordinal = 0; // replay re-issues 1..N like a fresh /resume — the equivalence hinge
+    this.#sortedKeys = [];
+    this.#pending = [];
+    this.#tombstones = 0;
+    this.#bigrams = new Map();
+    this.#successorIndex = new Map();
+    this.#bigramEvictHeap = null; // back to the "not yet built" lazy state
   }
 
   /** Record one admitted occurrence (PRD §06 h2.36; casing tallies per
