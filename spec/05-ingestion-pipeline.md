@@ -44,7 +44,8 @@ shapes.
 On `session_start` with reason `"startup"` or `"resume"`:
 
 1. Access session history via the pi session API (read messages from the
-   current session in order).
+   current session in order — the ACTIVE branch, `sessionManager.getBranch()`;
+   never every tree entry: abandoned branches are alternative histories).
 2. Replay oldest → newest through the identical pipeline (same gates, same
    counters) in the background (chunked, debounced startup is fine — the
    store fills progressively).
@@ -59,6 +60,84 @@ On `session_start` with reason `"startup"` or `"resume"`:
 Budget: 200k tokens (~800 KB) ≈ 30–50 ms total. This is the **only** cold-start
 work; there is no persistence layer by design (rebuild beats deserialize at
 this scale; see decision log).
+
+## Branch navigation rebuild (`session_tree`; 2026-10 owner rule; status: adopted ahead of implementation — code lands with this spec)
+
+Pi fires `session_tree` (`{ newLeafId, oldLeafId, summaryEntry?,
+fromExtension? }`) after every `/tree` navigation — and NO `session_start`
+accompanies it (that event's reasons are `startup | reload | new | resume |
+fork` only), so before this rule hapax had no reaction to branch switches:
+words ingested from messages on an abandoned branch lingered as append-only
+residue (owner scenario: a misspelled word submitted, then `/tree` back to
+edit it away — the misspelling, dictionary-absent and therefore rank group 0,
+kept surfacing as a top suggestion on branches where it never existed).
+
+**Rule: the store is a pure function of the active branch's replayable
+history.** On `session_tree`:
+
+1. **Guard:** `newLeafId === oldLeafId` → skip (no-op navigation).
+2. **Discard the pending ingest queue.** Texts in the 300 ms debounce
+   window are from pre-navigation messages; any of them on the new path is
+   re-captured by the snapshot (below), any other is dead branch — discard
+   is always correct: never loses a live word, never double-counts.
+3. **Snapshot** `ctx.sessionManager.getBranch()` — the platform-sanctioned
+   source for branch-sensitive state.
+4. **Replay** the snapshot oldest→newest through the IDENTICAL restore
+   pipeline above (same gates, counters, bigram capture, eviction),
+   IN-PLACE: the old store is dropped first and the replay fills a fresh
+   store + successor index. No query can observe the intermediate state —
+   every query path is held at the gate until settle (07), which is what
+   makes the in-place rebuild safe (no transient double-store memory
+   spike).
+5. **`onSettled`** fires exactly once (finish, abort on dictionary
+   failure, or collection throw), releasing the gate — same contract as
+   restore.
+
+**Performance (from 09's measured basis):** the handler's synchronous work
+(queue discard + entry-reference snapshot) is sub-millisecond — the `/tree`
+operation itself gains ~0 ms. The replay is background and chunk-yielded per
+the standard ≤ 64 KB rule (~30–60 ms at ~150k tokens / 400 KB at the
+measured ~8 KB/ms ingest throughput; ~100 ms at 300k), never blocking a
+keystroke. The only user-visible cost is the first post-`/tree` query
+waiting behind the ≤ 500 ms gate — it resolves at replay settle (tens of
+ms), typically before a human finishes editing the re-opened prompt.
+
+**Compaction interplay (binding):** the rebuild triggers ONLY on
+`session_tree`. Compaction events NEVER trigger one — the store survives
+compaction untouched ("Compaction" below, unchanged). Accepted consequence:
+a post-compaction tree navigation rebuilds from the branch as-replayable,
+losing pre-compaction words — exactly the store a `/resume` of that branch
+would build. Unioning pre-compaction survivors into the replay was rejected
+(it resurrects dead-branch words too).
+
+**Branch summaries are never ingested.** `summaryEntry` text never enters
+the store; abandoned-branch vocabulary re-enters only via real messages on
+the new branch (if the model echoes summary vocabulary in its replies, it
+ingests naturally through `message_end`).
+
+**Why not an incremental undo journal (rejected 2026-10, recorded for
+history):** exact message-anchored rollback is buildable — a journal of
+every admitted sighting and eviction (count deltas, prior display casing,
+prior flag states, evicted-record restoration) walked back to the common
+ancestor, then the new branch's tail replayed forward. Rejected on cost,
+not possibility: the store's merge semantics are lossy by design (sticky
+`userTyped`, recency-wins display casing, `rankGroup = min()` merge,
+batched eviction that drops records), so an exact undo must journal every
+merge input — a second implementation of each semantic whose drift from
+forward-apply would yield a store ≠ fresh replay, a bug class visible only
+on a `/tree` hop. Journal memory grows with total sightings unbounded by
+the 20k store cap (~1–2 MB at 300k tokens against the 6 MB budget), and any
+depth-capped journal still requires the full-replay fallback beyond its
+cap — the replay path must exist regardless, making the journal purely
+additive complexity for an O(dead-tail) speedup over an already-background
+30–100 ms pass. Door explicitly open (owner, 2026-10): a journal may layer
+on later as an optimization, with this rebuild path demoted to the
+determinism check that catches journal drift.
+
+**Known gap (documented, not handled):** `context_edit` message
+replacements can leave an edited entry's OLD wording in the store (no
+clean event fires; same staleness class, smaller blast radius). Revisit
+only if observed to bite.
 
 ## Compaction
 

@@ -33,8 +33,22 @@ Backing structures:
   entry point) + fuzzy tier/score over the range + rank (tier →
   sessionCount → length → lex, 04) + top 8.
 
-No persistence. Store is created at `session_start`, dropped at
-`session_shutdown`.
+No persistence. Store is created at `session_start`, rebuilt in-place at
+`session_tree` (Branch purity below), dropped at `session_shutdown`.
+
+## Branch purity (2026-10 owner rule)
+
+The store — and the M2 successor index — is a **pure function of the active
+branch's replayable history**: identical gates and merge semantics applied
+to the same message sequence yield an identical store. That determinism is
+what makes the `session_tree` rebuild (05) exact: on branch navigation the
+store is replaced WHOLESALE, in-place (old store dropped, snapshot replay
+fills a fresh store and successor index; the query gate makes the
+intermediate state unobservable, 07). No union with the previous store, no
+incremental rollback, no survival of dead-branch words — a rebuilt store is
+identical to a fresh `/resume` of the same branch (pinned in tests, 09).
+Eviction during replay is deterministic (same order, same salience inputs),
+so restore-time eviction consequences (05) apply unchanged.
 
 ## Upsert semantics
 

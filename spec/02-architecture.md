@@ -54,7 +54,8 @@ hapax/
 │   └── pi/                   # pi extension adapter
 │       ├── index.ts          # extension factory, event wiring
 │       ├── ingest.ts         # message_end handling, debounce, chunking,
-│       │                     #   session-history restore replay
+│       │                     #   session-history restore replay +
+│       │                     #   session_tree branch rebuild
 │       ├── provider.ts       # autocomplete provider — FALLBACK display
 │       │                     #   path (trigger regexes, debounce,
 │       │                     #   hysteresis, chaining M2)
@@ -131,6 +132,10 @@ build script uses only node stdlib). Do not add dependencies.
 - `session_start { reason }`: lazily load dictionary (first use), rebuild store
   by replaying session history oldest→newest in background (reason `"resume"`
   or `"startup"` with existing history).
+- `session_tree`: branch navigation (`/tree`) — discard the pending ingest
+  queue, snapshot `ctx.sessionManager.getBranch()`, rebuild store + successor
+  index in background through the identical restore pipeline; all query paths
+  gated until settle (05, 07).
 - `message_end`: schedule ingestion.
 - `session_shutdown`: drop store and dictionary references; nothing to flush
   (no persistence).

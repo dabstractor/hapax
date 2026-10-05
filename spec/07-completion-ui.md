@@ -33,6 +33,13 @@ completions serving stale vocabulary after any `/resume` (violating
 acceptance item 3; live-observed via the §09 technique). The fallback
 path re-registers a fresh provider per fire and needs no such step.
 
+**Branch navigation (2026-10):** `session_tree` (`/tree`) fires no
+`session_start`, so it carries its own rebind: same fresh-composition rule —
+the widget re-composes around the remembered pre-hapax factory, the
+fallback provider re-reads the new pipeline instance — both bound to the
+store rebuilt from the active branch (05). Never serve vocabulary from an
+abandoned branch.
+
 Considered and rejected (2026-10, recorded for history): a single
 synthesized menu item whose label is the joined line (zero pi-tui
 changes, but arrow selection of non-top words is lost) and waiting
@@ -93,7 +100,8 @@ prompt submission (the Enter that actually submits, not a
 newline-inserting one; the same keystroke the Enter-submits proxy
 forwards), `before_agent_start` (the same turn boundary that resets
 the chain state), `session_start` re-fire (rebind — never leave a
-claimed row serving a dead session), and `session_shutdown`.
+claimed row serving a dead session), `session_tree` (branch rebind — same
+rationale; 05), and `session_shutdown`.
 Terminal resize and stock-UI reflow re-render the layout but do NOT
 release the claim — the row returns blank or with content per current
 state; the claim is widget-layer logical state, not a property of any
@@ -408,6 +416,12 @@ missing. Fresh sessions (no replay) resolve the signal immediately —
 the gate is a no-op there. Forced (Tab) requests wait under the same
 bound during that window only; the synchronous-query Tab contract
 (rule 1) applies to the steady state, which is unchanged.
+
+The `session_tree` branch rebuild (05) reuses this gate verbatim: during
+the replay window every query path — forced requests included — waits
+under the same ≤ 500 ms bound, and because nothing can observe the store
+mid-rebuild, the rebuild runs IN-PLACE (old store dropped, snapshot replay
+fills a fresh one) with no transient double-store memory spike.
 
 ### Tab-open gesture: root cause (traced) and mitigation
 

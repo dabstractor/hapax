@@ -97,6 +97,11 @@
   batch, per spec/06's batch-of-256 rule), dropping the lowest
   evictionScore victims; userTyped survives.
 - Prefix index rebuild-after-dirty correctness.
+- Branch purity (2026-10, spec 06): replaying a fixed message sequence
+  twice yields identical stores; a store built incrementally
+  (message_end sequence) equals the store rebuilt from a `getBranch()`
+  snapshot of the same sequence — no dead-branch words survive, nothing
+  double-counts.
 
 **dictionary.test.ts**
 - Round-trip: build a tiny table in-memory (10 words), write format, load,
@@ -121,6 +126,12 @@
   (≤ maxWaitMs); settled gate is pure pass-through; a rejected replay
   promise never wedges it; restoreFromHistory's onSettled fires
   exactly once (finish, abort, empty).
+- Branch rebuild (2026-10, spec 05): `session_tree` discards the pending
+  ingest queue (queued-but-unflushed texts from the dead branch never
+  reach the new store; texts on the new path are re-captured by the
+  snapshot — never lost, never double-counted); `newLeafId === oldLeafId`
+  skips the rebuild; queries during the replay window wait behind the same
+  bounded gate as resume.
 - Chain one-shot grant (test/chain.test.ts): typing through the granted
   offer disarms at the next word boundary (normal gated path answers);
   same-word narrowing (incl. backspace) keeps the chain; acceptance
@@ -187,6 +198,11 @@
   candidate's display casing.
 - Highlight resets to top on every set change; debounce/hysteresis
   and the startup gate carry over to the widget.
+- Branch rebind (2026-10, spec 05/07): `session_tree` releases a claimed
+  row and re-binds the widget to the rebuilt store — a fragment typed
+  after navigation never completes from abandoned-branch vocabulary
+  (store purity is asserted at the core layer; here assert the widget
+  reads the new pipeline instance).
 
 ## Integration acceptance (manual or scripted via pi)
 
@@ -230,6 +246,17 @@
    shows no row at all. Live verification mandatory — this is a
    layout behavior, invisible to unit doubles (§Live verification
    technique).
+9. **Branch hygiene (2026-10):** the owner scenario, live: submit a prompt
+   containing a rare misspelled word (dictionary-absent — probe with
+   `node tools/calibrate-bands.mjs <word>`), Ctrl+C the turn, `/tree` back
+   to that prompt, edit the misspelling out, resubmit — the misspelling
+   never appears in suggestions or the `/acwords` store dump afterwards;
+   the corrected word does. The `/tree` navigation itself shows no
+   perceptible delay; completions on the first word typed immediately
+   after navigation arrive late-but-present (gate) and settle within the
+   bound. Item 4 (compaction survival) re-checked: unaffected absent a
+   tree navigation; a post-compaction `/tree` rebuilds from the branch as
+   replayable (accepted, 05).
 
 ## Live verification technique (binding)
 
@@ -277,6 +304,10 @@ The operative user-facing budget is 02's restore figure — full
 (~97 ms); the CI gate enforces the 3× variance allowance (180 ms) as
 the hard line. Do not re-tighten this row to 60 ms without
 re-optimizing the ingest path first.
+
+The `session_tree` branch rebuild (05) runs the identical restore/replay
+code path — the existing ingest and restore budgets apply; no separate
+gate row.
 
 ## Tuning protocol
 
