@@ -310,14 +310,14 @@
       "type": "Phase",
       "id": "P2",
       "title": "Branch-hygiene rebuild on session_tree (PRD R3)",
-      "status": "Planned",
+      "status": "Ready",
       "description": "Wire the spec'd /tree reaction: the store and successor index become a pure function of the active branch's replayable history — guarded, gated in-place rebuild with rebind and line-claim release. INDEPENDENT of P1 (may land before or after); purity assertions automatically cover tallies/series once P1 has landed.",
       "milestones": [
         {
           "type": "Milestone",
           "id": "P2.M1",
           "title": "session_tree wiring, gated in-place rebuild, rebind, purity",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Store reset + pipeline queue-discard + re-armable gate primitives, then the session_tree handler (guard, discard, snapshot, rebuild, rebind, claim release), then the spec-09-mandated purity battery.",
           "tasks": [
             {
@@ -366,14 +366,14 @@
               "type": "Task",
               "id": "P2.M1.T2",
               "title": "session_tree handler: guarded gated in-place rebuild + rebind + claim release; purity battery",
-              "status": "Planned",
+              "status": "Ready",
               "description": "The handler itself (event table, guard, discard, snapshot, rebuild via restoreFromHistory, gate re-arm, dual-path rebind, claim release) and the spec-09-mandated branch-purity/rebuild acceptance battery.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M1.T2.S1",
                   "title": "session_tree handler: guard, queue discard, snapshot, gated in-place rebuild, rebind, claim release",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M1.T1.S1",
@@ -398,7 +398,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T2.S2",
                   "title": "Branch-purity + rebuild acceptance battery (spec/09-mandated)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M1.T2.S1"
@@ -437,14 +437,14 @@
               "type": "Task",
               "id": "P3.M1.T1",
               "title": "Widget Tab defers to pi's open stock menu (fix the pre-existing red repro)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "While pi's own autocomplete menu is open (Tab-forced file menu, slash-argument menu), the widget proxy Tab forwards verbatim so pi's menu accepts its item — never inserts a hapax word. Acceptance = the three red cases in test/defer-pi-menu.repro.test.ts pass and the file is hardened into a regression suite.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P3.M1.T1.S1",
                   "title": "Pre-check isShowingAutocomplete in the widget Tab branch; harden repro into a regression suite",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: all three red cases fail at expect(pi.applied).toEqual(['templates/']) with Received: [] — the 2nd Tab never reaches pi's applyCompletion; the harness (test/defer-pi-menu.repro.test.ts, 207 lines) drives the REAL pi-tui Editor as the widget factory's inner editor with a pi-provider double; case 3 (fake timers, menuDelayMs 400) proves static context classification cannot work — deferral must key on the menu's ACTUAL open state. Precedent guard: editor.ts:111-115 uses innerAny.isShowingAutocomplete?.() === true. decideWidgetKey (widget.ts:1194) is PURE (data/visible/count/highlightIndex/interacted/keybindings — no editor state) and MUST STAY PURE; editor-state checks belong in the wiring (the Enter-submit seam is the precedent). Recommended insertion: in widgetHandleInput (widget.ts:1592+), after decideWidgetKey and BEFORE the tab-insert handling (~:1688) (architecture/03 §R4, architecture/04 §1).\n2. INPUT: none — existing widget key machine.\n3. LOGIC: Implement spec 07 h2.46 ('stock path/slash completion is untouched by construction') + h2.51 never-hijack. In widgetHandleInput: if the key is Tab and inner.isShowingAutocomplete?.() === true → return forwardInput(data) verbatim (before any insert/suppress decision executes) — pi's menu accepts its highlighted item; hapax never inserts a word over an open pi menu. This single rule covers all three cases, including the hesitation/race case (deferral keys on the menu actually being open, not on the hapax line's armed state). Keep the 4th (passing, contrast) case green — classified pure-slash deferral unchanged; keep the Enter-submits guard untouched. Harden the file: update the header ('not a regression suite yet' → it now is one), strip the console.log scaffolding, keep assertions. Mocking: the file's own harness (real Editor + provider double) — extend test/widget.test.ts key-handling bullets for the deferral state as well.\n4. OUTPUT: defer-pi-menu battery green (3 former reds + contrast case) — the gauntlet precondition for P3.M1.T2.S2. NOTE: key-handling change on the widget path → live verification in P3.M1.T2.S3 is BINDING.\n5. DOCS: [Mode A] JSDoc on the Tab branch documenting the deferral rule and its spec anchor (07 h2.46 + h2.51). Rides with the work.",

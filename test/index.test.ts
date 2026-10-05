@@ -1,6 +1,6 @@
 /**
  * hapax extension factory suite (P1.M3.T5.S1, PRD §02 h2.13/h2.12/h2.10):
- * the default export registers exactly the four pi.on handlers and does
+ * the default export registers exactly the five pi.on handlers and does
  * NOTHING else at factory time — all work defers to session_start, which
  * wires loadConfig (cwd + trust + notify), the lazy dictionary (loads on
  * first lookup; load failure = exactly one error notify + permanent
@@ -28,6 +28,7 @@ import type {
   MessageEndEvent,
   SessionEntry,
   SessionStartEvent,
+  SessionTreeEvent,
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteProvider } from "@earendil-works/pi-tui";
 import {
@@ -44,6 +45,7 @@ import hapax, {
   resolveDictPath,
 } from "../src/pi/index.js";
 import type { AgentMessage } from "../src/pi/ingest.js";
+import { IngestPipeline } from "../src/pi/ingest.js";
 import { isWidgetWrapper, widgetOptsOf } from "../src/pi/widget.js";
 import { CandidateStore } from "../src/core/store.js";
 import { rankMatches } from "../src/core/query.js";
@@ -282,16 +284,17 @@ function wired(over?: Parameters<typeof fakeCtx>[0]) {
 // --- factory registration ------------------------------------------------------
 
 describe("factory registration", () => {
-  it("registers exactly the four lifecycle handlers — and nothing else", () => {
+  it("registers exactly the five lifecycle handlers — and nothing else", () => {
     const { on, handlers } = wired();
 
     expect(on.mock.calls.map((c) => c[0])).toEqual([
       "session_start",
+      "session_tree",
       "message_end",
       "session_shutdown",
       "before_agent_start",
     ]);
-    expect(handlers.size).toBe(4);
+    expect(handlers.size).toBe(5);
   });
 
   it("has zero side effects at factory time — no I/O, no constructors, no timers", () => {
@@ -930,5 +933,266 @@ describe("dual-path display branch (spec 07 h2.42)", () => {
     expect(typeof opts!.chain.reset).toBe("function"); // the chain machine
     expect(opts!.restoreReady).toBeInstanceOf(Promise); // startup gate signal
     expect(typeof opts!.onKeystroke).toBe("function"); // shared input clock tick
+  });
+});
+
+// --- session_tree — branch-hygiene rebuild (spec 05 h2.37 / P2.M1.T2.S1) --------
+
+describe("session_tree — branch-hygiene rebuild (spec 05 h2.37 / P2.M1.T2.S1)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks(); // scope the prototype spies (discardPending/reset)
+  });
+
+  /** Fire-shaped session_tree event. `extra` carries summaryEntry etc. */
+  const treeEvent = (
+    newLeafId: string | null,
+    oldLeafId: string | null,
+    extra: Record<string, unknown> = {},
+  ): SessionTreeEvent =>
+    ({ type: "session_tree", newLeafId, oldLeafId, ...extra }) as SessionTreeEvent;
+
+  /** Branch fixture in leaf→root order (as the real getBranch returns);
+   *  restoreFromHistory reverses the copy → replay 'alpha beta' then
+   *  'alpha gamma', so 'alpha' counts BOTH messages. Dict has only "the"
+   *  → all three words are group 0 and admitted. */
+  const branchLeafFirst = (): SessionEntry[] => [
+    msgEntry("e2", userMsg("alpha gamma")),
+    msgEntry("e1", userMsg("alpha beta")),
+  ];
+
+  /** Foreign editor factory (what pi-vim et al. install) — PRIMARY path. */
+  const stockFactory = (): { handleInput: (d: string) => string } => ({
+    handleInput: (d: string) => d,
+  });
+
+  it("guard: equal leaf ids (incl. both null) and pre-session_start fires are strict no-ops", () => {
+    useDict();
+    const { handlers, ctx, getBranch, setEditorComponent, addAutocompleteProvider } =
+      wired();
+
+    // Before any session_start the factory slots are null — even a
+    // real-looking navigation must not touch anything.
+    handlers.get("session_tree")!(treeEvent("b", "a"), ctx);
+    expect(getBranch).not.toHaveBeenCalled();
+    expect(setEditorComponent).not.toHaveBeenCalled();
+
+    startSession(handlers.get("session_start")!, ctx, "new"); // probe: getBranch ×1
+    const before = getBranch.mock.calls.length;
+    handlers.get("session_tree")!(treeEvent("a", "a"), ctx);
+    handlers.get("session_tree")!(treeEvent(null, null), ctx);
+    expect(getBranch.mock.calls.length).toBe(before); // not even read
+    expect(setEditorComponent).not.toHaveBeenCalled();
+    expect(addAutocompleteProvider).toHaveBeenCalledTimes(1); // never re-registered
+  });
+
+  it("real navigation discards the pending queue before reset — pre-navigation text never lands", async () => {
+    useDict();
+    enableDebug();
+    const { handlers, ctx, registerCommand, getBranch } = wired();
+    startSession(handlers.get("session_start")!, ctx, "new");
+    const acwords = acwordsHandler(registerCommand);
+
+    // Dead-branch text sits in the 300 ms debounce window (armed, not drained).
+    await endMessage(handlers.get("message_end")!, ctx, userMsg("deadbranchword zzq"));
+    getBranch.mockReturnValue([msgEntry("e1", userMsg("alpha beta"))]);
+
+    const discardSpy = vi.spyOn(IngestPipeline.prototype, "discardPending");
+    const resetSpy = vi.spyOn(CandidateStore.prototype, "reset");
+    handlers.get("session_tree")!(treeEvent("leaf2", "leaf1"), ctx);
+    expect(discardSpy).toHaveBeenCalledOnce(); // synchronous in the handler
+    // The rebuild is fire-and-forget: flush() yields before reset() runs.
+    await vi.waitFor(() => expect(resetSpy).toHaveBeenCalledOnce());
+    // Composition order pinned: the queue dies BEFORE the wholesale drop.
+    expect(discardSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      resetSpy.mock.invocationCallOrder[0]!,
+    );
+
+    await vi.waitFor(async () => {
+      expect(await dump(acwords)).toContain("alpha"); // branch replay landed
+    });
+    await settle(); // a surviving debounce timer would fire inside this window
+    const text = await dump(acwords);
+    expect(text).toContain("beta");
+    expect(text).not.toContain("deadbranchword"); // discarded, never ingested
+  });
+
+  it("in-place rebuild: the SAME store instance is reset then refilled with branch counts", async () => {
+    useDict();
+    enableDebug();
+    const { handlers, ctx, registerCommand, getBranch } = wired();
+    startSession(handlers.get("session_start")!, ctx, "new");
+    const acwords = acwordsHandler(registerCommand);
+
+    // A fully-drained dead-branch word — genuinely IN the store before
+    // navigation (structural in-place identity: the same instance the
+    // dump reads is what gets reset and refilled).
+    await endMessage(handlers.get("message_end")!, ctx, userMsg("orphanword zz"));
+    await settle();
+    expect(await dump(acwords)).toContain("orphanword");
+
+    getBranch.mockReturnValue(branchLeafFirst());
+    handlers.get("session_tree")!(treeEvent("leaf2", "leaf1"), ctx);
+
+    await vi.waitFor(async () => {
+      const text = await dump(acwords);
+      expect(text).toMatch(/alpha\s+×2/); // both branch messages counted
+    });
+    const text = await dump(acwords);
+    expect(text).toContain("beta");
+    expect(text).toContain("gamma");
+    expect(text).not.toContain("orphanword"); // wholesale drop erased the residue
+    expect(text).toMatch(/\(ordinal 2\)/); // reset re-zeroed; replay re-issued 1..2
+  });
+
+  it("fallback: the SAME registered provider serves branch words after rebuild — never re-registered", async () => {
+    useDict();
+    const { handlers, ctx, addAutocompleteProvider, getBranch } = wired();
+    startSession(handlers.get("session_start")!, ctx, "new");
+    const factory = addAutocompleteProvider.mock.calls[0]![0] as (
+      c: AutocompleteProvider,
+    ) => AutocompleteProvider;
+    const provider = factory(currentFake()); // builds + retains the gated provider
+
+    getBranch.mockReturnValue(branchLeafFirst());
+    handlers.get("session_tree")!(treeEvent("leaf2", "leaf1"), ctx);
+
+    expect(addAutocompleteProvider).toHaveBeenCalledTimes(1); // armed, not replaced
+    await vi.waitFor(async () => {
+      const result = await provider.getSuggestions(["#alp"], 0, 4, {
+        signal: new AbortController().signal,
+      });
+      const values = result?.items.map((i) => i.value) ?? [];
+      expect(
+        values.some((v) => v.startsWith("alpha")),
+        `menu items: ${JSON.stringify(values)}`,
+      ).toBe(true);
+    });
+  });
+
+  it("widget: fresh composition around the remembered pre-hapax inner — same store, new gate, no stacking", () => {
+    const stock = stockFactory();
+    let current: unknown = stock; // pi's editor slot, pre-seeded foreign
+    const { handlers, ctx, addAutocompleteProvider, setEditorComponent, getEditorComponent, getBranch } =
+      wired({ editorFactory: current });
+    setEditorComponent.mockImplementation((f: unknown) => {
+      current = f;
+    });
+    getEditorComponent.mockImplementation(() => current);
+
+    startSession(handlers.get("session_start")!, ctx, "new");
+    const wrapper1 = current;
+    const opts1 = widgetOptsOf(wrapper1)!;
+    expect(opts1.inner).toBe(stock); // wrapped the foreign factory
+
+    getBranch.mockReturnValue([]); // empty branch — rebuild is a trivial refill
+    handlers.get("session_tree")!(treeEvent("leaf2", "leaf1"), ctx);
+
+    expect(setEditorComponent).toHaveBeenCalledTimes(2); // replaced, not stacked
+    const wrapper2 = current;
+    expect(wrapper2).not.toBe(wrapper1);
+    expect(isWidgetWrapper(wrapper2)).toBe(true);
+    const opts2 = widgetOptsOf(wrapper2)!;
+    expect(opts2.inner).toBe(stock); // the ORIGINAL inner — never wrapper-around-wrapper
+    expect(opts2.inner).not.toBe(wrapper1);
+    expect(opts2.store).toBe(opts1.store); // SAME in-place-reset instance
+    expect(opts2.claim).toBe(opts1.claim); // reused session claim (released → unclaimed row)
+    expect(opts2.restoreReady).not.toBe(opts1.restoreReady); // THIS rebuild's gate
+    expect(opts2.config.triggerChar).toBe("#"); // sessionConfig flowed through
+    expect(typeof opts2.onKeystroke).toBe("function"); // sessionTickInputClock
+    expect(addAutocompleteProvider).not.toHaveBeenCalled(); // still provider-free
+  });
+
+  it("claim released on a real navigation — and only then (07 h3.9)", () => {
+    useDict();
+    const stock = stockFactory();
+    let current: unknown = stock;
+    const { handlers, ctx, setEditorComponent, getEditorComponent, getBranch } = wired({
+      editorFactory: current,
+    });
+    setEditorComponent.mockImplementation((f: unknown) => {
+      current = f;
+    });
+    getEditorComponent.mockImplementation(() => current);
+
+    startSession(handlers.get("session_start")!, ctx, "new");
+    const claim = widgetOptsOf(current)!.claim!;
+    claim.arm();
+    expect(claim.held()).toBe(true);
+
+    handlers.get("session_tree")!(treeEvent("a", "a"), ctx); // guard no-op
+    expect(claim.held()).toBe(true); // untouched
+
+    getBranch.mockReturnValue([]);
+    handlers.get("session_tree")!(treeEvent("b", "a"), ctx); // real navigation
+    expect(claim.held()).toBe(false); // released
+  });
+
+  it("summaryEntry is never ingested (spec 05 h2.37 summary rule)", async () => {
+    useDict();
+    enableDebug();
+    const { handlers, ctx, registerCommand, getBranch } = wired();
+    startSession(handlers.get("session_start")!, ctx, "new");
+    const acwords = acwordsHandler(registerCommand);
+
+    getBranch.mockReturnValue([msgEntry("e1", userMsg("alpha beta"))]);
+    handlers.get("session_tree")!(
+      treeEvent("leaf2", "leaf1", {
+        summaryEntry: {
+          type: "branch_summary",
+          id: "bs1",
+          parentId: null,
+          timestamp: "2025-01-01T00:00:00.000Z",
+          fromId: "leaf1",
+          summary: "zxqsummaryword wrdsonlyinsummary",
+        },
+      }),
+      ctx,
+    );
+
+    await vi.waitFor(async () => {
+      expect(await dump(acwords)).toContain("alpha");
+    });
+    const text = await dump(acwords);
+    expect(text).not.toContain("zxqsummaryword");
+    expect(text).not.toContain("wrdsonlyinsummary");
+  });
+
+  it("compaction never triggers a rebuild — no compact handler exists (regression pin)", async () => {
+    useDict();
+    enableDebug();
+    const { on, handlers, ctx, registerCommand, getBranch } = wired();
+    // session_tree is the ONLY branch-reaction event; every compact event
+    // is absent by construction (spec 05 h2.37 compaction interplay).
+    expect(on.mock.calls.some((c) => String(c[0]).includes("compact"))).toBe(false);
+
+    startSession(handlers.get("session_start")!, ctx, "new");
+    const acwords = acwordsHandler(registerCommand);
+    await endMessage(handlers.get("message_end")!, ctx, userMsg("alpha beta"));
+    await settle();
+    expect(await dump(acwords)).toContain("alpha"); // ingested normally
+    expect(getBranch.mock.calls.length).toBe(1); // probe only — no rebuild ran
+  });
+
+  it("disabled runtime: a real navigation is a full no-op (guard precedes everything)", async () => {
+    useCorruptDict();
+    enableDebug();
+    const { handlers, ctx, notify, registerCommand, getBranch, setEditorComponent } =
+      wired();
+    startSession(handlers.get("session_start")!, ctx, "new");
+    const acwords = acwordsHandler(registerCommand);
+    await endMessage(handlers.get("message_end")!, ctx, userMsg("hello world"));
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledOnce()); // dict failed → disabled
+    await settle();
+    const frozen = await dump(acwords);
+    const branchCalls = getBranch.mock.calls.length; // the session_start probe
+    const discardSpy = vi.spyOn(IngestPipeline.prototype, "discardPending");
+
+    handlers.get("session_tree")!(treeEvent("b", "a"), ctx);
+    await settle();
+
+    expect(discardSpy).not.toHaveBeenCalled(); // not even the queue drop
+    expect(getBranch.mock.calls.length).toBe(branchCalls); // not even read
+    expect(setEditorComponent).not.toHaveBeenCalled();
+    expect(await dump(acwords)).toBe(frozen); // byte-identical store
   });
 });

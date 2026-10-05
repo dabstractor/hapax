@@ -18,6 +18,20 @@
  *     fire-and-forget history restore are shared by both paths (fresh
  *     store only for a genuinely new AND empty session; PRD §05 h2.33).
  *
+ *   session_tree — /tree branch navigation (P2.M1.T2.S1; spec 05 h2.37,
+ *     06 h2.42, 07 h2.46/h3.9/h3.12): guard (disabled / no session /
+ *     newLeafId === oldLeafId, both nullable) → discard the pending
+ *     ingest queue → release the line claim → gated IN-PLACE rebuild:
+ *     flush the in-flight drain into the OLD store, store.reset() on the
+ *     SAME instance (the permanently-registered fallback provider must
+ *     never be orphaned), then restoreFromHistory replays the active
+ *     branch oldest→newest; both display paths are rebound BEFORE the
+ *     background task — the widget recomposes around the remembered
+ *     pre-hapax factory bound to this rebuild's readiness promise, the
+ *     fallback gate re-arms (same provider, never re-registered) — so
+ *     every query path waits behind the ≤ 500 ms bound until replay
+ *     settle. summaryEntry is never ingested.
+ *
  *   message_end — feed the pipeline. NEVER returns a value: pi treats a
  *     MessageEndEventResult as a message REPLACEMENT (PRD §02 h2.12), so
  *     every code path here returns undefined.
@@ -31,7 +45,8 @@
  *     armed chain.
  *
  * Compaction events are intentionally NOT registered: the store survives
- * compaction (PRD §05 h2.32).
+ * compaction (PRD §05 h2.32). session_tree is the ONLY branch-reaction
+ * event — compaction NEVER triggers a rebuild (spec 05 h2.37 interplay).
  *
  * Failure model: a dictionary that fails to load disables INGESTION
  * permanently for this extension runtime — exactly one "error" notify,
@@ -56,7 +71,7 @@ import {
   createHapaxProvider,
   createStartupGate,
 } from "./provider.js";
-import type { ChainMachine } from "./provider.js";
+import type { ChainMachine, StartupGateHandle } from "./provider.js";
 import {
   createLineClaim,
   createWidgetEditorFactory,
@@ -149,6 +164,19 @@ export default function hapax(pi: ExtensionAPI): void {
   // layer itself; this slot is the belt-and-braces turn boundary).
   let claim: LineClaim | null = null;
   let disabled = false;
+  // session_tree rebuild slots (P2.M1.T2.S1, spec 05 h2.37): the pieces
+  // the branch handler needs that session_start builds — re-assigned on
+  // every session_start, cleared on session_shutdown alongside the rest.
+  // The fallback path's startup gate: addAutocompleteProvider has no
+  // unregister, so a /tree rebuild re-ARMS this same gate (07 h3.12)
+  // instead of re-registering. Assigned inside the registration callback.
+  let sessionGate: StartupGateHandle | null = null;
+  // The live session's config and input-clock tick — the fresh widget
+  // composition on /tree needs both (same values the initial install
+  // used); per-session consts inside session_start, hoisted here because
+  // the session_tree handler runs outside that callback's scope.
+  let sessionConfig: ReturnType<typeof loadConfig> | null = null;
+  let sessionTickInputClock: (() => void) | null = null;
 
   pi.on("session_start", (event, ctx) => {
     if (disabled) return; // prior dict failure — permanent no-op runtime
@@ -246,6 +274,10 @@ export default function hapax(pi: ExtensionAPI): void {
       inputClock.prevAt = inputClock.lastAt;
       inputClock.lastAt = t;
     };
+    // session_tree rebuild slots (P2.M1.T2.S1): these per-session consts
+    // are the cross-handler seams the branch handler reads.
+    sessionConfig = config;
+    sessionTickInputClock = tickInputClock;
 
     // Dual-path display architecture (spec 07 h2.42): an editor factory
     // means some extension owns the editor — hapax composes around it and
@@ -325,12 +357,15 @@ export default function hapax(pi: ExtensionAPI): void {
       // LATE menu instead of a permanently missing one (pi-tui asks once
       // per word). Fresh sessions with no replay resolve immediately.
       ctx.ui.addAutocompleteProvider((current) => {
-        const p = createDisplayProvider(
-          createStartupGate(
-            createHapaxProvider(store!, config, current, sessionChain),
-            restoreReady,
-          ),
-          {
+        // The gate is captured into the factory slot: session_tree re-arms
+        // THIS instance (07 h3.12 verbatim reuse) — the provider object is
+        // registered once and never replaced.
+        const gate = createStartupGate(
+          createHapaxProvider(store!, config, current, sessionChain),
+          restoreReady,
+        );
+        sessionGate = gate;
+        const p = createDisplayProvider(gate, {
             // Hesitation gate (2026-09 menuDelayMs): full-speed typing
             // never pops the menu. Explicit intent bypasses: trigger-char
             // prefixes and armed-chain successor sets (description
@@ -400,6 +435,100 @@ export default function hapax(pi: ExtensionAPI): void {
     }
   });
 
+  pi.on("session_tree", (event, ctx) => {
+    // Branch navigation rebuild (P2.M1.T2.S1, spec 05 h2.37 — adopted
+    // ahead of implementation; this handler is that spec landing; 06
+    // h2.42 branch purity: the rebuilt store is identical to a fresh
+    // /resume of the same branch, pinned by T2.S2's battery).
+    //
+    // Guard (h2.37 step 1 + the binding preconditions): a disabled
+    // runtime, a pre-session_start/post-shutdown factory, or a no-op
+    // navigation (newLeafId === oldLeafId — both nullable, so null ===
+    // null is covered) touch NOTHING: no discard, no claim release, no
+    // rebind, not even a getBranch read. Guard order matters — a
+    // disabled runtime must not even discard.
+    if (disabled || !pipeline || !store) return;
+    if (event.newLeafId === event.oldLeafId) return;
+    // h2.37 step 2: drop the pending ingest queue FIRST (sync, sub-ms).
+    // Debounce-window texts are pre-navigation; any on the new path is
+    // re-captured by the branch snapshot replay, any other is dead
+    // branch — discard is always correct.
+    pipeline.discardPending();
+    // 07 h3.9 release set: session_tree is a rebind — the claimed row is
+    // removed and the fresh composition starts unclaimed (the SAME
+    // LineClaim object is reused below, release gives it the unclaimed
+    // row; release is idempotent).
+    claim?.release();
+    // Gate readiness promise (07 h3.12): created SYNCHRONOUSLY so the
+    // rebinds below bind it before any post-navigation query can race —
+    // resolved exactly once when the replay settles (restoreFromHistory
+    // onSettled: finish / abort on dict failure / collection throw).
+    let markTreeReady = (): void => {};
+    const restoreReady = new Promise<void>((resolve) => {
+      markTreeReady = resolve;
+    });
+    // 07 h2.46 "Branch navigation": the same fresh-composition rule as
+    // the session_start reload branch, decided by what currently owns the
+    // editor slot. Widget path: recompose around the REMEMBERED pre-hapax
+    // factory (wrapper introspection seam) bound to THIS rebuild's
+    // readiness promise and the SAME store instance (reset in place
+    // below — never reassign the `store` slot: the fallback provider's
+    // closure would be orphaned). A foreign wrapper (no remembered inner)
+    // is skipped silently — the same TOCTOU tolerance as session_start.
+    // Fallback path: re-arm the hoisted gate — same provider object,
+    // never re-registered; un-settling swaps in the fresh readiness
+    // promise so every query (forced requests included) waits under the
+    // ≤ 500 ms bound until settle.
+    const editorFactory = ctx.ui.getEditorComponent?.();
+    if (editorFactory && isWidgetWrapper(editorFactory)) {
+      const priorInner = widgetOptsOf(editorFactory)?.inner;
+      if (
+        priorInner !== undefined &&
+        sessionConfig &&
+        chain &&
+        claim &&
+        sessionTickInputClock
+      ) {
+        ctx.ui.setEditorComponent?.(
+          createWidgetEditorFactory({
+            inner: priorInner,
+            store, // SAME instance — reset in place by the rebuild below
+            config: sessionConfig,
+            chain,
+            claim, // reused session claim — released above → unclaimed row
+            restoreReady,
+            onKeystroke: sessionTickInputClock,
+          }),
+        );
+      }
+    } else {
+      sessionGate?.arm(restoreReady);
+    }
+    // h2.37 steps 3–5: the background rebuild. flush() lets any in-flight
+    // drain finish landing its straggler upserts in the OLD store (so
+    // the wholesale drop erases them too — reset-before-flush would
+    // leak them into the rebuilt store); reset() is the h2.42 in-place
+    // wholesale drop (ordinal re-zeroed — the replay re-issues 1..N
+    // exactly like a fresh /resume); restoreFromHistory snapshots
+    // getBranch() synchronously at call time (the h2.37 "snapshot" —
+    // never copied here) and replays oldest→newest through the
+    // IDENTICAL restore pipeline, releasing the gate/widget via
+    // onSettled exactly once. summaryEntry is never read: branch
+    // summaries never enter the store (h2.37 summary rule); abandoned
+    // branch vocabulary re-enters only via real messages on the new
+    // branch. Synchronous handler cost stays sub-ms (h2.37 performance
+    // note) — queue drop + slot reads only; the replay is background.
+    const livePipeline = pipeline;
+    const liveStore = store;
+    void (async () => {
+      await livePipeline.flush();
+      liveStore.reset();
+      restoreFromHistory(livePipeline, ctx.sessionManager, () => disabled, markTreeReady);
+    })();
+    // No return value: pi result semantics (same discipline as
+    // message_end — hapax only observes).
+  });
+
   pi.on("message_end", (event) => {
     if (!disabled && pipeline) pipeline.onMessageEnd(event.message);
     // NEVER return a value: a MessageEndEventResult would REPLACE the
@@ -417,6 +546,9 @@ export default function hapax(pi: ExtensionAPI): void {
     chain = null;
     claim = null; // spec §07 Line claim — session_shutdown release
     store = null;
+    sessionGate = null; // session_tree rebuild slots — dropped with the session
+    sessionConfig = null;
+    sessionTickInputClock = null;
   });
 
   pi.on("before_agent_start", () => {
