@@ -30,6 +30,7 @@ const sighting = (over: Partial<Sighting> = {}): Sighting => ({
   ordinal: 1,
   fromUser: false,
   properName: false,
+  casing: "lower",
   rankGroup: 2,
   ...over,
 });

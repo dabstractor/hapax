@@ -279,7 +279,7 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     // is a directly-upserted dictionary-absent jargon sighting.
     store.upsert({
       key: "lwlock", display: "lwlock", ordinal: store.currentOrdinal() + 1,
-      fromUser: true, properName: false, rankGroup: 0 ,
+      fromUser: true, properName: false, casing: "lower", rankGroup: 0 ,
     });
     const provider = createHapaxProvider(store, cfg(), mockCurrent(SENTINEL));
     const result = await provider.getSuggestions(["lwl"], 0, 3, opts());
@@ -506,6 +506,7 @@ describe("acceptance item 5 — fake API keys are never suggested (large-100k.js
       key: display.toLowerCase(),
       display,
       properName: false,
+      casing: "lower",
     });
     expect(passesShape(draftOf(FAKE_SK))).toEqual({ ok: false, reason: "secret" });
     expect(passesShape(draftOf(FAKE_GHP))).toEqual({ ok: false, reason: "secret" });

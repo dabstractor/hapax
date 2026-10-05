@@ -112,6 +112,7 @@ export function makeStore(cap: number = STORE_CAP, seed = 42): CandidateStore {
       ordinal: store.currentOrdinal(),
       fromUser: rng() < 0.3,
       properName,
+      casing: properName ? "mid-cap" : "lower",
       rankGroup: pickRankGroup(rng),
     };
     store.upsert(sighting);
@@ -128,6 +129,7 @@ export function makeStore(cap: number = STORE_CAP, seed = 42): CandidateStore {
       ordinal: store.currentOrdinal(),
       fromUser: rng() < 0.3,
       properName,
+      casing: properName ? "mid-cap" : "lower",
       rankGroup: pickRankGroup(rng),
     });
   }

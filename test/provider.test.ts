@@ -56,6 +56,7 @@ const sighting = (over: Partial<Sighting> = {}): Sighting => ({
   ordinal: 1,
   fromUser: false,
   properName: false,
+  casing: "lower",
   rankGroup: 2,
   ...over,
 });
@@ -331,6 +332,7 @@ describe("never-hijack acceptance (PRD §07)", () => {
         key,
         display: key,
         properName: false,
+        casing: "lower",
       });
 
       expect(admit(draft("the"), commonAt(REJECT_COMMON_THRESHOLD))).toBe("reject");

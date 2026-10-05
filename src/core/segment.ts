@@ -69,7 +69,7 @@
  * admission (P1.M2.T3.S1).
  */
 
-import type { RawToken } from "./types.js";
+import type { CasingClass, RawToken } from "./types.js";
 
 /** PRD §04 rule 1: base tokens are [A-Za-z][A-Za-z0-9_]* capped at 64. */
 const BASE_RE = /[A-Za-z][A-Za-z0-9_]{0,63}/g;
@@ -726,6 +726,11 @@ export interface CandidateDraft {
   display: string;
   /** first char of display is uppercase at extraction */
   properName: boolean;
+  /** casing class of this occurrence (2026-10 casing-evidence
+   *  groundwork, spec §04 h2.26/h3.5): derived from raw[0] +
+   *  token.sentenceStart (see CasingClass in types.ts). properName is
+   *  exactly (casing === "mid-cap") — one derivation, zero drift. */
+  casing: CasingClass;
   /** true for path-shaped candidates (2026-10 rule 4d): the key is the
    *  edge/line:col-trimmed lowercase path while display keeps the
    *  original edge symbols (the first key≠display divergence beyond
@@ -761,11 +766,22 @@ function isUpperAscii(c: string): boolean {
  * Pure: no state, no runtime imports (RawToken is a type-only import).
  */
 export function expandCandidates(token: RawToken): CandidateDraft[] {
-  // properName (2026-09 sentence-initial rule): a Capitalized token
-  // right after sentence-ending punctuation is sentence-INITIAL — the
-  // capital is orthographic, not a name signal, so the hint is
-  // suppressed.
-  const nameInitial = isUpperAscii(token.raw.charAt(0)) && !token.sentenceStart;
+  // Casing class (2026-10, spec §04 h2.26/h3.5 groundwork): classified
+  // ONCE from raw[0] + the already-computed sentenceStart flag — never
+  // re-walk the text (the perf-gate history forbids unbounded scans).
+  // Classification uses token.raw.charAt(0) — the DISPLAY form — for
+  // every token kind uniformly (paths' trimmed keys can start
+  // differently after edge-trimming; raw casing is the contract).
+  const casing: CasingClass = !isUpperAscii(token.raw.charAt(0))
+    ? "lower"
+    : token.sentenceStart
+      ? "structural-cap"
+      : "mid-cap";
+  // properName === (casing === "mid-cap"): one source of truth. The
+  // class carries strictly more information than the boolean (it
+  // distinguishes WHY a capital was suppressed) — S2's run walk needs
+  // structural-cap visible as an uppercase occurrence.
+  const nameInitial = casing === "mid-cap";
 
   // PATHS (rule 4d) — the ONLY key≠display site beyond casing: the key
   // is the trimmed lowercase slice (edge `/~.` chains, one
@@ -784,6 +800,7 @@ export function expandCandidates(token: RawToken): CandidateDraft[] {
           .toLowerCase(),
         display: token.raw, // ORIGINAL edges preserved for insertion
         properName: false,
+        casing, // same raw[0] rule — no path special-case
         path: true,
       },
     ];
@@ -793,6 +810,7 @@ export function expandCandidates(token: RawToken): CandidateDraft[] {
       key: token.raw.toLowerCase(),
       display: token.raw,
       properName: nameInitial,
+      casing,
     },
   ];
 }

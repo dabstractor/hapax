@@ -22,6 +22,7 @@ const draft = (key: string): CandidateDraft => ({
   key,
   display: key,
   properName: false,
+  casing: "lower",
 });
 
 describe("passesShape — length (PRD §04 h2.23 rule 1)", () => {
@@ -69,6 +70,7 @@ describe("passesShape — path-class caps (2026-10 rule 4d, 4–96)", () => {
     key,
     display,
     properName: false,
+    casing: "lower",
     path: true,
   });
 
@@ -350,6 +352,7 @@ describe("secret rules (PRD §04 h2.23 rule 3 / §09 item 5)", () => {
         key: "camelcaseidentifierx9",
         display: "camelCaseIdentifierX9",
         properName: false,
+        casing: "lower",
       })
     ).toEqual({ ok: true });
   });
@@ -449,6 +452,7 @@ describe("secret rules (PRD §04 h2.23 rule 3 / §09 item 5)", () => {
         key: "nrel",
         display: "NREL",
         properName: true,
+        casing: "mid-cap",
       })
     ).toEqual({ ok: true });
   });
@@ -571,6 +575,7 @@ describe("technical-literal interplay (2026-10 rule 4c)", () => {
     key,
     display: key,
     properName: false,
+    casing: "lower",
   });
 
   it("letter-free keys skip the entropy floor: repeating digit codes pass", () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type {
   RankGroup, Candidate, Sighting, GateRejectReason, GateResult,
-  Dictionary, IngestStats, RankedMatch,
+  Dictionary, IngestStats, RankedMatch, CasingClass,
 } from '../src/core/types.js';
 
 describe('core type contracts', () => {
@@ -32,7 +32,10 @@ describe('core type contracts', () => {
     expect(dict.lookup('x')).toBeNull();
 
     const s: Sighting = { key: 'nrel', display: 'NREL', ordinal: 1,
-      fromUser: true, properName: true, rankGroup: 0 };
+      fromUser: true, properName: true, casing: 'mid-cap', rankGroup: 0 };
     expect(s.rankGroup).toBe(0);
+    expect(s.casing).toBe('mid-cap');
+    expect('lower' satisfies CasingClass).toBe('lower');
+    expect('structural-cap' satisfies CasingClass).toBe('structural-cap');
   });
 });

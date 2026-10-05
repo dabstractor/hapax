@@ -18,28 +18,48 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Run detection + casing classes + enriched occurrence payload (ingest seam)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Classify each admitted occurrence's casing (lower / mid-cap / structural-cap) and detect maximal capitalized runs over the ingest line assembler, widening the onAdmittedTokens payload to carry run membership + run casing.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T1.S1",
                   "title": "Casing class on occurrences (types + segment + occurrence classification)",
-                  "status": "Planned",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [],
-                  "prd_selectors": ["h2.5", "h2.9", "h2.25", "h3.3", "h3.5", "h2.26", "h2.27"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: casing info today is minimal — RawToken.raw carries the casing; sentenceStart is derived per token by segment.ts isSentenceStartBefore (:418-445, broader than sentence punctuation: line/message start, bullets, headings, clause punctuation); expandCandidates (segment.ts:745-768) sets properName = isUpperAscii(raw[0]) && !sentenceStart; NO casing-class field exists (architecture/01-core-pipeline-r1.md §3).\n2. INPUT: RawToken {raw, sentenceStart, start, end, ...} from tokenize() (src/core/segment.ts) — unchanged.\n3. LOGIC: Implement spec 04 h2.26 casing classification. Add exported CasingClass = 'lower' | 'mid-cap' | 'structural-cap' in src/core/types.ts; classify per occurrence: first char uppercase ASCII (isUpperAscii, segment.ts:738-740) → sentenceStart ? 'structural-cap' : 'mid-cap', else 'lower'. Thread through CandidateDraft (segment.ts:722-736) and add a casing field to Sighting (types.ts:36-47) so occurrence context reaches the store. Paths/hexish/literals keep raw casing (verbatim rules govern them elsewhere). Store untouched here. Mocking: none — pure core; tests follow test/segment.test.ts + test/types.test.ts conventions (describe titles cite spec sections).\n4. OUTPUT: exported CasingClass + Sighting.casing, consumed by P1.M1.T1.S2 (run walk) and P1.M1.T2.S1 (tallies).\n5. DOCS: [Mode A] JSDoc on CasingClass and Sighting.casing in src/core/types.ts (fields, derivation rule, spec anchor 04 h2.26). Rides with the work."
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: casing info today is minimal — RawToken.raw carries the casing; sentenceStart is derived per token by segment.ts isSentenceStartBefore (:418-445, broader than sentence punctuation: line/message start, bullets, headings, clause punctuation); expandCandidates (segment.ts:745-768) sets properName = isUpperAscii(raw[0]) && !sentenceStart; NO casing-class field exists (architecture/01-core-pipeline-r1.md §3).\n2. INPUT: RawToken {raw, sentenceStart, start, end, ...} from tokenize() (src/core/segment.ts) — unchanged.\n3. LOGIC: Implement spec 04 h2.26 casing classification. Add exported CasingClass = 'lower' | 'mid-cap' | 'structural-cap' in src/core/types.ts; classify per occurrence: first char uppercase ASCII (isUpperAscii, segment.ts:738-740) → sentenceStart ? 'structural-cap' : 'mid-cap', else 'lower'. Thread through CandidateDraft (segment.ts:722-736) and add a casing field to Sighting (types.ts:36-47) so occurrence context reaches the store. Paths/hexish/literals keep raw casing (verbatim rules govern them elsewhere). Store untouched here. Mocking: none — pure core; tests follow test/segment.test.ts + test/types.test.ts conventions (describe titles cite spec sections).\n4. OUTPUT: exported CasingClass + Sighting.casing, consumed by P1.M1.T1.S2 (run walk) and P1.M1.T2.S1 (tallies).\n5. DOCS: [Mode A] JSDoc on CasingClass and Sighting.casing in src/core/types.ts (fields, derivation rule, spec anchor 04 h2.26). Rides with the work.",
+                  "prd_selectors": [
+                    "h2.5",
+                    "h2.9",
+                    "h2.25",
+                    "h3.3",
+                    "h3.5",
+                    "h2.26",
+                    "h2.27"
+                  ]
                 },
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "Uppercase-run walk + enriched onAdmittedTokens payload",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T1.S1"],
-                  "prd_selectors": ["h2.9", "h2.15", "h3.0", "h2.25", "h3.3", "h2.26", "h2.27", "h2.34", "h3.6"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: the adjacency machinery exists — SpanEntry (src/pi/ingest.ts:109-122), WHITESPACE_GAP_RE = /^[ \\t]+$/ (:128), splitRuns (:176-189), appendSegment (:206-247). The runs payload onAdmittedTokens: (runs: string[][]) => void (ingest.ts:258, IngestPipelineOptions :226-262) carries ONLY lowercase keys and is wired at src/pi/index.ts:211 → store.recordBigramRuns (store.ts:536). Shape-gate-rejected members never emit run entries, so they split runs naturally (layer-2 isSecretShaped). PITFALL (architecture/01 §9): layer-1 maskSecrets blanks secret windows to SPACES — a masked secret between two capitalized words must still break the run (conservative choice; pin in tests).\n2. INPUT: CasingClass per occurrence from P1.M1.T1.S1; the existing SpanEntry/splitRuns stream in ingest.ts:416-497 (processText runs collection).\n3. LOGIC: Implement spec 04 h2.26 run detection. A run = maximal sequence of ≥2 consecutive whole tokens on the same line, every token beginning with an uppercase ASCII letter, adjacent tokens separated by nothing but plain spaces/tabs (the SAME strict adjacency window as bigram capture — clause punctuation, quotes/brackets, digits/hexish, symbols, any intervening word, and newlines all break it). Runs are detected wherever they sit: line-initial and after-punctuation positions included — the structural-start exclusion does NOT apply to run detection. Each member must pass the shape gate; a secret-shaped/noise member splits the run around it. Widen the onAdmittedTokens payload to carry run membership + run casing (e.g. runs of {key, rawCasing} members — serializable, no spans needed); adapt the index.ts:211 wiring so recordBigramRuns keeps compiling (store consumes the enrichment in P1.M1.T2.S2 — until then pass-through/shim, tests stay green). Run-detection battery rides here: window breaks incl. 'ZorpWibbleEngine, quuxblat', secret split, masked-secret split, line-initial runs. Mocking: ingest tests use in-memory dictionary doubles per test/ingest.test.ts conventions.\n4. OUTPUT: enriched run payload consumed by P1.M1.T3.S1 (admission override + chain-only set) and P1.M1.T2.S2 (series bigrams).\n5. DOCS: [Mode A] JSDoc on the new run-detection export (ingest.ts seam or src/core/segment.ts) and on the widened onAdmittedTokens payload contract. Rides with the work."
+                  "dependencies": [
+                    "P1.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: the adjacency machinery exists — SpanEntry (src/pi/ingest.ts:109-122), WHITESPACE_GAP_RE = /^[ \\t]+$/ (:128), splitRuns (:176-189), appendSegment (:206-247). The runs payload onAdmittedTokens: (runs: string[][]) => void (ingest.ts:258, IngestPipelineOptions :226-262) carries ONLY lowercase keys and is wired at src/pi/index.ts:211 → store.recordBigramRuns (store.ts:536). Shape-gate-rejected members never emit run entries, so they split runs naturally (layer-2 isSecretShaped). PITFALL (architecture/01 §9): layer-1 maskSecrets blanks secret windows to SPACES — a masked secret between two capitalized words must still break the run (conservative choice; pin in tests).\n2. INPUT: CasingClass per occurrence from P1.M1.T1.S1; the existing SpanEntry/splitRuns stream in ingest.ts:416-497 (processText runs collection).\n3. LOGIC: Implement spec 04 h2.26 run detection. A run = maximal sequence of ≥2 consecutive whole tokens on the same line, every token beginning with an uppercase ASCII letter, adjacent tokens separated by nothing but plain spaces/tabs (the SAME strict adjacency window as bigram capture — clause punctuation, quotes/brackets, digits/hexish, symbols, any intervening word, and newlines all break it). Runs are detected wherever they sit: line-initial and after-punctuation positions included — the structural-start exclusion does NOT apply to run detection. Each member must pass the shape gate; a secret-shaped/noise member splits the run around it. Widen the onAdmittedTokens payload to carry run membership + run casing (e.g. runs of {key, rawCasing} members — serializable, no spans needed); adapt the index.ts:211 wiring so recordBigramRuns keeps compiling (store consumes the enrichment in P1.M1.T2.S2 — until then pass-through/shim, tests stay green). Run-detection battery rides here: window breaks incl. 'ZorpWibbleEngine, quuxblat', secret split, masked-secret split, line-initial runs. Mocking: ingest tests use in-memory dictionary doubles per test/ingest.test.ts conventions.\n4. OUTPUT: enriched run payload consumed by P1.M1.T3.S1 (admission override + chain-only set) and P1.M1.T2.S2 (series bigrams).\n5. DOCS: [Mode A] JSDoc on the new run-detection export (ingest.ts seam or src/core/segment.ts) and on the widened onAdmittedTokens payload contract. Rides with the work.",
+                  "prd_selectors": [
+                    "h2.9",
+                    "h2.15",
+                    "h3.0",
+                    "h2.25",
+                    "h3.3",
+                    "h2.26",
+                    "h2.27",
+                    "h2.34",
+                    "h3.6"
+                  ]
                 }
               ]
             },
@@ -54,11 +74,20 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "Candidate casing tallies (additive migration, display kept temporarily)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T1.S1"],
-                  "prd_selectors": ["h2.9", "h2.14", "h2.26", "h2.41", "h2.43", "h2.44"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Candidate lives at src/core/types.ts:19-33 (display = 'most recent casing seen'); store.upsert at src/core/store.ts:264-298 (create fills all 9 fields; merge bumps sessionCount/lastSeenOrdinal, existing.display = sighting.display at :291, sticky OR-ins for userTyped/properName, rankGroup = min). Nothing in score.ts reads display — salience/eviction unaffected (architecture/02-store-query-r1-r2.md §3). ~22 .display consumers stay green only if display survives until the resolver lands (inventory: 02 §5) — hence ADDITIVE here, subtractive in P1.M2.T1.S2.\n2. INPUT: Sighting.casing from P1.M1.T1.S1 ('lower' | 'mid-cap' | 'structural-cap').\n3. LOGIC: Implement spec 06 h2.41/h2.43 tally semantics. ADD to Candidate: capCount, lowerCount, capDisplay (most frequent capitalized form; ties → most recent sighting) — KEEP display populated as today so all consumers stay green. Upsert merge rules: a sentence-initial ('structural-cap') capitalized sighting contributes to capCount ONLY while the word has never been seen lowercase; the FIRST lowercase sighting removes those structural contributions PERMANENTLY (sticky seenLowercase flag in the merge; a capitalized sentence-initial form whose lowercase twin exists is dropped entirely — the lowercase form is the word; later structural caps never contribute again); 'mid-cap' sightings always count toward capCount and set/compete for capDisplay. Chain-only members never reach upsert (P1.M1.T3.S1 guards that — store must not see them). Store battery rides here: exact-object toEqual idiom (test/store.test.ts:86), twin-suppression permanence, capDisplay tie→recent. Mocking: none — pure store tests with hand-built Sighting literals.\n4. OUTPUT: Candidate tally fields consumed by P1.M2.T1.S1 (resolver), P1.M2.T1.S2 (display removal), P1.M2.T3.S1 (/acwords), and P2.M1.T2.S2 (purity equality).\n5. DOCS: [Mode A] JSDoc on Candidate's new casing fields in src/core/types.ts (semantics incl. the permanence rule; spec anchor 06 h2.43). Rides with the work."
+                  "dependencies": [
+                    "P1.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: Candidate lives at src/core/types.ts:19-33 (display = 'most recent casing seen'); store.upsert at src/core/store.ts:264-298 (create fills all 9 fields; merge bumps sessionCount/lastSeenOrdinal, existing.display = sighting.display at :291, sticky OR-ins for userTyped/properName, rankGroup = min). Nothing in score.ts reads display — salience/eviction unaffected (architecture/02-store-query-r1-r2.md §3). ~22 .display consumers stay green only if display survives until the resolver lands (inventory: 02 §5) — hence ADDITIVE here, subtractive in P1.M2.T1.S2.\n2. INPUT: Sighting.casing from P1.M1.T1.S1 ('lower' | 'mid-cap' | 'structural-cap').\n3. LOGIC: Implement spec 06 h2.41/h2.43 tally semantics. ADD to Candidate: capCount, lowerCount, capDisplay (most frequent capitalized form; ties → most recent sighting) — KEEP display populated as today so all consumers stay green. Upsert merge rules: a sentence-initial ('structural-cap') capitalized sighting contributes to capCount ONLY while the word has never been seen lowercase; the FIRST lowercase sighting removes those structural contributions PERMANENTLY (sticky seenLowercase flag in the merge; a capitalized sentence-initial form whose lowercase twin exists is dropped entirely — the lowercase form is the word; later structural caps never contribute again); 'mid-cap' sightings always count toward capCount and set/compete for capDisplay. Chain-only members never reach upsert (P1.M1.T3.S1 guards that — store must not see them). Store battery rides here: exact-object toEqual idiom (test/store.test.ts:86), twin-suppression permanence, capDisplay tie→recent. Mocking: none — pure store tests with hand-built Sighting literals.\n4. OUTPUT: Candidate tally fields consumed by P1.M2.T1.S1 (resolver), P1.M2.T1.S2 (display removal), P1.M2.T3.S1 (/acwords), and P2.M1.T2.S2 (purity equality).\n5. DOCS: [Mode A] JSDoc on Candidate's new casing fields in src/core/types.ts (semantics incl. the permanence rule; spec anchor 06 h2.43). Rides with the work.",
+                  "prd_selectors": [
+                    "h2.9",
+                    "h2.14",
+                    "h2.26",
+                    "h2.41",
+                    "h2.43",
+                    "h2.44"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -66,9 +95,19 @@
                   "title": "Series bigrams: BigramEntry/Successor extension + series-first top-3 retention",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T1.S2", "P1.M1.T3.S1"],
-                  "prd_selectors": ["h2.9", "h2.26", "h2.42", "h2.45", "h3.6", "h3.7"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: recordBigramRuns ALREADY EXISTS at src/core/store.ts:536-561 (takes runs: string[][] of lowercase keys; every adjacent pair counted in #bigrams; successor top-3 maintained by #bumpSuccessor :573-606 with successorBefore :140 — count desc, byte-lex asc; BIGRAM_CAP 10_000 with lazy eviction bigramSortKey = Math.log(count) + lastSeenOrdinal/50 (:136); eviction splices successors via #dropSuccessorFor :706-717). BigramEntry today = {count, lastSeenOrdinal} (:110); Successor = {next, count} (types.ts:54-60). Store adds NO window logic — runs arrive pre-chunked by ingest (architecture/02 §3, §8).\n2. INPUT: enriched runs payload (run membership + run casing) from P1.M1.T1.S2; the chain-only member set from P1.M1.T3.S1.\n3. LOGIC: Implement spec 06 h3.6/h3.7 series extensions. Successor gains series?: boolean and nextDisplay?: string; BigramEntry gains the same. recordBigramRuns consumes the enriched payload: every adjacent pair inside a capitalized run is recorded as a series bigram — INCLUDING chain-only members (they were skipped at upsert but still form pairs) — each marked series and remembering the second word's run casing (nextDisplay). Retention: series entries rank above ordinary successors in the per-word top-3 (series first by count desc, then ordinary by count desc) so the 07 h2.53 'series first regardless of counts' offer rule is stable; same window-break rules and the same bigram cap/eviction as ordinary pairs. Battery rides here: series marking, chain-only inclusion, series-first retention, eviction parity (test/bigrams.test.ts:14-71 + test/successors.test.ts conventions). Mocking: none — pure store tests.\n4. OUTPUT: Successor.series/nextDisplay + series-aware topSuccessors ordering, consumed by P1.M2.T2.S1/S2 (offers) and P1.M2.T3.S1 (/acwords), and covered by P2.M1.T2.S2 (purity).\n5. DOCS: [Mode A] JSDoc on recordBigramRuns' richer payload (store.ts:536) and on Successor's new fields (types.ts). Rides with the work."
+                  "dependencies": [
+                    "P1.M1.T1.S2",
+                    "P1.M1.T3.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: recordBigramRuns ALREADY EXISTS at src/core/store.ts:536-561 (takes runs: string[][] of lowercase keys; every adjacent pair counted in #bigrams; successor top-3 maintained by #bumpSuccessor :573-606 with successorBefore :140 — count desc, byte-lex asc; BIGRAM_CAP 10_000 with lazy eviction bigramSortKey = Math.log(count) + lastSeenOrdinal/50 (:136); eviction splices successors via #dropSuccessorFor :706-717). BigramEntry today = {count, lastSeenOrdinal} (:110); Successor = {next, count} (types.ts:54-60). Store adds NO window logic — runs arrive pre-chunked by ingest (architecture/02 §3, §8).\n2. INPUT: enriched runs payload (run membership + run casing) from P1.M1.T1.S2; the chain-only member set from P1.M1.T3.S1.\n3. LOGIC: Implement spec 06 h3.6/h3.7 series extensions. Successor gains series?: boolean and nextDisplay?: string; BigramEntry gains the same. recordBigramRuns consumes the enriched payload: every adjacent pair inside a capitalized run is recorded as a series bigram — INCLUDING chain-only members (they were skipped at upsert but still form pairs) — each marked series and remembering the second word's run casing (nextDisplay). Retention: series entries rank above ordinary successors in the per-word top-3 (series first by count desc, then ordinary by count desc) so the 07 h2.53 'series first regardless of counts' offer rule is stable; same window-break rules and the same bigram cap/eviction as ordinary pairs. Battery rides here: series marking, chain-only inclusion, series-first retention, eviction parity (test/bigrams.test.ts:14-71 + test/successors.test.ts conventions). Mocking: none — pure store tests.\n4. OUTPUT: Successor.series/nextDisplay + series-aware topSuccessors ordering, consumed by P1.M2.T2.S1/S2 (offers) and P1.M2.T3.S1 (/acwords), and covered by P2.M1.T2.S2 (purity).\n5. DOCS: [Mode A] JSDoc on recordBigramRuns' richer payload (store.ts:536) and on Successor's new fields (types.ts). Rides with the work.",
+                  "prd_selectors": [
+                    "h2.9",
+                    "h2.26",
+                    "h2.42",
+                    "h2.45",
+                    "h3.6",
+                    "h3.7"
+                  ]
                 }
               ]
             },
@@ -85,9 +124,20 @@
                   "title": "Run-member band bypass + conjugation-guard skip + top-band chain-only ceiling",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T1.S2"],
-                  "prd_selectors": ["h2.9", "h2.25", "h3.5", "h2.26", "h2.28", "h2.57", "h2.63", "h2.66"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: admit() is pure f(draft, dictionary, opts) at src/core/score.ts:282-361; floor REJECT_COMMON_THRESHOLD = 30 (:109); rEff at :188-196. The admission memo (#computeAdmitMemo, ingest.ts:567-598) is token-intrinsic and MUST STAY CONTEXT-FREE — memoizing a run-member admission would permanently admit every later lowercase occurrence of that token (PRD's critical pitfall; architecture/01 §2). Structural fact: upserts are segment-scoped (#replayAdmitMemo :606-643) while runs finalize line/message-scoped (processText :416-497) — use the researcher-recommended low-risk path: keep eager upserts and apply run-derived admission effects at occurrence/run-finalization level (retro-override via store merge), NOT deferred upserts (architecture/00 §3.2). Conjugation-guard skip precedent: score.ts:317 (!draft.properName). PROPER_NOUN_ADMIT_CEILING = 30 (:152) branch at :303-310 is provably dead — leave retired-in-place, do NOT revive it.\n2. INPUT: run membership from P1.M1.T1.S2's enriched payload.\n3. LOGIC: Implement spec 04 h2.26/h2.28 run-member admission. Add baked constant PROPER_SERIES_TOP_BAND_CEILING ≈ 135 in score.ts — calibrate with `node tools/calibrate-bands.mjs the and for with national energy` (q ≥ 135 covers ~203 of 48,802 words; document the measured population in the constant's JSDoc); deliberately NOT configurable (08 h2.57). Occurrence-level override: a run member admits regardless of the commonness band, whatever its attestation and whatever lowercase sightings exist — attested → group 1, absent → group 0 — and the override bypasses the conjugation guard (casing evidence outranks morphology, parallel to the properName skip; pin in tests). A member whose q ≥ ceiling is CHAIN-ONLY: never gains admission from casing (run or single), never upserted (store must not see it), but remains in the runs payload so its series bigrams still form and the after-space offer presents its neighbors (typing 'The ' offers 'Fed'). Casing evidence grants candidacy ONLY — ordering unchanged (h2.31). Score battery rides here: run admits 'national'-class at g1, top-band 'The' chain-only (no upsert, bigrams form), guard-bypass pin. Mocking: in-memory dictionary doubles per test/score.test.ts conventions.\n4. OUTPUT: occurrence-level admission outcomes + the chain-only member set, consumed by P1.M1.T2.S2 (series bigrams incl. chain-only).\n5. DOCS: [Mode A] JSDoc on the ceiling constant (population count, calibration command) and the admit() override path in src/core/score.ts. Rides with the work."
+                  "dependencies": [
+                    "P1.M1.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: admit() is pure f(draft, dictionary, opts) at src/core/score.ts:282-361; floor REJECT_COMMON_THRESHOLD = 30 (:109); rEff at :188-196. The admission memo (#computeAdmitMemo, ingest.ts:567-598) is token-intrinsic and MUST STAY CONTEXT-FREE — memoizing a run-member admission would permanently admit every later lowercase occurrence of that token (PRD's critical pitfall; architecture/01 §2). Structural fact: upserts are segment-scoped (#replayAdmitMemo :606-643) while runs finalize line/message-scoped (processText :416-497) — use the researcher-recommended low-risk path: keep eager upserts and apply run-derived admission effects at occurrence/run-finalization level (retro-override via store merge), NOT deferred upserts (architecture/00 §3.2). Conjugation-guard skip precedent: score.ts:317 (!draft.properName). PROPER_NOUN_ADMIT_CEILING = 30 (:152) branch at :303-310 is provably dead — leave retired-in-place, do NOT revive it.\n2. INPUT: run membership from P1.M1.T1.S2's enriched payload.\n3. LOGIC: Implement spec 04 h2.26/h2.28 run-member admission. Add baked constant PROPER_SERIES_TOP_BAND_CEILING ≈ 135 in score.ts — calibrate with `node tools/calibrate-bands.mjs the and for with national energy` (q ≥ 135 covers ~203 of 48,802 words; document the measured population in the constant's JSDoc); deliberately NOT configurable (08 h2.57). Occurrence-level override: a run member admits regardless of the commonness band, whatever its attestation and whatever lowercase sightings exist — attested → group 1, absent → group 0 — and the override bypasses the conjugation guard (casing evidence outranks morphology, parallel to the properName skip; pin in tests). A member whose q ≥ ceiling is CHAIN-ONLY: never gains admission from casing (run or single), never upserted (store must not see it), but remains in the runs payload so its series bigrams still form and the after-space offer presents its neighbors (typing 'The ' offers 'Fed'). Casing evidence grants candidacy ONLY — ordering unchanged (h2.31). Score battery rides here: run admits 'national'-class at g1, top-band 'The' chain-only (no upsert, bigrams form), guard-bypass pin. Mocking: in-memory dictionary doubles per test/score.test.ts conventions.\n4. OUTPUT: occurrence-level admission outcomes + the chain-only member set, consumed by P1.M1.T2.S2 (series bigrams incl. chain-only).\n5. DOCS: [Mode A] JSDoc on the ceiling constant (population count, calibration command) and the admit() override path in src/core/score.ts. Rides with the work.",
+                  "prd_selectors": [
+                    "h2.9",
+                    "h2.25",
+                    "h3.5",
+                    "h2.26",
+                    "h2.28",
+                    "h2.57",
+                    "h2.63",
+                    "h2.66"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -95,9 +145,19 @@
                   "title": "Single mid-sentence capital: relaxed band max(R_eff, 95) + calibrate-bands Cap column update",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1"],
-                  "prd_selectors": ["h2.9", "h2.25", "h3.5", "h2.26", "h2.28", "h2.57", "h2.63"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: no 95 constant exists anywhere today; rEff (score.ts:188-196) is the existing relaxed-by-length ramp. Memo hazard verified: the SAME raw token at a structural start vs mid-sentence shares ONE memo entry (memo key = token.raw), so a sentenceStart-dependent relaxation CANNOT live in the memo — it must be an occurrence-level override in #replayAdmitMemo (e.g. re-run admit with relaxed opts when the occurrence's casing is 'mid-cap'), keeping #computeAdmitMemo context-free (architecture/01 §5).\n2. INPUT: Sighting.casing ('mid-cap' vs 'structural-cap') from P1.M1.T1.S1; the ceiling constant from P1.M1.T3.S1 (chain-only applies to singles too).\n3. LOGIC: Implement spec 04 h2.28's casing-evidence paragraphs for singles. A single mid-sentence capital (properName condition — capital NOT at a structural start) admits under the relaxed band max(rEff(len), 95): at group 1 when attested, group 0 when absent. Capitalized candidates at structural starts get NO relaxation (they admit on the merits exactly as their lowercase form). properName drafts keep the conjugation-guard skip (existing behavior, unchanged). Update tools/calibrate-bands.mjs so the Cap column verdicts follow the 95 band + ceiling rules (calibration history in spec 08 stays honest; the tool already prints a Cap: column). Boundary probes ride here: q 94/95/96, structural-start no-relaxation, 'national'-class single admits at g1, top-band single is chain-only. Mocking: score tests with in-memory dict doubles.\n4. OUTPUT: occurrence-level relaxed admission for singles; updated calibration tool output (used as evidence in P3.M1.T2.S3 live smoke).\n5. DOCS: [Mode A] JSDoc on the relaxed-band constant in score.ts + a note in tools/calibrate-bands.mjs that Cap verdicts follow the 95 band/run rules. Rides with the work."
+                  "dependencies": [
+                    "P1.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: no 95 constant exists anywhere today; rEff (score.ts:188-196) is the existing relaxed-by-length ramp. Memo hazard verified: the SAME raw token at a structural start vs mid-sentence shares ONE memo entry (memo key = token.raw), so a sentenceStart-dependent relaxation CANNOT live in the memo — it must be an occurrence-level override in #replayAdmitMemo (e.g. re-run admit with relaxed opts when the occurrence's casing is 'mid-cap'), keeping #computeAdmitMemo context-free (architecture/01 §5).\n2. INPUT: Sighting.casing ('mid-cap' vs 'structural-cap') from P1.M1.T1.S1; the ceiling constant from P1.M1.T3.S1 (chain-only applies to singles too).\n3. LOGIC: Implement spec 04 h2.28's casing-evidence paragraphs for singles. A single mid-sentence capital (properName condition — capital NOT at a structural start) admits under the relaxed band max(rEff(len), 95): at group 1 when attested, group 0 when absent. Capitalized candidates at structural starts get NO relaxation (they admit on the merits exactly as their lowercase form). properName drafts keep the conjugation-guard skip (existing behavior, unchanged). Update tools/calibrate-bands.mjs so the Cap column verdicts follow the 95 band + ceiling rules (calibration history in spec 08 stays honest; the tool already prints a Cap: column). Boundary probes ride here: q 94/95/96, structural-start no-relaxation, 'national'-class single admits at g1, top-band single is chain-only. Mocking: score tests with in-memory dict doubles.\n4. OUTPUT: occurrence-level relaxed admission for singles; updated calibration tool output (used as evidence in P3.M1.T2.S3 live smoke).\n5. DOCS: [Mode A] JSDoc on the relaxed-band constant in score.ts + a note in tools/calibrate-bands.mjs that Cap verdicts follow the 95 band/run rules. Rides with the work.",
+                  "prd_selectors": [
+                    "h2.9",
+                    "h2.25",
+                    "h3.5",
+                    "h2.26",
+                    "h2.28",
+                    "h2.57",
+                    "h2.63"
+                  ]
                 }
               ]
             }
@@ -123,9 +183,17 @@
                   "title": "Pure casing resolver in core + resolver battery",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T2.S1"],
-                  "prd_selectors": ["h2.9", "h2.30", "h2.31", "h2.32", "h2.54"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: no resolver exists; RankedMatch {key, display, description, salience, sessionCount, tier?} (types.ts:165-178) is the object ~20 downstream consumers read (architecture/02 §5). The resolver must live in src/core/ (no pi imports — architecture invariant).\n2. INPUT: Candidate tally fields (capCount, lowerCount, capDisplay) from P1.M1.T2.S1.\n3. LOGIC: Implement spec 04 h2.32 as a pure function resolveCompletionCasing(c: Pick<Candidate, 'key'|'capCount'|'lowerCount'|'capDisplay'>, fragmentFirstLetter: string): string. Fragment begins uppercase → the capitalized form wins; ONLY the first letter is adapted, the rest of the word comes from the winning form's spelling (typed 'Nr' + capDisplay 'NREL' → 'NREL'; + 'National' → 'National'; no capitalized sightings → capitalize the key's first letter; the user's Shift press is never overridden). Fragment lowercase (or zero-fragment) → the form that occurred more often wins (capCount vs lowerCount); ties → lowercase; a word seen only capitalized completes capitalized; words seen only in all caps complete verbatim; paths/technical literals insert verbatim (falls out of the tally rules — pin in tests). Resolver battery rides here: capital-fragment preserve, frequency winner, tie→lower, all-caps verbatim, paths verbatim, zero-fragment listing. Mocking: none — pure function.\n4. OUTPUT: the resolver, consumed by P1.M2.T1.S2 (query wiring), P1.M2.T2.S1/S2 (successor labels), P1.M2.T3.S1 (/acwords display).\n5. DOCS: [Mode A] JSDoc on the resolver (core) stating the pinned rules and spec anchor 04 h2.32. Rides with the work."
+                  "dependencies": [
+                    "P1.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: no resolver exists; RankedMatch {key, display, description, salience, sessionCount, tier?} (types.ts:165-178) is the object ~20 downstream consumers read (architecture/02 §5). The resolver must live in src/core/ (no pi imports — architecture invariant).\n2. INPUT: Candidate tally fields (capCount, lowerCount, capDisplay) from P1.M1.T2.S1.\n3. LOGIC: Implement spec 04 h2.32 as a pure function resolveCompletionCasing(c: Pick<Candidate, 'key'|'capCount'|'lowerCount'|'capDisplay'>, fragmentFirstLetter: string): string. Fragment begins uppercase → the capitalized form wins; ONLY the first letter is adapted, the rest of the word comes from the winning form's spelling (typed 'Nr' + capDisplay 'NREL' → 'NREL'; + 'National' → 'National'; no capitalized sightings → capitalize the key's first letter; the user's Shift press is never overridden). Fragment lowercase (or zero-fragment) → the form that occurred more often wins (capCount vs lowerCount); ties → lowercase; a word seen only capitalized completes capitalized; words seen only in all caps complete verbatim; paths/technical literals insert verbatim (falls out of the tally rules — pin in tests). Resolver battery rides here: capital-fragment preserve, frequency winner, tie→lower, all-caps verbatim, paths verbatim, zero-fragment listing. Mocking: none — pure function.\n4. OUTPUT: the resolver, consumed by P1.M2.T1.S2 (query wiring), P1.M2.T2.S1/S2 (successor labels), P1.M2.T3.S1 (/acwords display).\n5. DOCS: [Mode A] JSDoc on the resolver (core) stating the pinned rules and spec anchor 04 h2.32. Rides with the work.",
+                  "prd_selectors": [
+                    "h2.9",
+                    "h2.30",
+                    "h2.31",
+                    "h2.32",
+                    "h2.54"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -133,9 +201,20 @@
                   "title": "Wire resolver at match construction (both sites); remove Candidate.display",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T2.S1", "P1.M2.T1.S1"],
-                  "prd_selectors": ["h2.9", "h2.30", "h2.31", "h2.32", "h2.41", "h2.43", "h2.54"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: there are TWO display construction sites in src/core/query.ts — :531 (anchored path + zero-fragment listing flows through it) and :582 (tier-0 anchorless pass) — BOTH must resolve (architecture/02 §4). Tab-insert reads the live synchronous result per invariant 2, so resolving at query time satisfies 'resolved at completion time' (PRD R2.1). Direct Candidate.display readers needing migration: store.ts:269/:291 (upsert writes), query.ts:531/:582, debug.ts:74/:120/:203, provider.ts:436 + widget.ts:667 (successor label fallback store.get(s.next)?.display ?? s.next).\n2. INPUT: resolver from P1.M2.T1.S1; tally-bearing Candidates from P1.M1.T2.S1.\n3. LOGIC: Set the RankedMatch display at BOTH construction sites to resolveCompletionCasing(c, liveFragmentFirstLetter) so the ~20 downstream RankedMatch.display consumers (provider items :604/:614-615/:670; widget paint/insert/signatures :266/:270/:301/:719/:739/:905/:1014/:1310/:1501) keep working UNCHANGED; menu labels use the same resolution against the live fragment's first letter. Then the subtractive step: remove Candidate.display and the recency-display merge from store.upsert (store.ts:269/:291); fix remaining direct readers — debug.ts interim `capDisplay ?? key` (full treatment in P1.M2.T3.S1), provider.ts:436/widget.ts:667 successor labels interim `c?.capDisplay ?? s.next` (replaced by nextDisplay logic in P1.M2.T2). Final ranking order unchanged: tier → length → count → lex (compareRankedMatches :370-392); exact-equal exclusion untouched. Query battery extensions ride here (insertion casing per fragment case, zero-fragment listing resolution). Mocking: query tests use makeStore fixtures (test/helpers/bench-fixtures.ts).\n4. OUTPUT: display-free Candidate schema + resolved RankedMatch.display everywhere — the completion-time casing contract for the whole changeset.\n5. DOCS: [Mode A] JSDoc at both query.ts construction sites noting completion-time resolution (spec 04 h2.32) and on the migrated store merge. Rides with the work."
+                  "dependencies": [
+                    "P1.M1.T2.S1",
+                    "P1.M2.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: there are TWO display construction sites in src/core/query.ts — :531 (anchored path + zero-fragment listing flows through it) and :582 (tier-0 anchorless pass) — BOTH must resolve (architecture/02 §4). Tab-insert reads the live synchronous result per invariant 2, so resolving at query time satisfies 'resolved at completion time' (PRD R2.1). Direct Candidate.display readers needing migration: store.ts:269/:291 (upsert writes), query.ts:531/:582, debug.ts:74/:120/:203, provider.ts:436 + widget.ts:667 (successor label fallback store.get(s.next)?.display ?? s.next).\n2. INPUT: resolver from P1.M2.T1.S1; tally-bearing Candidates from P1.M1.T2.S1.\n3. LOGIC: Set the RankedMatch display at BOTH construction sites to resolveCompletionCasing(c, liveFragmentFirstLetter) so the ~20 downstream RankedMatch.display consumers (provider items :604/:614-615/:670; widget paint/insert/signatures :266/:270/:301/:719/:739/:905/:1014/:1310/:1501) keep working UNCHANGED; menu labels use the same resolution against the live fragment's first letter. Then the subtractive step: remove Candidate.display and the recency-display merge from store.upsert (store.ts:269/:291); fix remaining direct readers — debug.ts interim `capDisplay ?? key` (full treatment in P1.M2.T3.S1), provider.ts:436/widget.ts:667 successor labels interim `c?.capDisplay ?? s.next` (replaced by nextDisplay logic in P1.M2.T2). Final ranking order unchanged: tier → length → count → lex (compareRankedMatches :370-392); exact-equal exclusion untouched. Query battery extensions ride here (insertion casing per fragment case, zero-fragment listing resolution). Mocking: query tests use makeStore fixtures (test/helpers/bench-fixtures.ts).\n4. OUTPUT: display-free Candidate schema + resolved RankedMatch.display everywhere — the completion-time casing contract for the whole changeset.\n5. DOCS: [Mode A] JSDoc at both query.ts construction sites noting completion-time resolution (spec 04 h2.32) and on the migrated store merge. Rides with the work.",
+                  "prd_selectors": [
+                    "h2.9",
+                    "h2.30",
+                    "h2.31",
+                    "h2.32",
+                    "h2.41",
+                    "h2.43",
+                    "h2.54"
+                  ]
                 }
               ]
             },
@@ -152,9 +231,22 @@
                   "title": "Fallback provider: series-first zero-char offers + close-on-space typed arming",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T2.S2", "P1.M2.T1.S2"],
-                  "prd_selectors": ["h2.9", "h2.15", "h3.1", "h2.46", "h2.47", "h2.50", "h2.51", "h2.53", "h2.54"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: provider armed branch — successorDisplay at src/pi/provider.ts:436 (store.get(s.next)?.display ?? s.next); zero-char offer arm :462-474 (before === '' || /[ \\t]$/ → store.topSuccessors(armed.word), publishChain bare values at prefix ''); fragment arm :501-529 with exact-equal exclusion at :511; close-on-space block starts :528 ('1.8 CLOSE-ON-SPACE'). Typed-word arming does NOT exist today — arming comes only from applyCompletion accepts (architecture/03 §R2).\n2. INPUT: Successor.series/nextDisplay + series-aware topSuccessors ordering from P1.M1.T2.S2; resolved display machinery from P1.M2.T1.S2.\n3. LOGIC: Implement spec 07 h2.53 on the fallback path. At the armed word-start offer (zero typed chars): successors offered SERIES FIRST (count descending among them), THEN ordinary (count descending) — combined in one published set; series items display and insert their RUN CASING (nextDisplay) at zero typed chars; once the user types, the first-char anchor is case-insensitive as everywhere (matchFragment) and insertion preserves a typed capital first letter (lowercase typing inserts the offer item verbatim). NEW arming transition at the close-on-space site: when a space closes a typed word whose FIRST letter is UPPERCASE and whose lowercase key has series successors (direct topSuccessors consult — series entries included, so chain-only members arm it: typing 'The ' offers 'Fed'), the chain arms; a lowercase typing of the same word must NOT arm (every prose 'the ' would fire). Tab-acceptance arming, the one-shot grant (chain-grant.ts), before_agent_start reset, and the exact-equal exclusion (:511) are UNCHANGED. Chain battery rides here: 'The ' → 'Fed' offer, typed-through disarm, re-arm (test/provider.test.ts + test/chaining-gating.test.ts conventions). Mocking: provider tests with store fixtures + fake current-provider.\n4. OUTPUT: series-aware fallback-path behavior; the exact rule set mirrored by P1.M2.T2.S2 on the widget.\n5. DOCS: [Mode A] JSDoc on the chain-machine arming seam (typed-word transition) and the offer-ordering rule in provider.ts, citing 07 h2.53. Rides with the work."
+                  "dependencies": [
+                    "P1.M1.T2.S2",
+                    "P1.M2.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: provider armed branch — successorDisplay at src/pi/provider.ts:436 (store.get(s.next)?.display ?? s.next); zero-char offer arm :462-474 (before === '' || /[ \\t]$/ → store.topSuccessors(armed.word), publishChain bare values at prefix ''); fragment arm :501-529 with exact-equal exclusion at :511; close-on-space block starts :528 ('1.8 CLOSE-ON-SPACE'). Typed-word arming does NOT exist today — arming comes only from applyCompletion accepts (architecture/03 §R2).\n2. INPUT: Successor.series/nextDisplay + series-aware topSuccessors ordering from P1.M1.T2.S2; resolved display machinery from P1.M2.T1.S2.\n3. LOGIC: Implement spec 07 h2.53 on the fallback path. At the armed word-start offer (zero typed chars): successors offered SERIES FIRST (count descending among them), THEN ordinary (count descending) — combined in one published set; series items display and insert their RUN CASING (nextDisplay) at zero typed chars; once the user types, the first-char anchor is case-insensitive as everywhere (matchFragment) and insertion preserves a typed capital first letter (lowercase typing inserts the offer item verbatim). NEW arming transition at the close-on-space site: when a space closes a typed word whose FIRST letter is UPPERCASE and whose lowercase key has series successors (direct topSuccessors consult — series entries included, so chain-only members arm it: typing 'The ' offers 'Fed'), the chain arms; a lowercase typing of the same word must NOT arm (every prose 'the ' would fire). Tab-acceptance arming, the one-shot grant (chain-grant.ts), before_agent_start reset, and the exact-equal exclusion (:511) are UNCHANGED. Chain battery rides here: 'The ' → 'Fed' offer, typed-through disarm, re-arm (test/provider.test.ts + test/chaining-gating.test.ts conventions). Mocking: provider tests with store fixtures + fake current-provider.\n4. OUTPUT: series-aware fallback-path behavior; the exact rule set mirrored by P1.M2.T2.S2 on the widget.\n5. DOCS: [Mode A] JSDoc on the chain-machine arming seam (typed-word transition) and the offer-ordering rule in provider.ts, citing 07 h2.53. Rides with the work.",
+                  "prd_selectors": [
+                    "h2.9",
+                    "h2.15",
+                    "h3.1",
+                    "h2.46",
+                    "h2.47",
+                    "h2.50",
+                    "h2.51",
+                    "h2.53",
+                    "h2.54"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -162,9 +254,23 @@
                   "title": "Widget path: series-first zero-char offers + close-on-space typed arming",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T2.S2", "P1.M2.T1.S2", "P1.M2.T2.S1"],
-                  "prd_selectors": ["h2.2", "h2.9", "h2.46", "h3.8", "h3.11", "h2.50", "h2.51", "h2.53", "h2.54"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: widget chain surfaces — chainShim at src/pi/widget.ts:655-665 (key: s.next, salience: -s.count, no tier); zero-char offer arm ~:880 (same before === '' || /\\s$/ shape) with exact-equal exclusion at :894; paint composition :904-930 (items = succ.map(chainShim)) is the merge site — today successors and ordinary words never mix in one menu (the chain branch either paints or falls through to the normal query() path at :961+); close-on-space at :951-957 (match === null → closeWith(now)); widget gate armGate :668-673/:955-958 (architecture/03 §R2).\n2. INPUT: same as P1.M2.T2.S1 — Successor.series/nextDisplay (P1.M1.T2.S2), resolver (P1.M2.T1.S2), and the reference rule set from P1.M2.T2.S1.\n3. LOGIC: Mirror spec 07 h2.53 on the widget path. Zero-char armed offer: series items first (count desc) with nextDisplay run-casing display AND insert, then ordinary successors (count desc), one items set at the :904-930 composition site; typed-capital-first-letter preserved on insert; lowercase typing inserts verbatim; first-char anchor case-insensitive once typing. Close-on-space arming at the :951-957 visibility-machine site: uppercase first letter + direct successor consult (series entries included; chain-only arms; lowercase never arms) — the widget twin of the provider's 1.8 hook. Exact-equal exclusion (:894), suppression-lapse semantics, and the never-zero-candidates invariant unchanged. Widget + visibility battery extensions and the chain battery in parity ('The ' → 'Fed', typed-through disarm, re-arm). NOTE: this is a UI-layer change — live TTY verification is BINDING and happens in P3.M1.T2.S3 (unit tests are necessary, not sufficient). Mocking: widget tests per test/widget.test.ts + test/widget-visibility.test.ts conventions.\n4. OUTPUT: both display paths series-aware — R2 complete.\n5. DOCS: [Mode A] JSDoc on the widget series-consult and the arming seam in widget.ts, citing 07 h2.53. Rides with the work."
+                  "dependencies": [
+                    "P1.M1.T2.S2",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: widget chain surfaces — chainShim at src/pi/widget.ts:655-665 (key: s.next, salience: -s.count, no tier); zero-char offer arm ~:880 (same before === '' || /\\s$/ shape) with exact-equal exclusion at :894; paint composition :904-930 (items = succ.map(chainShim)) is the merge site — today successors and ordinary words never mix in one menu (the chain branch either paints or falls through to the normal query() path at :961+); close-on-space at :951-957 (match === null → closeWith(now)); widget gate armGate :668-673/:955-958 (architecture/03 §R2).\n2. INPUT: same as P1.M2.T2.S1 — Successor.series/nextDisplay (P1.M1.T2.S2), resolver (P1.M2.T1.S2), and the reference rule set from P1.M2.T2.S1.\n3. LOGIC: Mirror spec 07 h2.53 on the widget path. Zero-char armed offer: series items first (count desc) with nextDisplay run-casing display AND insert, then ordinary successors (count desc), one items set at the :904-930 composition site; typed-capital-first-letter preserved on insert; lowercase typing inserts verbatim; first-char anchor case-insensitive once typing. Close-on-space arming at the :951-957 visibility-machine site: uppercase first letter + direct successor consult (series entries included; chain-only arms; lowercase never arms) — the widget twin of the provider's 1.8 hook. Exact-equal exclusion (:894), suppression-lapse semantics, and the never-zero-candidates invariant unchanged. Widget + visibility battery extensions and the chain battery in parity ('The ' → 'Fed', typed-through disarm, re-arm). NOTE: this is a UI-layer change — live TTY verification is BINDING and happens in P3.M1.T2.S3 (unit tests are necessary, not sufficient). Mocking: widget tests per test/widget.test.ts + test/widget-visibility.test.ts conventions.\n4. OUTPUT: both display paths series-aware — R2 complete.\n5. DOCS: [Mode A] JSDoc on the widget series-consult and the arming seam in widget.ts, citing 07 h2.53. Rides with the work.",
+                  "prd_selectors": [
+                    "h2.2",
+                    "h2.9",
+                    "h2.46",
+                    "h3.8",
+                    "h3.11",
+                    "h2.50",
+                    "h2.51",
+                    "h2.53",
+                    "h2.54"
+                  ]
                 }
               ]
             },
@@ -181,9 +287,18 @@
                   "title": "/acwords: tally columns + series-marked successor sample",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M2.T1.S2", "P1.M1.T2.S2"],
-                  "prd_selectors": ["h2.41", "h2.45", "h2.55", "h2.56", "h2.58"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: debug surfaces — popup header + rank-group histogram + top-N rows ~src/pi/debug.ts:60-91 (display ×count group label); /tmp/hapax-store.txt dump :118-127 (TSV: key\\tdisplay\\tx<count>\\tg<group>[\\tproper][\\ttyped], sorted sessionCount desc); successor sample :195-210 (display → next ×count via store.topSuccessors) (architecture/03 §debug).\n2. INPUT: Candidate tallies (P1.M1.T2.S1) via the display-free schema (P1.M2.T1.S2); Successor.series/nextDisplay (P1.M1.T2.S2).\n3. LOGIC: Implement spec 08 h2.58's dump for the new schema: per-word tally columns (capDisplay, capCount/lowerCount) in BOTH the popup and the /tmp/hapax-store.txt TSV; the successor sample marks series entries (series flag + nextDisplay run casing). Registered only when config.debug (unchanged). RAM-only: the /tmp dump is the sanctioned debug exception that already exists — do not add new persistence. Tests ride here (test/debug.test.ts conventions).\n4. OUTPUT: /acwords reflecting the full R1/R2 state — the evidence tool used by the P3.M1.T2.S3 live smoke (branch-hygiene scenario asserts via /acwords).\n5. DOCS: [Mode A] JSDoc on debug.ts describing the updated dump format. Rides with the work."
+                  "dependencies": [
+                    "P1.M2.T1.S2",
+                    "P1.M1.T2.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: debug surfaces — popup header + rank-group histogram + top-N rows ~src/pi/debug.ts:60-91 (display ×count group label); /tmp/hapax-store.txt dump :118-127 (TSV: key\\tdisplay\\tx<count>\\tg<group>[\\tproper][\\ttyped], sorted sessionCount desc); successor sample :195-210 (display → next ×count via store.topSuccessors) (architecture/03 §debug).\n2. INPUT: Candidate tallies (P1.M1.T2.S1) via the display-free schema (P1.M2.T1.S2); Successor.series/nextDisplay (P1.M1.T2.S2).\n3. LOGIC: Implement spec 08 h2.58's dump for the new schema: per-word tally columns (capDisplay, capCount/lowerCount) in BOTH the popup and the /tmp/hapax-store.txt TSV; the successor sample marks series entries (series flag + nextDisplay run casing). Registered only when config.debug (unchanged). RAM-only: the /tmp dump is the sanctioned debug exception that already exists — do not add new persistence. Tests ride here (test/debug.test.ts conventions).\n4. OUTPUT: /acwords reflecting the full R1/R2 state — the evidence tool used by the P3.M1.T2.S3 live smoke (branch-hygiene scenario asserts via /acwords).\n5. DOCS: [Mode A] JSDoc on debug.ts describing the updated dump format. Rides with the work.",
+                  "prd_selectors": [
+                    "h2.41",
+                    "h2.45",
+                    "h2.55",
+                    "h2.56",
+                    "h2.58"
+                  ]
                 }
               ]
             }
@@ -219,8 +334,14 @@
                   "status": "Planned",
                   "story_points": 1,
                   "dependencies": [],
-                  "prd_selectors": ["h2.37", "h2.41", "h2.42", "h2.44", "h2.45"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: CandidateStore has NO reset/clear API today (architecture/03 §R3). Internals: word map + #bigrams (BIGRAM_CAP 10_000) + #successorIndex (top-3 per word) + prefix index with dirty state + eviction counters (architecture/02 §3). RAM-only discipline is enforced by test/no-persistence.test.ts — no fs/network in new APIs.\n2. INPUT: none (existing store internals).\n3. LOGIC: Implement the store half of spec 06 h2.42 branch purity. Add reset(): drop all word entries, bigram entries, and successor-index entries; restore caps/ordinal state so that replaying a branch through the normal chain afterwards yields a store byte-identical to a FRESH instance fed the same sequence (this equivalence is the handler's rebuild precondition — pin it: reset-then-replay == fresh-store-replay via entries() + sortedKeysSnapshot() + per-word topSuccessors enumeration, exact toEqual idiom). If P1 has landed, tallies + series bigram fields are part of that state and are covered automatically by the same equality. Mocking: none — pure store tests.\n4. OUTPUT: reset() consumed by P2.M1.T2.S1's handler.\n5. DOCS: [Mode A] JSDoc on reset() in src/core/store.ts citing spec 06 h2.42 and the purity equivalence. Rides with the work."
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: CandidateStore has NO reset/clear API today (architecture/03 §R3). Internals: word map + #bigrams (BIGRAM_CAP 10_000) + #successorIndex (top-3 per word) + prefix index with dirty state + eviction counters (architecture/02 §3). RAM-only discipline is enforced by test/no-persistence.test.ts — no fs/network in new APIs.\n2. INPUT: none (existing store internals).\n3. LOGIC: Implement the store half of spec 06 h2.42 branch purity. Add reset(): drop all word entries, bigram entries, and successor-index entries; restore caps/ordinal state so that replaying a branch through the normal chain afterwards yields a store byte-identical to a FRESH instance fed the same sequence (this equivalence is the handler's rebuild precondition — pin it: reset-then-replay == fresh-store-replay via entries() + sortedKeysSnapshot() + per-word topSuccessors enumeration, exact toEqual idiom). If P1 has landed, tallies + series bigram fields are part of that state and are covered automatically by the same equality. Mocking: none — pure store tests.\n4. OUTPUT: reset() consumed by P2.M1.T2.S1's handler.\n5. DOCS: [Mode A] JSDoc on reset() in src/core/store.ts citing spec 06 h2.42 and the purity equivalence. Rides with the work.",
+                  "prd_selectors": [
+                    "h2.37",
+                    "h2.41",
+                    "h2.42",
+                    "h2.44",
+                    "h2.45"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -229,8 +350,15 @@
                   "status": "Planned",
                   "story_points": 2,
                   "dependencies": [],
-                  "prd_selectors": ["h2.16", "h2.34", "h2.37", "h2.42", "h2.46", "h3.12"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: dispose() at src/pi/ingest.ts:353-363 clears the timer + empties #pending but is teardown; debounce fields are #pending FIFO / #timer / #drain / #debounceMs = 300 (onMessageEnd :331-345); an in-flight #drain loops out safely on the emptied queue. createStartupGate at src/pi/provider.ts:793 wraps getSuggestions with Promise.race([settled, timeout maxWaitMs = 500]) and settles ONCE (ready.then flips settled on resolve OR reject — replay errors never wedge); it has NO re-arm today. The widget gate IS already re-armable (armGate, widget.ts:668-673 and :955-958, bound to the injected restoreReady promise) (architecture/03 §R3, §gate).\n2. INPUT: none (existing seams).\n3. LOGIC: Implement the pipeline/gate halves of spec 05 h2.37 + 07 h3.12 gate reuse. (a) Add IngestPipeline.discardPending(): clear the debounce timer + empty #pending WITHOUT tearing down the pipeline (dispose's body minus teardown); document that #admitMemo survives (token-intrinsic, context-free — safe across rebuilds) and stats counters are session-lifetime diagnostics (not reset). (b) Gate re-arm: extend createStartupGate (or add an equivalent gate-holder) with arm(newReady) that UN-settles an already-settled gate under the SAME ≤ 500 ms bound, forced (options.force) requests waiting too — so session_tree gating is the startup gate verbatim, per 07 h3.12; the widget path re-arms via its existing armGate bound to a fresh restoreReady-style promise. Startup-gate battery extension rides here (test/startup-gate.test.ts): re-arm waits again incl. forced, rejected replay never wedges, onSettled fires exactly once per arming. Mocking: gate tests with controllable promises per existing conventions.\n4. OUTPUT: discardPending() + the re-arm seam, consumed by P2.M1.T2.S1.\n5. DOCS: [Mode A] JSDoc on discardPending() (ingest.ts — note the contrast with dispose()) and on the gate re-arm seam (provider.ts:793). Rides with the work."
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: dispose() at src/pi/ingest.ts:353-363 clears the timer + empties #pending but is teardown; debounce fields are #pending FIFO / #timer / #drain / #debounceMs = 300 (onMessageEnd :331-345); an in-flight #drain loops out safely on the emptied queue. createStartupGate at src/pi/provider.ts:793 wraps getSuggestions with Promise.race([settled, timeout maxWaitMs = 500]) and settles ONCE (ready.then flips settled on resolve OR reject — replay errors never wedge); it has NO re-arm today. The widget gate IS already re-armable (armGate, widget.ts:668-673 and :955-958, bound to the injected restoreReady promise) (architecture/03 §R3, §gate).\n2. INPUT: none (existing seams).\n3. LOGIC: Implement the pipeline/gate halves of spec 05 h2.37 + 07 h3.12 gate reuse. (a) Add IngestPipeline.discardPending(): clear the debounce timer + empty #pending WITHOUT tearing down the pipeline (dispose's body minus teardown); document that #admitMemo survives (token-intrinsic, context-free — safe across rebuilds) and stats counters are session-lifetime diagnostics (not reset). (b) Gate re-arm: extend createStartupGate (or add an equivalent gate-holder) with arm(newReady) that UN-settles an already-settled gate under the SAME ≤ 500 ms bound, forced (options.force) requests waiting too — so session_tree gating is the startup gate verbatim, per 07 h3.12; the widget path re-arms via its existing armGate bound to a fresh restoreReady-style promise. Startup-gate battery extension rides here (test/startup-gate.test.ts): re-arm waits again incl. forced, rejected replay never wedges, onSettled fires exactly once per arming. Mocking: gate tests with controllable promises per existing conventions.\n4. OUTPUT: discardPending() + the re-arm seam, consumed by P2.M1.T2.S1.\n5. DOCS: [Mode A] JSDoc on discardPending() (ingest.ts — note the contrast with dispose()) and on the gate re-arm seam (provider.ts:793). Rides with the work.",
+                  "prd_selectors": [
+                    "h2.16",
+                    "h2.34",
+                    "h2.37",
+                    "h2.42",
+                    "h2.46",
+                    "h3.12"
+                  ]
                 }
               ]
             },
@@ -247,9 +375,24 @@
                   "title": "session_tree handler: guard, queue discard, snapshot, gated in-place rebuild, rebind, claim release",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P2.M1.T1.S1", "P2.M1.T1.S2"],
-                  "prd_selectors": ["h2.15", "h2.16", "h2.33", "h2.36", "h2.37", "h2.38", "h2.40", "h2.42", "h2.46", "h3.9", "h3.12"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: NO session_tree handler exists — index.ts handlers today are session_start (:153), message_end (:398), session_shutdown (:404), before_agent_start (:414); the event table comment block sits at the file head. SessionTreeEvent verified in pi types: {newLeafId: string | null, oldLeafId: string | null, summaryEntry?} registered via pi.on('session_tree', handler) (architecture/external_deps.md). CONSTRAINT: addAutocompleteProvider has NO unregister and the registered fallback provider captured the session's store instance at factory time — so the rebuild MUST mutate that SAME CandidateStore instance in place (reset + replay), never swap slots. Widget rebind precedent: the session_start reload branch (index.ts:275-308) re-wraps widgetOptsOf(editorFactory)?.inner in a FRESH composition. Claim module slot with claim?.release() precedent at :422. restoreFromHistory (ingest.ts:711-763) reads getBranch() (leaf→root, reversed copy) and ADDS ONLY through the normal chain — hence reset() first; onSettled fires exactly once (finally).\n2. INPUT: CandidateStore.reset() (P2.M1.T1.S1); IngestPipeline.discardPending() + the re-armable gate (P2.M1.T1.S2).\n3. LOGIC: Implement spec 05 h2.37 + 06 h2.42 + 07 h2.46/h3.9/h3.12. On session_tree: (a) guard newLeafId === oldLeafId (both string | null) → skip; (b) pipeline.discardPending() — texts in the 300 ms debounce window are dead-branch or re-captured by the snapshot: never lost, never double-counted; (c) store.reset() then restoreFromHistory(pipeline, ctx.sessionManager, shouldAbort, onSettled) reusing the IDENTICAL restore pipeline verbatim; (d) re-arm BOTH query gates under the same ≤ 500 ms bound, forced (Tab) requests included; (e) rebind: widget path = fresh composition around the remembered pre-hapax factory with this rebuild's restoreReady promise; fallback path = SAME provider instance reading the SAME in-place-reset store; (f) claim?.release() (session_tree is in 07 h3.9's release set) plus the fresh composition's unclaimed row; (g) summaryEntry (branch summary) is NEVER ingested, and compaction NEVER triggers a rebuild (do not add a session_compact handler; both already hold — do not regress). Update the event table comment block at index.ts head. Handler unit tests ride here with a fake ctx {sessionManager: {getBranch()}, ui} per test/index.test.ts conventions. Mocking: fake sessionManager returning scripted branches; fake ui capturing setEditorComponent/addAutocompleteProvider calls.\n4. OUTPUT: the wired handler, consumed by P2.M1.T2.S2's battery and the P3.M1.T2.S3 live smoke (integration item 9).\n5. DOCS: [Mode A] JSDoc on the session_tree handler + the event table comment block (src/pi/index.ts) and on the widget rebind/claim-release seam. Rides with the work."
+                  "dependencies": [
+                    "P2.M1.T1.S1",
+                    "P2.M1.T1.S2"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: NO session_tree handler exists — index.ts handlers today are session_start (:153), message_end (:398), session_shutdown (:404), before_agent_start (:414); the event table comment block sits at the file head. SessionTreeEvent verified in pi types: {newLeafId: string | null, oldLeafId: string | null, summaryEntry?} registered via pi.on('session_tree', handler) (architecture/external_deps.md). CONSTRAINT: addAutocompleteProvider has NO unregister and the registered fallback provider captured the session's store instance at factory time — so the rebuild MUST mutate that SAME CandidateStore instance in place (reset + replay), never swap slots. Widget rebind precedent: the session_start reload branch (index.ts:275-308) re-wraps widgetOptsOf(editorFactory)?.inner in a FRESH composition. Claim module slot with claim?.release() precedent at :422. restoreFromHistory (ingest.ts:711-763) reads getBranch() (leaf→root, reversed copy) and ADDS ONLY through the normal chain — hence reset() first; onSettled fires exactly once (finally).\n2. INPUT: CandidateStore.reset() (P2.M1.T1.S1); IngestPipeline.discardPending() + the re-armable gate (P2.M1.T1.S2).\n3. LOGIC: Implement spec 05 h2.37 + 06 h2.42 + 07 h2.46/h3.9/h3.12. On session_tree: (a) guard newLeafId === oldLeafId (both string | null) → skip; (b) pipeline.discardPending() — texts in the 300 ms debounce window are dead-branch or re-captured by the snapshot: never lost, never double-counted; (c) store.reset() then restoreFromHistory(pipeline, ctx.sessionManager, shouldAbort, onSettled) reusing the IDENTICAL restore pipeline verbatim; (d) re-arm BOTH query gates under the same ≤ 500 ms bound, forced (Tab) requests included; (e) rebind: widget path = fresh composition around the remembered pre-hapax factory with this rebuild's restoreReady promise; fallback path = SAME provider instance reading the SAME in-place-reset store; (f) claim?.release() (session_tree is in 07 h3.9's release set) plus the fresh composition's unclaimed row; (g) summaryEntry (branch summary) is NEVER ingested, and compaction NEVER triggers a rebuild (do not add a session_compact handler; both already hold — do not regress). Update the event table comment block at index.ts head. Handler unit tests ride here with a fake ctx {sessionManager: {getBranch()}, ui} per test/index.test.ts conventions. Mocking: fake sessionManager returning scripted branches; fake ui capturing setEditorComponent/addAutocompleteProvider calls.\n4. OUTPUT: the wired handler, consumed by P2.M1.T2.S2's battery and the P3.M1.T2.S3 live smoke (integration item 9).\n5. DOCS: [Mode A] JSDoc on the session_tree handler + the event table comment block (src/pi/index.ts) and on the widget rebind/claim-release seam. Rides with the work.",
+                  "prd_selectors": [
+                    "h2.15",
+                    "h2.16",
+                    "h2.33",
+                    "h2.36",
+                    "h2.37",
+                    "h2.38",
+                    "h2.40",
+                    "h2.42",
+                    "h2.46",
+                    "h3.9",
+                    "h3.12"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -257,9 +400,18 @@
                   "title": "Branch-purity + rebuild acceptance battery (spec/09-mandated)",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P2.M1.T2.S1"],
-                  "prd_selectors": ["h2.36", "h2.37", "h2.42", "h2.45", "h2.59", "h2.60"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: no serialize/deepEqual helper exists; equality building blocks are store.entries() (defensive copy), sortedKeysSnapshot(), and per-word topSuccessors(word) enumeration — the bigram map has NO public dump; enumerate known words, or (only if needed) add an internal defensive dump, keeping the RAM-only discipline (test/no-persistence.test.ts greps forbidden APIs) (architecture/02 §8). This subtask is the spec-09-MANDATED acceptance battery named in the spec's unit-test bullets — not incidental test-writing; every implementing subtask above already carries its own riding tests.\n2. INPUT: the wired handler (P2.M1.T2.S1); store/query test fixture conventions (test/fixtures/sessions/, test/helpers/session-fixture.ts).\n3. LOGIC: Implement the spec 09 branch bullets. Store purity: replaying a fixed message sequence twice yields identical stores; a store built incrementally (message_end sequence) EQUALS the store rebuilt from a getBranch() snapshot of the same sequence — no dead-branch words survive, nothing double-counts; when P1 has landed, tallies + series bigrams are part of the compared state and must reproduce identically (assert with whatever fields are present). Provider bullets: the queue discard never loses or double-counts live words (pending texts re-captured by the snapshot); newLeafId === oldLeafId skips; queries during replay wait behind the gate INCLUDING forced requests (bounded ≤ 500 ms). Widget bullet: session_tree releases a claimed row and re-binds the widget to the rebuilt store. The LIVE version of integration item 9 runs in P3.M1.T2.S3 — record that pointer in the battery header. Mocking: fake ctx/pipeline per test/index.test.ts + test/provider.test.ts conventions.\n4. OUTPUT: green battery completing R3; evidence feeds the P3.M1.T2.S4 DoD entry.\n5. DOCS: none — no user-facing/config/API surface change (test-only; the battery header cites spec 09 bullets)."
+                  "dependencies": [
+                    "P2.M1.T2.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: no serialize/deepEqual helper exists; equality building blocks are store.entries() (defensive copy), sortedKeysSnapshot(), and per-word topSuccessors(word) enumeration — the bigram map has NO public dump; enumerate known words, or (only if needed) add an internal defensive dump, keeping the RAM-only discipline (test/no-persistence.test.ts greps forbidden APIs) (architecture/02 §8). This subtask is the spec-09-MANDATED acceptance battery named in the spec's unit-test bullets — not incidental test-writing; every implementing subtask above already carries its own riding tests.\n2. INPUT: the wired handler (P2.M1.T2.S1); store/query test fixture conventions (test/fixtures/sessions/, test/helpers/session-fixture.ts).\n3. LOGIC: Implement the spec 09 branch bullets. Store purity: replaying a fixed message sequence twice yields identical stores; a store built incrementally (message_end sequence) EQUALS the store rebuilt from a getBranch() snapshot of the same sequence — no dead-branch words survive, nothing double-counts; when P1 has landed, tallies + series bigrams are part of the compared state and must reproduce identically (assert with whatever fields are present). Provider bullets: the queue discard never loses or double-counts live words (pending texts re-captured by the snapshot); newLeafId === oldLeafId skips; queries during replay wait behind the gate INCLUDING forced requests (bounded ≤ 500 ms). Widget bullet: session_tree releases a claimed row and re-binds the widget to the rebuilt store. The LIVE version of integration item 9 runs in P3.M1.T2.S3 — record that pointer in the battery header. Mocking: fake ctx/pipeline per test/index.test.ts + test/provider.test.ts conventions.\n4. OUTPUT: green battery completing R3; evidence feeds the P3.M1.T2.S4 DoD entry.\n5. DOCS: none — no user-facing/config/API surface change (test-only; the battery header cites spec 09 bullets).",
+                  "prd_selectors": [
+                    "h2.36",
+                    "h2.37",
+                    "h2.42",
+                    "h2.45",
+                    "h2.59",
+                    "h2.60"
+                  ]
                 }
               ]
             }
@@ -295,8 +447,17 @@
                   "status": "Planned",
                   "story_points": 1,
                   "dependencies": [],
-                  "prd_selectors": ["h2.2", "h2.46", "h2.50", "h2.51", "h2.52", "h2.59", "h3.10", "h3.13"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: all three red cases fail at expect(pi.applied).toEqual(['templates/']) with Received: [] — the 2nd Tab never reaches pi's applyCompletion; the harness (test/defer-pi-menu.repro.test.ts, 207 lines) drives the REAL pi-tui Editor as the widget factory's inner editor with a pi-provider double; case 3 (fake timers, menuDelayMs 400) proves static context classification cannot work — deferral must key on the menu's ACTUAL open state. Precedent guard: editor.ts:111-115 uses innerAny.isShowingAutocomplete?.() === true. decideWidgetKey (widget.ts:1194) is PURE (data/visible/count/highlightIndex/interacted/keybindings — no editor state) and MUST STAY PURE; editor-state checks belong in the wiring (the Enter-submit seam is the precedent). Recommended insertion: in widgetHandleInput (widget.ts:1592+), after decideWidgetKey and BEFORE the tab-insert handling (~:1688) (architecture/03 §R4, architecture/04 §1).\n2. INPUT: none — existing widget key machine.\n3. LOGIC: Implement spec 07 h2.46 ('stock path/slash completion is untouched by construction') + h2.51 never-hijack. In widgetHandleInput: if the key is Tab and inner.isShowingAutocomplete?.() === true → return forwardInput(data) verbatim (before any insert/suppress decision executes) — pi's menu accepts its highlighted item; hapax never inserts a word over an open pi menu. This single rule covers all three cases, including the hesitation/race case (deferral keys on the menu actually being open, not on the hapax line's armed state). Keep the 4th (passing, contrast) case green — classified pure-slash deferral unchanged; keep the Enter-submits guard untouched. Harden the file: update the header ('not a regression suite yet' → it now is one), strip the console.log scaffolding, keep assertions. Mocking: the file's own harness (real Editor + provider double) — extend test/widget.test.ts key-handling bullets for the deferral state as well.\n4. OUTPUT: defer-pi-menu battery green (3 former reds + contrast case) — the gauntlet precondition for P3.M1.T2.S2. NOTE: key-handling change on the widget path → live verification in P3.M1.T2.S3 is BINDING.\n5. DOCS: [Mode A] JSDoc on the Tab branch documenting the deferral rule and its spec anchor (07 h2.46 + h2.51). Rides with the work."
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: all three red cases fail at expect(pi.applied).toEqual(['templates/']) with Received: [] — the 2nd Tab never reaches pi's applyCompletion; the harness (test/defer-pi-menu.repro.test.ts, 207 lines) drives the REAL pi-tui Editor as the widget factory's inner editor with a pi-provider double; case 3 (fake timers, menuDelayMs 400) proves static context classification cannot work — deferral must key on the menu's ACTUAL open state. Precedent guard: editor.ts:111-115 uses innerAny.isShowingAutocomplete?.() === true. decideWidgetKey (widget.ts:1194) is PURE (data/visible/count/highlightIndex/interacted/keybindings — no editor state) and MUST STAY PURE; editor-state checks belong in the wiring (the Enter-submit seam is the precedent). Recommended insertion: in widgetHandleInput (widget.ts:1592+), after decideWidgetKey and BEFORE the tab-insert handling (~:1688) (architecture/03 §R4, architecture/04 §1).\n2. INPUT: none — existing widget key machine.\n3. LOGIC: Implement spec 07 h2.46 ('stock path/slash completion is untouched by construction') + h2.51 never-hijack. In widgetHandleInput: if the key is Tab and inner.isShowingAutocomplete?.() === true → return forwardInput(data) verbatim (before any insert/suppress decision executes) — pi's menu accepts its highlighted item; hapax never inserts a word over an open pi menu. This single rule covers all three cases, including the hesitation/race case (deferral keys on the menu actually being open, not on the hapax line's armed state). Keep the 4th (passing, contrast) case green — classified pure-slash deferral unchanged; keep the Enter-submits guard untouched. Harden the file: update the header ('not a regression suite yet' → it now is one), strip the console.log scaffolding, keep assertions. Mocking: the file's own harness (real Editor + provider double) — extend test/widget.test.ts key-handling bullets for the deferral state as well.\n4. OUTPUT: defer-pi-menu battery green (3 former reds + contrast case) — the gauntlet precondition for P3.M1.T2.S2. NOTE: key-handling change on the widget path → live verification in P3.M1.T2.S3 is BINDING.\n5. DOCS: [Mode A] JSDoc on the Tab branch documenting the deferral rule and its spec anchor (07 h2.46 + h2.51). Rides with the work.",
+                  "prd_selectors": [
+                    "h2.2",
+                    "h2.46",
+                    "h2.50",
+                    "h2.51",
+                    "h2.52",
+                    "h2.59",
+                    "h3.10",
+                    "h3.13"
+                  ]
                 }
               ]
             },
@@ -313,9 +474,37 @@
                   "title": "README sweep: relief blurb rewrite, feature blurbs, config-table defaults, verification wording",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M1.T3.S1", "P1.M1.T3.S2", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T2.S1", "P1.M2.T2.S2", "P1.M2.T3.S1", "P2.M1.T1.S1", "P2.M1.T1.S2", "P2.M1.T2.S1", "P2.M1.T2.S2", "P3.M1.T1.S1"],
-                  "prd_selectors": ["h2.1", "h2.3", "h2.9", "h2.26", "h2.32", "h2.37", "h2.55", "h2.56", "h2.57", "h3.10"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: README.md is 626 lines. The relief-retirement blurb at :105-114 ('Proper-noun relief — retired (2026-09) … retired-in-place … ~483 capitalized common words') is now half-obsolete. The config table (~:462-474) says maxSuggestions default 8 and rejectCommonness default 12 — the baked constants are 20 (config.ts:131) and 30 (score.ts:109); both landed in earlier commits with no README follow-up. Feature blurbs live under '## Features' (:32+); verification wording under '## Development / #### Checks' (:531+, :606). README never overrides spec (h2.1) (architecture/04 §5).\n2. INPUT: the landed behaviors of every implementing subtask (dependencies list = all of them).\n3. LOGIC: Rewrite :105-114: casing evidence is BACK via runs + the 95-band, with the dictionary top-band ceiling as the noise guard (the old relief branch stays retired-in-place). Add capitalized-series completion, branch-hygiene rebuild, and Tab-deferral coverage to the feature blurbs. Fix the config-table defaults (rejectCommonness 12 → 30; maxSuggestions 8 → 20) and re-check neighboring rows against src/pi/config.ts DEFAULT_CONFIG (:121-131). Re-check the verification section's wording for the new key/claim behaviors (Tab defers to pi's open menu; branch rebuild gate). No spec edits (spec is read-only).\n4. OUTPUT: README coherent with spec and code — input to S4's DoD entry.\n5. DOCS: this subtask IS documentation (Mode B) — README.md is the deliverable; no further doc obligations."
+                  "dependencies": [
+                    "P1.M1.T1.S1",
+                    "P1.M1.T1.S2",
+                    "P1.M1.T2.S1",
+                    "P1.M1.T2.S2",
+                    "P1.M1.T3.S1",
+                    "P1.M1.T3.S2",
+                    "P1.M2.T1.S1",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T2.S1",
+                    "P1.M2.T2.S2",
+                    "P1.M2.T3.S1",
+                    "P2.M1.T1.S1",
+                    "P2.M1.T1.S2",
+                    "P2.M1.T2.S1",
+                    "P2.M1.T2.S2",
+                    "P3.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: README.md is 626 lines. The relief-retirement blurb at :105-114 ('Proper-noun relief — retired (2026-09) … retired-in-place … ~483 capitalized common words') is now half-obsolete. The config table (~:462-474) says maxSuggestions default 8 and rejectCommonness default 12 — the baked constants are 20 (config.ts:131) and 30 (score.ts:109); both landed in earlier commits with no README follow-up. Feature blurbs live under '## Features' (:32+); verification wording under '## Development / #### Checks' (:531+, :606). README never overrides spec (h2.1) (architecture/04 §5).\n2. INPUT: the landed behaviors of every implementing subtask (dependencies list = all of them).\n3. LOGIC: Rewrite :105-114: casing evidence is BACK via runs + the 95-band, with the dictionary top-band ceiling as the noise guard (the old relief branch stays retired-in-place). Add capitalized-series completion, branch-hygiene rebuild, and Tab-deferral coverage to the feature blurbs. Fix the config-table defaults (rejectCommonness 12 → 30; maxSuggestions 8 → 20) and re-check neighboring rows against src/pi/config.ts DEFAULT_CONFIG (:121-131). Re-check the verification section's wording for the new key/claim behaviors (Tab defers to pi's open menu; branch rebuild gate). No spec edits (spec is read-only).\n4. OUTPUT: README coherent with spec and code — input to S4's DoD entry.\n5. DOCS: this subtask IS documentation (Mode B) — README.md is the deliverable; no further doc obligations.",
+                  "prd_selectors": [
+                    "h2.1",
+                    "h2.3",
+                    "h2.9",
+                    "h2.26",
+                    "h2.32",
+                    "h2.37",
+                    "h2.55",
+                    "h2.56",
+                    "h2.57",
+                    "h3.10"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -323,9 +512,32 @@
                   "title": "Full gauntlet: check + test (incl. former repro) + bench, with counts and gate numbers",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M1.T3.S1", "P1.M1.T3.S2", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T2.S1", "P1.M2.T2.S2", "P1.M2.T3.S1", "P2.M1.T1.S1", "P2.M1.T1.S2", "P2.M1.T2.S1", "P2.M1.T2.S2", "P3.M1.T1.S1"],
-                  "prd_selectors": ["h2.59", "h2.62", "h2.63", "h2.64", "h2.65"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: baseline reality (RUN at research time): npm test = 4 failed / 1128 passed / 1 skipped (1133 total) — the 3 repro reds PLUS an environment-sensitive 4th failure in test/acceptance.test.ts's network-gated 'pi -p -e' case (exited 1 with stderr outside the environmental-skip regex at acceptance.test.ts:645-658); npm run check exit 0; 9 perf gates in test/perf-gates.test.ts (a/a2/a3/t0/b/c/d/e/f — budgets and 3× CI bounds listed in architecture/04 §7); npm run bench = vitest bench (test/bench/core.bench.ts). The session_tree rebuild has NO separate gate row — it rides the existing restore budgets (gate e < 600 ms) (architecture/04 §2, §7).\n2. INPUT: all implementing subtasks landed (dependencies = all of them).\n3. LOGIC: Run the full gauntlet: npm run check (tsc clean); npm test — ALL green including the former repro battery; RESOLVE or explicitly acknowledge the acceptance.test.ts environmental case (fix the skip-guard regex to recognize the observed stderr wording, or document it as environmental with evidence — do not silently weaken the gate); npm run bench — capture gate numbers vs budgets. Record exact suite counts and gate numbers for S4's DoD entry. Mocking: none — real suites.\n4. OUTPUT: gauntlet results (counts + gate table) consumed by P3.M1.T2.S4.\n5. DOCS: none beyond captured output — the DoD entry (S4) is the documentation artifact."
+                  "dependencies": [
+                    "P1.M1.T1.S1",
+                    "P1.M1.T1.S2",
+                    "P1.M1.T2.S1",
+                    "P1.M1.T2.S2",
+                    "P1.M1.T3.S1",
+                    "P1.M1.T3.S2",
+                    "P1.M2.T1.S1",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T2.S1",
+                    "P1.M2.T2.S2",
+                    "P1.M2.T3.S1",
+                    "P2.M1.T1.S1",
+                    "P2.M1.T1.S2",
+                    "P2.M1.T2.S1",
+                    "P2.M1.T2.S2",
+                    "P3.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: baseline reality (RUN at research time): npm test = 4 failed / 1128 passed / 1 skipped (1133 total) — the 3 repro reds PLUS an environment-sensitive 4th failure in test/acceptance.test.ts's network-gated 'pi -p -e' case (exited 1 with stderr outside the environmental-skip regex at acceptance.test.ts:645-658); npm run check exit 0; 9 perf gates in test/perf-gates.test.ts (a/a2/a3/t0/b/c/d/e/f — budgets and 3× CI bounds listed in architecture/04 §7); npm run bench = vitest bench (test/bench/core.bench.ts). The session_tree rebuild has NO separate gate row — it rides the existing restore budgets (gate e < 600 ms) (architecture/04 §2, §7).\n2. INPUT: all implementing subtasks landed (dependencies = all of them).\n3. LOGIC: Run the full gauntlet: npm run check (tsc clean); npm test — ALL green including the former repro battery; RESOLVE or explicitly acknowledge the acceptance.test.ts environmental case (fix the skip-guard regex to recognize the observed stderr wording, or document it as environmental with evidence — do not silently weaken the gate); npm run bench — capture gate numbers vs budgets. Record exact suite counts and gate numbers for S4's DoD entry. Mocking: none — real suites.\n4. OUTPUT: gauntlet results (counts + gate table) consumed by P3.M1.T2.S4.\n5. DOCS: none beyond captured output — the DoD entry (S4) is the documentation artifact.",
+                  "prd_selectors": [
+                    "h2.59",
+                    "h2.62",
+                    "h2.63",
+                    "h2.64",
+                    "h2.65"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -333,9 +545,35 @@
                   "title": "Live smoke (BINDING, spec/09 h2.61): series walk, branch hygiene, Tab deferral",
                   "status": "Planned",
                   "story_points": 2,
-                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M1.T3.S1", "P1.M1.T3.S2", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T2.S1", "P1.M2.T2.S2", "P1.M2.T3.S1", "P2.M1.T1.S1", "P2.M1.T1.S2", "P2.M1.T2.S1", "P2.M1.T2.S2", "P3.M1.T1.S1"],
-                  "prd_selectors": ["h2.2", "h2.37", "h2.53", "h2.60", "h2.61", "h2.64", "h2.65", "h3.10"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: the binding technique (spec 09 h2.61, extracted in architecture/04 §3): pi --no-session inside a tmux pane (real TTY required — piped stdout exits silently); seed the store with one short user message then Ctrl+C; drive keys via tmux send-keys ONE CHAR AT A TIME with 0.08–0.12 s sleeps (bursts cancel in-flight autocomplete queries — a known source of false conclusions); verify via tmux capture-pane; temporary appendFileSync instrumentation behind an env var in src/pi/provider.ts is sanctioned and MUST be removed before committing.\n2. INPUT: all landed surfaces (dependencies = all implementing subtasks); /acwords dump (P1.M2.T3.S1) as the evidence tool.\n3. LOGIC: Execute the three binding scenarios. (i) Capitalized-series chain walk live: submit a message containing e.g. 'National Renewable Energy Laboratory', then type 'Na' + Tab and walk the members via the zero-char series offers; include a 'The Fed'-style chain-only arm if the conversation contains one. (ii) Integration item 9 (branch hygiene): probe a rare misspelled word's dictionary-absence with `node tools/calibrate-bands.mjs <word>`; submit a prompt containing it, Ctrl+C the turn, /tree back, edit the misspelling out, resubmit — the misspelling NEVER appears in suggestions or /acwords; the corrected word does; the first post-navigation word arrives gate-late but present (≤ 500 ms). (iii) R4 Tab deferral: Tab-forced file menu accepts pi's item while hapax's line is armed. Remove all instrumentation before committing; verify tree clean (git status --porcelain over src/ test/ spec/ README.md docs/). Mocking: none — live pi.\n4. OUTPUT: capture-pane evidence + key scripts, consumed by P3.M1.T2.S4's DoD entry.\n5. DOCS: none — evidence artifact (referenced from the DoD entry)."
+                  "dependencies": [
+                    "P1.M1.T1.S1",
+                    "P1.M1.T1.S2",
+                    "P1.M1.T2.S1",
+                    "P1.M1.T2.S2",
+                    "P1.M1.T3.S1",
+                    "P1.M1.T3.S2",
+                    "P1.M2.T1.S1",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T2.S1",
+                    "P1.M2.T2.S2",
+                    "P1.M2.T3.S1",
+                    "P2.M1.T1.S1",
+                    "P2.M1.T1.S2",
+                    "P2.M1.T2.S1",
+                    "P2.M1.T2.S2",
+                    "P3.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: the binding technique (spec 09 h2.61, extracted in architecture/04 §3): pi --no-session inside a tmux pane (real TTY required — piped stdout exits silently); seed the store with one short user message then Ctrl+C; drive keys via tmux send-keys ONE CHAR AT A TIME with 0.08–0.12 s sleeps (bursts cancel in-flight autocomplete queries — a known source of false conclusions); verify via tmux capture-pane; temporary appendFileSync instrumentation behind an env var in src/pi/provider.ts is sanctioned and MUST be removed before committing.\n2. INPUT: all landed surfaces (dependencies = all implementing subtasks); /acwords dump (P1.M2.T3.S1) as the evidence tool.\n3. LOGIC: Execute the three binding scenarios. (i) Capitalized-series chain walk live: submit a message containing e.g. 'National Renewable Energy Laboratory', then type 'Na' + Tab and walk the members via the zero-char series offers; include a 'The Fed'-style chain-only arm if the conversation contains one. (ii) Integration item 9 (branch hygiene): probe a rare misspelled word's dictionary-absence with `node tools/calibrate-bands.mjs <word>`; submit a prompt containing it, Ctrl+C the turn, /tree back, edit the misspelling out, resubmit — the misspelling NEVER appears in suggestions or /acwords; the corrected word does; the first post-navigation word arrives gate-late but present (≤ 500 ms). (iii) R4 Tab deferral: Tab-forced file menu accepts pi's item while hapax's line is armed. Remove all instrumentation before committing; verify tree clean (git status --porcelain over src/ test/ spec/ README.md docs/). Mocking: none — live pi.\n4. OUTPUT: capture-pane evidence + key scripts, consumed by P3.M1.T2.S4's DoD entry.\n5. DOCS: none — evidence artifact (referenced from the DoD entry).",
+                  "prd_selectors": [
+                    "h2.2",
+                    "h2.37",
+                    "h2.53",
+                    "h2.60",
+                    "h2.61",
+                    "h2.64",
+                    "h2.65",
+                    "h3.10"
+                  ]
                 },
                 {
                   "type": "Subtask",
@@ -343,9 +581,33 @@
                   "title": "docs/M1-DoD.md append + drift report (spec read-only)",
                   "status": "Planned",
                   "story_points": 1,
-                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M1.T3.S1", "P1.M1.T3.S2", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T2.S1", "P1.M2.T2.S2", "P1.M2.T3.S1", "P2.M1.T1.S1", "P2.M1.T1.S2", "P2.M1.T2.S1", "P2.M1.T2.S2", "P3.M1.T1.S1"],
-                  "prd_selectors": ["h2.1", "h2.31", "h2.56", "h2.59", "h2.64", "h2.65"],
-                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: docs/M1-DoD.md (1,570 lines) is a single append-only evidence log with per-changeset sections (M2 :265, Bugfix-001 :200/:506, M3 :682, arrow-model-v2 :1267). The item-append pattern to match EXACTLY: dated header block (date, head commit short + full SHA, environment line OS · Node · vitest · pi, one-line verdict); numbered 'Gauntlet item N — <name>: PASS' sections with re-runnable commands in fenced blocks and dated result lines; gate tables (Gate | Budget w/ spec ref | Measured | vs budget | CI bound 3× | Verdict); live-smoke items with exact tmux key scripts + captures + zero-instrumentation proof + tree-cleanliness statement; a 'Drift report (spec read-only this run)' section; a final 'Reproduction' section (architecture/04 §6).\n2. INPUT: S1's README state, S2's gauntlet counts + gate numbers, S3's captures.\n3. LOGIC: Append the dated gauntlet section for this changeset following the file's pattern exactly. The drift report (spec is READ-ONLY — record only, never edit) must list: spec/08's schema example shows \"rejectCommonness\": 12 while 04/tuning-protocol/score.ts say 30; spec/09's query.test.ts ranking bullet still teaches the retired count-before-length order (04 h2.31's tier→length→count→lex governs); the baseline suite-count drift (PRD claimed 3 failed/1129 passed/1 skipped; actual 4/1128/1 — the acceptance.test.ts environmental case and its resolution per P3.M1.T2.S2). Zero spec edits; no instrumentation left; tree clean.\n4. OUTPUT: the DoD entry + drift report for the owner to reconcile interactively — completes R5 and the delta DoD.\n5. DOCS: this subtask IS documentation (Mode B) — docs/M1-DoD.md is the deliverable."
+                  "dependencies": [
+                    "P1.M1.T1.S1",
+                    "P1.M1.T1.S2",
+                    "P1.M1.T2.S1",
+                    "P1.M1.T2.S2",
+                    "P1.M1.T3.S1",
+                    "P1.M1.T3.S2",
+                    "P1.M2.T1.S1",
+                    "P1.M2.T1.S2",
+                    "P1.M2.T2.S1",
+                    "P1.M2.T2.S2",
+                    "P1.M2.T3.S1",
+                    "P2.M1.T1.S1",
+                    "P2.M1.T1.S2",
+                    "P2.M1.T2.S1",
+                    "P2.M1.T2.S2",
+                    "P3.M1.T1.S1"
+                  ],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: docs/M1-DoD.md (1,570 lines) is a single append-only evidence log with per-changeset sections (M2 :265, Bugfix-001 :200/:506, M3 :682, arrow-model-v2 :1267). The item-append pattern to match EXACTLY: dated header block (date, head commit short + full SHA, environment line OS · Node · vitest · pi, one-line verdict); numbered 'Gauntlet item N — <name>: PASS' sections with re-runnable commands in fenced blocks and dated result lines; gate tables (Gate | Budget w/ spec ref | Measured | vs budget | CI bound 3× | Verdict); live-smoke items with exact tmux key scripts + captures + zero-instrumentation proof + tree-cleanliness statement; a 'Drift report (spec read-only this run)' section; a final 'Reproduction' section (architecture/04 §6).\n2. INPUT: S1's README state, S2's gauntlet counts + gate numbers, S3's captures.\n3. LOGIC: Append the dated gauntlet section for this changeset following the file's pattern exactly. The drift report (spec is READ-ONLY — record only, never edit) must list: spec/08's schema example shows \"rejectCommonness\": 12 while 04/tuning-protocol/score.ts say 30; spec/09's query.test.ts ranking bullet still teaches the retired count-before-length order (04 h2.31's tier→length→count→lex governs); the baseline suite-count drift (PRD claimed 3 failed/1129 passed/1 skipped; actual 4/1128/1 — the acceptance.test.ts environmental case and its resolution per P3.M1.T2.S2). Zero spec edits; no instrumentation left; tree clean.\n4. OUTPUT: the DoD entry + drift report for the owner to reconcile interactively — completes R5 and the delta DoD.\n5. DOCS: this subtask IS documentation (Mode B) — docs/M1-DoD.md is the deliverable.",
+                  "prd_selectors": [
+                    "h2.1",
+                    "h2.31",
+                    "h2.56",
+                    "h2.59",
+                    "h2.64",
+                    "h2.65"
+                  ]
                 }
               ]
             }

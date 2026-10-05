@@ -1358,6 +1358,7 @@ const seedStore = (entries: readonly (readonly [string, string])[]): CandidateSt
       ordinal: s.currentOrdinal() + 1,
       fromUser: false,
       properName: false,
+      casing: "lower",
       rankGroup: 0,
     });
   }

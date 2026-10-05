@@ -36,6 +36,24 @@ export interface Candidate {
   rankGroup: RankGroup;
 }
 
+/** Casing class of ONE candidate occurrence (spec §04 h2.26/h3.5,
+ *  2026-10 casing-evidence groundwork). Derived per occurrence in
+ *  segment.expandCandidates from the token's first ASCII char and its
+ *  structural-start flag:
+ *
+ *    uppercase first char + structural start → "structural-cap"
+ *      (orthographic capital: sentence/line/bullet/heading/clause start)
+ *    uppercase first char, mid-sentence       → "mid-cap"
+ *      (proper-name evidence)
+ *    anything else                            → "lower"
+ *
+ *  Consumed downstream: the capitalized-run walk (§04 h2.26 — run
+ *  detection reads mid-cap OR structural-cap as "uppercase occurrence",
+ *  deliberately ignoring the structural boundary there) and the casing
+ *  tallies (§04 h3.5 — structural-cap sightings count toward the
+ *  capitalized tally only while no lowercase sighting exists). */
+export type CasingClass = "lower" | "mid-cap" | "structural-cap";
+
 /** The unit the ingest pipeline feeds `store.upsert`. Produced by
  *  segment + shapeGate + score for each admitted candidate occurrence. */
 export interface Sighting {
@@ -48,6 +66,10 @@ export interface Sighting {
   /** true when the occurrence came from a user message */
   fromUser: boolean;
   properName: boolean;
+  /** casing class of THIS occurrence (see CasingClass) — occurrence
+   *  context for the store's casing tallies (§04 h3.5) and the run
+   *  walk (§04 h2.26). Required: every producer must classify. */
+  casing: CasingClass;
   rankGroup: RankGroup;
 }
 

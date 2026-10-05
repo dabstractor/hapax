@@ -29,6 +29,7 @@ function see(
     ordinal: store.nextOrdinal(),
     fromUser: false,
     properName: false,
+    casing: "lower",
     rankGroup: 0,
     ...extra,
   };

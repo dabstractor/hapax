@@ -631,6 +631,7 @@ export class IngestPipeline {
         ordinal,
         fromUser,
         properName: draft.properName,
+        casing: draft.casing,
         rankGroup: result,
       };
       this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)

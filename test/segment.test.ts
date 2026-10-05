@@ -363,6 +363,7 @@ describe("expandCandidates — atomic identifiers (2026-10 owner rule, PRD §04 
         key: "fixroundingerror",
         display: "fixRoundingError",
         properName: false,
+        casing: "lower",
       },
     ]);
   });
@@ -373,6 +374,7 @@ describe("expandCandidates — atomic identifiers (2026-10 owner rule, PRD §04 
         key: "httpserver",
         display: "HTTPServer",
         properName: true,
+        casing: "mid-cap",
       },
     ]);
   });
@@ -383,6 +385,7 @@ describe("expandCandidates — atomic identifiers (2026-10 owner rule, PRD §04 
         key: "session_token_valid",
         display: "session_token_valid",
         properName: false,
+        casing: "lower",
       },
     ]);
   });
@@ -395,6 +398,7 @@ describe("expandCandidates — atomic identifiers (2026-10 owner rule, PRD §04 
         key: "searchreplacementdownloads",
         display: "searchReplacementDownloads",
         properName: false,
+        casing: "lower",
       },
     ]);
   });
@@ -405,6 +409,7 @@ describe("expandCandidates — atomic identifiers (2026-10 owner rule, PRD §04 
         key: "utf8reader",
         display: "utf8Reader",
         properName: false,
+        casing: "lower",
       },
     ]);
   });
@@ -415,6 +420,7 @@ describe("expandCandidates — atomic identifiers (2026-10 owner rule, PRD §04 
         key: "__init__",
         display: "__init__",
         properName: false,
+        casing: "lower",
       },
     ]);
   });
@@ -425,13 +431,14 @@ describe("expandCandidates — atomic identifiers (2026-10 owner rule, PRD §04 
         key: "tokenizer",
         display: "tokenizer",
         properName: false,
+        casing: "lower",
       },
     ]);
   });
 
   it("short whole word 'ok' survives (length gates are the shape gate's job)", () => {
     expect(expand("ok")).toEqual([
-      { key: "ok", display: "ok", properName: false  },
+      { key: "ok", display: "ok", properName: false, casing: "lower"  },
     ]);
   });
 
@@ -443,13 +450,14 @@ describe("expandCandidates — atomic identifiers (2026-10 owner rule, PRD §04 
         key: "f3a9c2e",
         display: "f3a9c2e",
         properName: false,
+        casing: "lower",
       },
     ]);
   });
 
   it("acronym with no trailing lowercase stays whole (HTTPS → 1 draft)", () => {
     expect(expand("HTTPS")).toEqual([
-      { key: "https", display: "HTTPS", properName: true  },
+      { key: "https", display: "HTTPS", properName: true, casing: "mid-cap"  },
     ]);
   });
 
@@ -891,5 +899,61 @@ describe("path tokens (2026-10 rule 4d)", () => {
     const tokens = tokenize("草src/core/query.ts");
     expect(tokens.some((t) => t.path === true)).toBe(false);
     expect(raws("草src/core/query.ts")).not.toContain("src/core/query.ts");
+  });
+});
+
+describe("expandCandidates — casing classification (spec §04 h3.5 groundwork, 2026-10)", () => {
+  const classify = (text: string) =>
+    tokenize(text).flatMap((t) =>
+      expandCandidates(t).map((d) => ({
+        display: d.display,
+        casing: d.casing,
+        properName: d.properName,
+      })),
+    );
+
+  it("mid-sentence capital → mid-cap (properName parity: mid-cap ⇔ properName true)", () => {
+    const [, zend] = classify("then Zendesk logs");
+    expect(zend).toEqual({ display: "Zendesk", casing: "mid-cap", properName: true });
+  });
+
+  it("structural starts → structural-cap: sentence-initial, bullet, heading, line-initial, colon clause", () => {
+    const [check1] = classify("Done. Check");
+    expect(check1!.casing).toBe("structural-cap"); // after ". "
+    expect(check1!.properName).toBe(false); // orthographic capital
+    const [check2] = classify("- Check");
+    expect(check2!.casing).toBe("structural-cap"); // after the "- " bullet marker
+    const [check3] = classify("## Check");
+    expect(check3!.casing).toBe("structural-cap"); // after the "## " heading marker
+    const [check4] = classify("Check");
+    expect(check4!.casing).toBe("structural-cap"); // line/message-initial
+    const [check5] = classify("Note: Check");
+    expect(check5!.casing).toBe("structural-cap"); // colon = clause punctuation (rule c)
+  });
+
+  it("lowercase → lower (mid-sentence position or not — the first char decides)", () => {
+    const [z] = classify("zendesk");
+    expect(z!.casing).toBe("lower");
+    const [tok] = classify("sessionToken");
+    expect(tok!.casing).toBe("lower");
+  });
+
+  it("properName is exactly (casing === 'mid-cap') across a mixed stream (single derivation, no drift)", () => {
+    for (const d of classify("Done. Check then Zendesk logs sessionToken")) {
+      expect(d.properName).toBe(d.casing === "mid-cap");
+    }
+  });
+
+  it("paths/hexish classify by the same raw[0] rule (harmless metadata; display keeps raw casing)", () => {
+    const [hex] = tokenize("run F3A9C2E now")
+      .filter((t) => t.hexish)
+      .flatMap((t) => expandCandidates(t));
+    expect(hex!.display).toBe("F3A9C2E");
+    expect(hex!.casing).toBe("mid-cap"); // 'F' uppercase, mid-sentence
+    const [path] = tokenize("check ./src/core/query.ts fails")
+      .filter((t) => t.path)
+      .flatMap((t) => expandCandidates(t));
+    expect(path!.display).toBe("./src/core/query.ts");
+    expect(path!.casing).toBe("lower"); // raw[0] = '.' is not an uppercase ASCII letter
   });
 });

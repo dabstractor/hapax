@@ -469,6 +469,7 @@ describe("visibility machine — query seam receives (fragment, mode) (plan 004)
       ordinal: 1,
       fromUser: false,
       properName: false,
+      casing: "lower",
       rankGroup: 2,
     });
     const store = new CandidateStore();
@@ -640,6 +641,7 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
         ordinal: s.currentOrdinal() + 1,
         fromUser: false,
         properName: false,
+        casing: "lower",
         rankGroup: 0,
       });
     put("zorpwibble", "zorpwibble");
@@ -944,6 +946,7 @@ describe("R4 — fingerprint release (BUG-003)", () => {
         ordinal: s.currentOrdinal() + 1,
         fromUser: false,
         properName: false,
+        casing: "lower",
         rankGroup: 0,
       });
     put("zorpwibble", "zorpwibble");

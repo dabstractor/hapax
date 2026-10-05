@@ -70,6 +70,7 @@ const draft = (
   key,
   display: key,
   properName: false,
+  casing: "lower",
   ...over,
 });
 

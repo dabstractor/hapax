@@ -101,6 +101,7 @@ const sight = (display: string, ordinal = 1): Sighting => ({
   ordinal,
   fromUser: true,
   properName: false,
+  casing: "lower",
   rankGroup: 0,
 });
 

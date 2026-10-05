@@ -129,6 +129,7 @@ const sighting = (over: Partial<Sighting> = {}): Sighting => ({
   ordinal: 1,
   fromUser: false,
   properName: false,
+  casing: "lower",
   rankGroup: 2,
   ...over,
 });
@@ -351,7 +352,7 @@ describe("adversarial Probe A — prose no-menu (BUG-001)", () => {
     // directly-upserted dictionary-absent jargon sighting instead.
     store.upsert({
       key: "lwlock", display: "lwlock", ordinal: store.currentOrdinal() + 1,
-      fromUser: true, properName: false, rankGroup: 0 ,
+      fromUser: true, properName: false, casing: "lower", rankGroup: 0 ,
     });
     expect(rankMatches(store, "lwl").map((m) => m.display)).toEqual(["lwlock"]);
     const current = mockCurrent(SENTINEL);
