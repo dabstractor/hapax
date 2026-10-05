@@ -1,0 +1,95 @@
+h1.0 hapax — Context-Driven Autocomplete Extension
+ h2.0 Purpose
+ h2.1 Spec maintenance policy (binding)
+ h2.2 Design invariants (non-negotiable)
+ h2.3 Document index
+h1.1 01 — Goals and Scope
+ h2.4 Problem
+ h2.5 Core definitions
+ h2.6 Goals (M1)
+ h2.7 Goals (M2)
+ h2.8 Goals (M3)
+ h2.9 Goals — capitalized-series completion
+ h2.10 Non-goals (explicit)
+ h2.11 Known limitations (accepted)
+ h2.12 UX principles
+h1.2 02 — Architecture
+ h2.13 Components
+ h2.14 Module layout
+ h2.15 Data flow
+  h3.0 Ingest path (background, never on keystroke path)
+  h3.1 Query path (synchronous, every keystroke)
+  h3.2 Display path (widget primary; menu fallback)
+ h2.16 Extension lifecycle wiring
+ h2.17 Portability note (future iteration, out of M1/M2 scope)
+ h2.18 Performance budgets (hard requirements)
+h1.3 03 — Dictionary Format and Build
+ h2.19 Purpose
+ h2.20 Packed binary format (dict/common-en.bin)
+ h2.21 Hash and probing
+ h2.22 Loader contract (src/core/dictionary.ts)
+ h2.23 Build pipeline (tools/build-dict.mjs)
+ h2.24 Versioning contract
+h1.4 04 — Tokenization and Scoring
+ h2.25 Segmentation (src/core/segment.ts)
+  h3.3 What counts as a word
+  h3.4 Atomic identifiers (2026-10 owner rule; sub-word splitting REMOVED)
+  h3.5 Normalization
+ h2.26 Capitalized runs (proper-noun series)
+ h2.27 Shape gate (src/core/shapeGate.ts)
+ h2.28 Admission decision (src/core/score.ts)
+ h2.29 Salience formula (eviction)
+ h2.30 Query matching (anchored fuzzy + anchorless tier-0; 2026-10 owner rules)
+ h2.31 Query ranking (final result order)
+ h2.32 Case handling
+h1.5 05 — Ingestion Pipeline
+ h2.33 Event contract
+ h2.34 Debounce and scheduling (src/pi/ingest.ts)
+ h2.35 Chunked processing
+ h2.36 Session restore (rebuild)
+ h2.37 Branch navigation rebuild (session_tree; 2026-10 owner rule; status: adopted ahead of implementation — code lands with this spec)
+ h2.38 Compaction
+ h2.39 Eviction interplay
+ h2.40 What ingestion must NOT do
+h1.6 06 — Candidate Store
+ h2.41 M1: word candidates
+ h2.42 Branch purity (2026-10 owner rule)
+ h2.43 Upsert semantics
+ h2.44 Eviction
+ h2.45 M2: successor index (chained completion)
+  h3.6 Bigram capture (raw-text adjacency, strictly)
+  h3.7 Successor index (for chained completion)
+h1.7 07 — Completion UI
+ h2.46 Display architecture (2026-10 owner rule: one-line widget, dual-path)
+  h3.8 One-line widget (primary display)
+  h3.9 Line claim — the row is owned for the prompt's duration (2026-10 owner rule; status: adopted ahead of implementation — code lands with this spec)
+  h3.10 Widget key handling (amends the never-hijack invariant; 2026-10)
+  h3.11 Widget visibility state machine (auto-open, re-based)
+ h2.47 Provider integration (fallback path only)
+ h2.48 Auto-open (fallback path): how the menu ever appears
+ h2.49 Trigger modes
+ h2.50 Debounce, flicker, and the Tab contract
+  h3.12 Startup restore gate
+  h3.13 Tab-open gesture: root cause (traced) and mitigation
+  h3.14 pi-tui contract dependencies (re-verify on upgrades)
+ h2.51 Never-hijack rules (acceptance-critical)
+ h2.52 Enter always submits (editor proxy)
+ h2.53 M2: chained completion
+ h2.54 Result item shape
+h1.8 08 — Configuration
+ h2.55 Config surface (deliberately tiny)
+ h2.56 Schema
+ h2.57 Not configurable (by settled decision)
+ h2.58 Debug command (/acwords, registered when debug: true)
+h1.9 09 — Testing and Acceptance
+ h2.59 Unit tests (per module)
+ h2.60 Integration acceptance (manual or scripted via pi)
+ h2.61 Live verification technique (binding)
+ h2.62 Performance gates (CI-scriptable micro-benchmarks)
+ h2.63 Tuning protocol
+ h2.64 Definition of done — M1
+ h2.65 Definition of done — M2
+ h2.66 Decision log (all settled)
+ h2.67 Implementation milestones
+---
+code:16 para:139 list:65 table:5
