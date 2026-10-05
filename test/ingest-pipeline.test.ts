@@ -244,18 +244,20 @@ describe("IngestPipeline — PRD §05 h2.29/h2.30", () => {
     expect(h.pipeline.getStats().rejectedByGate.secret).toBe(1);
   });
 
-  it("admits subwords independently and clamps only under an admitted parent", async () => {
+  it("identifiers admit atomically — whole token only, no sub-word candidates", async () => {
     const h = makePipeline();
-    h.pipeline.onMessageEnd(userMsg("contextLwlock hammerTime"));
+    h.pipeline.onMessageEnd(userMsg("hammerTime deltaWave"));
     await drainNow(h);
-    // Whole "contextlwlock" is COMMON → admission reject; the rare subword
-    // "lwlock" is STILL admitted, without the parent clamp (group 0).
-    expect(h.store.get("contextlwlock")).toBeUndefined();
-    expect(h.store.get("lwlock")?.rankGroup).toBe(0);
-    // Whole "hammertime" admitted rare (0) → subwords clamp to parent+1.
+    // Whole tokens are dictionary-absent → group 0; their former parts
+    // (hammer/time/delta/wave — themselves absent from the stub dict, so
+    // they WOULD admit as drafts) are never candidates (2026-10
+    // atomic-identifier rule).
     expect(h.store.get("hammertime")?.rankGroup).toBe(0);
-    expect(h.store.get("hammer")?.rankGroup).toBe(1);
-    expect(h.store.get("time")?.rankGroup).toBe(1);
+    expect(h.store.get("deltawave")?.rankGroup).toBe(0);
+    expect(h.store.get("hammer")).toBeUndefined();
+    expect(h.store.get("time")).toBeUndefined();
+    expect(h.store.get("delta")).toBeUndefined();
+    expect(h.store.get("wave")).toBeUndefined();
   });
 
   it("calls onAdmittedTokens once per message with adjacency runs of whole-token keys", async () => {
@@ -611,18 +613,19 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
     expect(h.store.topSuccessors("lwlock")).toEqual([{ next: "norias", count: 2 }]);
   });
 
-  it("sub-words never enter runs — only whole-token keys", async () => {
+  it("runs hold one whole-token key per token (2026-10 atomicity)", async () => {
     const calls: string[][][] = [];
     const h = makePipeline({ onAdmittedTokens: (runs) => calls.push(runs) });
-    // Whole "contextlwlock" is COMMON → admission reject; its admitted
-    // subwords ("context", "lwlock") are subword drafts — excluded.
-    h.pipeline.onMessageEnd(userMsg("contextLwlock standalone"));
+    h.pipeline.onMessageEnd(userMsg("deltaWave standalone"));
     await drainNow(h);
-    expect(calls).toEqual([[["standalone"]]]);
-    // Subwords DID reach the word store (established §04 behavior; the
-    // "context" subword is COMMON → admission reject there)…
-    expect(h.store.get("lwlock")).toBeDefined();
+    // "deltaWave" is atomic — ONE key, in the run; no fragment keys
+    // (delta/wave are absent from the stub dict and would admit as
+    // drafts) ever exist.
+    expect(calls).toEqual([[["deltawave", "standalone"]]]);
+    expect(h.store.get("deltawave")).toBeDefined();
     expect(h.store.get("standalone")).toBeDefined();
+    expect(h.store.get("delta")).toBeUndefined();
+    expect(h.store.get("wave")).toBeUndefined();
   });
 
   it("multi-block messages produce runs per line (extractText joins with '\\n')", async () => {
@@ -649,21 +652,18 @@ describe("onAdmittedTokens — adjacency runs (PRD 002 §06 h3.6, P1.M1.T3.S2)",
   });
 });
 
-// --- parent-secret propagation (BUG-003 layer 2, PRD h3.5) -------------------
+// --- secret rejection (BUG-003; layer 2 retired with sub-words 2026-10) ------
 
 /**
- * A whole token rejected with reason 'secret' must poison its sub-word
- * drafts: camelCase/snake_case fragments of a pasted secret are short and
- * letter-heavy and defeat isSecretShaped's token-level rules on their own
- * gate ("cy" → "CYEXAMPLEKEY" was the leak). Vectors verified non-vacuous
- * against maskSecrets + tokenize: the 38-char AWS repro is MASKED by S1's
- * BARE_RUN_MIN = 32 layer and never reaches the gate (kept as the PRD
- * contract pin), while the ghp_ vector below survives masking, its whole
- * token is secret-rejected AT the gate, and every sub-word passes its own
- * gate pre-fix (empirically checked — the PRP's literal AbCdEfGhIjKlMn
- * payload has no ≥4-char sub-words and would make the case vacuous).
+ * Layer-1 masking (maskSecrets) and the token-level secret shapes remain
+ * the defense. BUG-003's layer-2 parent-secret poisoning existed solely
+ * because camelCase sub-word drafts could leak fragments of a pasted
+ * secret ("cy" → "CYEXAMPLEKEY" was the leak); the 2026-10
+ * atomic-identifier rule removed sub-word candidates entirely, so a
+ * secret-shaped whole token now dies at the gate with nothing left to
+ * poison — the layer-2 machinery is structurally unnecessary and deleted.
  */
-describe("parent-secret propagation to sub-words (BUG-003 residue, PRD h3.5)", () => {
+describe("secret-shaped whole tokens store nothing (BUG-003; layer 2 retired 2026-10)", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   });
@@ -696,62 +696,18 @@ describe("parent-secret propagation to sub-words (BUG-003 residue, PRD h3.5)", (
     expect(h.store.get("trailing")).toBeDefined();
   });
 
-  it("layer 2: a gate-reaching ghp_ whole token poisons every sub-word draft", async () => {
+  it("a gate-reaching ghp_ whole token rejects and surfaces nothing (formerly layer 2)", async () => {
     const h = makePipeline();
     h.pipeline.onMessageEnd(userMsg("gate ghp_AbcdEfghIjklmnop done"));
     await drainNow(h);
-    // Whole token secret-rejected AT the gate; each camelCase sub-word
-    // (all gate-clean on their own — verified) inherits the verdict.
+    // The whole token is secret-rejected at the gate; with no sub-word
+    // drafts there is nothing else to surface — exactly 1 secret reject.
     expect(h.store.get("ghp_abcdefghijklmnop")).toBeUndefined();
-    for (const frag of ["abcd", "efgh", "ijklmnop"]) {
-      expect(h.store.get(frag)).toBeUndefined();
-    }
     expect(rankMatches(h.store, "ij")).toEqual([]); // provider-equivalent
-    // Exactly 1 whole + 3 poisoned sub-words in the EXISTING secret
-    // bucket (via #replayAdmitMemo's !gate.ok branch — no new field).
-    expect(h.pipeline.getStats().rejectedByGate.secret).toBe(4);
+    expect(h.pipeline.getStats().rejectedByGate.secret).toBe(1);
     // Positive control: prose words of the same message admit.
     expect(h.store.get("gate")).toBeDefined();
     expect(h.store.get("done")).toBeDefined();
-  });
-
-  it("memoized replay: the same secret text twice doubles the secret counter", async () => {
-    const h = makePipeline();
-    h.pipeline.onMessageEnd(userMsg("gate ghp_AbcdEfghIjklmnop done"));
-    h.pipeline.onMessageEnd(userMsg("gate ghp_AbcdEfghIjklmnop done"));
-    await drainNow(h);
-    // 4 secret rejects per occurrence (1 whole + 3 poisoned subs); the
-    // memo is computed once per distinct token and replayed per
-    // occurrence, so the count doubles — never re-computed, never lost.
-    expect(h.pipeline.getStats().rejectedByGate.secret).toBe(8);
-    for (const frag of ["abcd", "efgh", "ijklmnop"]) {
-      expect(h.store.get(frag)).toBeUndefined();
-    }
-  });
-
-  it("regression: sub-words of a gate-PASSING parent still admit", async () => {
-    const h = makePipeline();
-    h.pipeline.onMessageEnd(userMsg("ZendeskLwlockTool"));
-    await drainNow(h);
-    expect(h.store.get("zendesklwlocktool")).toBeDefined();
-    expect(h.store.get("zendesk")).toBeDefined();
-    expect(h.store.get("lwlock")).toBeDefined();
-    expect(h.store.get("tool")).toBeDefined();
-  });
-
-  it("non-propagation: a consonantRun whole-token reject does NOT poison gate-clean sub-words", async () => {
-    const h = makePipeline();
-    h.pipeline.onMessageEnd(userMsg("qqqxxxzzzvvvWord"));
-    await drainNow(h);
-    // The parent (and its noise-shaped sub "qqqxxxzzzvvv") die at their
-    // own gates for consonantRun — but "word" is gate-clean and must
-    // still admit independently: only 'secret' propagates (§04).
-    expect(h.store.get("qqqxxxzzzvvvword")).toBeUndefined();
-    expect(h.store.get("qqqxxxzzzvvv")).toBeUndefined();
-    expect(h.store.get("word")).toBeDefined();
-    const stats = h.pipeline.getStats();
-    expect(stats.rejectedByGate.consonantRun).toBe(2);
-    expect(stats.rejectedByGate.secret).toBe(0);
   });
 });
 

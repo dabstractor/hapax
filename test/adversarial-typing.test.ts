@@ -130,7 +130,6 @@ const sighting = (over: Partial<Sighting> = {}): Sighting => ({
   fromUser: false,
   properName: false,
   rankGroup: 2,
-  isSubword: false,
   ...over,
 });
 
@@ -352,7 +351,7 @@ describe("adversarial Probe A — prose no-menu (BUG-001)", () => {
     // directly-upserted dictionary-absent jargon sighting instead.
     store.upsert({
       key: "lwlock", display: "lwlock", ordinal: store.currentOrdinal() + 1,
-      fromUser: true, properName: false, rankGroup: 0, isSubword: false,
+      fromUser: true, properName: false, rankGroup: 0 ,
     });
     expect(rankMatches(store, "lwl").map((m) => m.display)).toEqual(["lwlock"]);
     const current = mockCurrent(SENTINEL);
@@ -388,14 +387,14 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     // 'z' — auto-open contract (effective threshold 1): the word-start
     // request already publishes the live set.
     expect((await type(wrapper, "z"))!.items.map((i) => i.value)).toEqual([
-      "Zendesk", // count-desc top (h2.29: zendesk ×3 > zephra ×1, tier-3 tie)
-      "zephra",
+      "zephra", // length-first top (h2.29: zephra 6 < zendesk 7 — count no longer outranks length)
+      "Zendesk",
     ]);
     expect(base.__hapaxLive()).not.toBeNull();
 
     // 'e' — first qualifying keystroke paints {Zendesk, zephra} @"ze".
     const ze = await type(wrapper, "ze");
-    expect(ze!.items.map((i) => i.value)).toEqual(["Zendesk", "zephra"]); // count order
+    expect(ze!.items.map((i) => i.value)).toEqual(["zephra", "Zendesk"]); // length-first (h2.29)
     expect(
       prefixIsAnchorSafe("ze", 2, ze!.prefix),
       "'ze' response prefix must be the buffer's exact suffix",
@@ -427,7 +426,7 @@ describe("adversarial Probe B — Tab corruption (BUG-002)", () => {
     const wrapper = createDisplayProvider(base);
 
     const ze = await type(wrapper, "ze"); // paints {Zendesk, zephra} @"ze" at t=0
-    expect(ze!.items.map((i) => i.value)).toEqual(["Zendesk", "zephra"]); // count order
+    expect(ze!.items.map((i) => i.value)).toEqual(["zephra", "Zendesk"]); // length-first (h2.29)
 
     vi.advanceTimersByTime(50);
     const zep = await type(wrapper, "zep"); // immediate paint @"zep" (anchor moved)
@@ -481,7 +480,7 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     const chain = createChainMachine();
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
-    const menu = await provider.getSuggestions(["zorp"], 0, 4, opts());
+    const menu = await provider.getSuggestions(["zor"], 0, 3, opts());
     expect(menu, "'zorp' must open a menu in the resumed session").not.toBeNull();
     const zorp = menu!.items.find((i) => i.value === "Zorp");
     expect(
@@ -503,9 +502,9 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     // Hop 0 — accept the BARE word from a live menu, in the SAME query
     // cycle (liveKeyByValue rebuilds on every query). The provider's real
     // applyCompletion arms the chain as a side effect (P1.M4.T2.S2).
-    const menu = await provider.getSuggestions(["zorp"], 0, 4, opts());
+    const menu = await provider.getSuggestions(["zor"], 0, 3, opts());
     const zorp = menu!.items.find((i) => i.value === "Zorp")!;
-    provider.applyCompletion(["zorp"], 0, 4, zorp, "zorp");
+    provider.applyCompletion(["zor"], 0, 3, zorp, "zor");
     expect(chain.state(), "hop 0: accepting bare 'Zorp' must arm 'zorp'").toEqual({
       word: "zorp",
     });

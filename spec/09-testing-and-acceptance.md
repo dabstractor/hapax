@@ -3,9 +3,10 @@
 ## Unit tests (per module)
 
 **segment.test.ts**
-- camelCase splits: `fixRoundingError` → whole + `fix`(dropped, len<4) +
-  `Rounding`, `Error`; `HTTPServer` → `HTTP` + `Server`.
-- snake_case: `session_token_valid` → whole + `session`, `token`, `valid`.
+- Atomic identifiers (2026-10 owner rule): `fixRoundingError`,
+  `HTTPServer`, `session_token_valid`, `utf8Reader`, `__init__`, and
+  `searchReplacementDownloads` each yield EXACTLY ONE draft — the whole
+  token; no camel/snake parts ever surface.
 - Hexish: `f3a9c2e` captured; `123456` (no letter) not; 41+ chars not.
 - CJK run skipped; ASCII resumes after.
 - Hyphenated compounds are ONE token (2026-09 rule 4b): `state-of-the-art`
@@ -58,8 +59,9 @@
 
 **query.test.ts**
 - Anchor: the fragment's first char must equal the candidate's first
-  char (`esk` never matches `zendesk`; `roun` → `Rounding` still works
-  via sub-word candidates); case-insensitive throughout.
+  char (`esk` never matches `zendesk`; mid-identifier entry from
+  non-initial fragments is gone — the 2026-10 atomic-identifier rule
+  removed sub-word candidates); case-insensitive throughout.
 - Tier classification: exact prefix (3) / contiguous tail (2: `zsk` →
   `zendesk`, `zlock` → `z_lwlock`) / scattered (1: `hrp` →
   `handleResponseProxy`).

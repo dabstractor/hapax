@@ -72,7 +72,6 @@ if (words.length > 0) {
     key,
     display: key,
     properName: false,
-    isSubword: false,
   });
   console.log(
     `word → q → verdict under R_eff(len), R=${REJECT_COMMON_THRESHOLD} ` +
@@ -83,7 +82,6 @@ if (words.length > 0) {
     key,
     display: key[0].toUpperCase() + key.slice(1),
     properName: true,
-    isSubword: false,
   });
   for (const w of words) {
     const lower = w.toLowerCase();
@@ -166,7 +164,6 @@ const draft = (key) => ({
   key,
   display: key,
   properName: false,
-  isSubword: false,
 });
 const band = (result) => (result === "reject" ? "REJECT" : `group ${result}`);
 console.log(`\nBUG-001 word set (admit() vs shipped artifact):`);

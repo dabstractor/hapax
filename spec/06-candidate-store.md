@@ -7,14 +7,15 @@
 ```ts
 interface Candidate {
   key: string            // lowercase
-  display: string        // most recent casing seen
-  sessionCount: number   // occurrences this session
+  capCount: number       // capitalized-tally sightings (04 normalization)
+  lowerCount: number     // lowercase sightings
+  capDisplay: string     // most frequent capitalized form (ties → most recent)
+  sessionCount: number   // occurrences this session, both casings
   lastSeenOrdinal: number // message ordinal at last sighting
   firstSeenOrdinal: number
   userTyped: boolean     // sticky once true
   properName: boolean    // capitalized-initial seen at least once
   rankGroup: 0 | 1 | 2   // admission group (04)
-  isSubword: boolean
 }
 ```
 
@@ -40,14 +41,20 @@ No persistence. Store is created at `session_start`, dropped at
 On admitting a sighting of word `w` in message with ordinal `n`:
 
 - Absent → create entry (`sessionCount = 1`, ordinals = n, source flags set).
-- Present → `sessionCount++`, `lastSeenOrdinal = n`, refresh `display` casing,
-  OR in `userTyped` / `properName` flags, keep `rankGroup` = min(existing, new)
-  (a word first seen mid-frequency then seen rare keeps the better group).
+- Present → `sessionCount++`, `lastSeenOrdinal = n`, update the casing
+  tallies per the sighting class (04 normalization: a mid-sentence
+  capital bumps `capCount` and refreshes `capDisplay` when it becomes
+  the most frequent capitalized form; a lowercase sighting bumps
+  `lowerCount`; a sentence-initial capital contributes to `capCount`
+  only while `lowerCount` is zero — the first lowercase sighting
+  removes those contributions permanently), OR in `userTyped` /
+  `properName` flags, keep `rankGroup` = min(existing, new) (a word
+  first seen mid-frequency then seen rare keeps the better group).
 
 ## Eviction
 
-- Hard cap **20,000** entries (whole-token candidates; sub-words count toward
-  the same cap).
+- Hard cap **20,000** entries (every candidate is a whole token since
+  the 2026-10 atomic-identifier rule).
 - On overflow, evict the lowest `evictionScore`:
 
 ```
@@ -70,10 +77,15 @@ insertion.
 
 ### Bigram capture (raw-text adjacency, strictly)
 
-During ingestion, record bigrams of admitted whole-token candidates
-(sub-words excluded) that are **adjacent in the raw text**: the two words
+During ingestion, record bigrams of admitted candidates
+(every candidate is a whole token — 2026-10 atomic-identifier rule)
+that are **adjacent in the raw text**: the two words
 are separated by nothing but plain whitespace (spaces/tabs) on the same
-line. Key = lowercase `first second`.
+line. Key = lowercase `first second`. Capitalized runs (04) contribute
+their adjacent member pairs as **series bigrams** — including
+chain-only (top-band) members that are not word candidates — each
+marked series-derived and remembering both words' run casing for
+offer display; series bigrams observe the same window-break rules.
 
 The window breaks — no bigram forms — when ANYTHING other than plain
 whitespace appears between the two words:
@@ -103,11 +115,14 @@ M2 structure is the successor index:
 ### Successor index (for chained completion)
 
 ```ts
-Map<string, Array<{ next: string, count: number }>>  // top 3 per word
+Map<string, Array<{ next: string, count: number,
+                    series?: boolean, nextDisplay?: string }>>  // top 3 per word
 ```
 
 Built from the bigram counts: `word → top-3 most frequent successors`,
-updated at ingest; trivial size. Cap the bigram map at 10,000 keys with the
+updated at ingest; trivial size. In the after-space offer, series
+successors (04) rank above ordinary successors regardless of counts
+(07); `nextDisplay` carries the run casing for series entries. Cap the bigram map at 10,000 keys with the
 standard eviction policy; evicting a bigram also splices it from the
 successor index.
 

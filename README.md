@@ -49,8 +49,8 @@ keep it current; this README is a summary).
   Tier 0 fires only when the anchored scan returns ZERO results — and
   only then: one full-store pass matches the fragment (≥ 3 chars) as a
   single contiguous run anywhere in the key (`esk` → `zendesk`,
-  `query` → `src/core/query.ts` — path filenames, which sub-word
-  splitting can't serve), scored `85 − 40·runStart/len`,
+  `query` → `src/core/query.ts` — path filenames, which the
+  first-char-anchored tiers can't serve), scored `85 − 40·runStart/len`,
   threshold-gated, sorted below tier 1. Under the trigger char (`#`)
   the gates relax (spec 04/07): tier-0 runs are ALWAYS consulted — no
   zero-result precondition (`#query` completes `src/core/query.ts`
@@ -62,15 +62,18 @@ keep it current; this README is a summary).
   (`src/core/query.ts`, spec 04).
 - **Predictable tiered menu order** — results order by match-strictness
   tier (exact prefix > contiguous tail > scattered > anchorless run),
-  then in-session frequency (sessionCount) within a tier, then
-  shorter key, then byte-lexicographic (a 4-key comparator; spec 09,
-  `src/core/query.ts`). The zero-result tier-0 fallback can never enrich
-  a menu that would already open — it only rescues menus that would not
-  appear. The pure content-derived order (shortest match
-  first, lexicographic) is RETIRED (2026-10 decision log). A bare-trigger
-  listing has no tiers — frequency order. Session salience (recency,
-  repetition, sticky user-typed, rarity) governs store
-  retention/eviction only (`src/core/score.ts`).
+  then SHORTER KEY, then in-session frequency (sessionCount) as the
+  equal-length tie-break, then byte-lexicographic (a 4-key comparator;
+  spec 04 h2.29, `src/core/query.ts`). Length outranks frequency
+  (progressive completion): a proper-prefix sibling always completes
+  first — the shorter accept loses nothing, the next Tab reaches the
+  longer one, and a fully-typed word (fragment === key) is never
+  offered at all — completing it saves zero characters. The zero-result
+  tier-0 fallback can never enrich a menu that would already open — it
+  only rescues menus that would not appear. A bare-trigger listing has
+  no tiers — frequency order (the listing's own relevance board).
+  Session salience (recency, repetition, sticky user-typed, rarity)
+  governs store retention/eviction only (`src/core/score.ts`).
 - **English words barely admit — and admission is length-conditioned
   (2026-10 R_eff curve)** — hapax completes identifiers, commit-hash-shaped
   tokens, and jargon: the dictionary-ABSENT class. Attested English
@@ -126,10 +129,11 @@ keep it current; this README is a summary).
   (token-level residue rules)
   catches fragments that reach the gate anyway: known key prefixes,
   base64url runs ≥ 16 (mixed case + digits), and charset-relative entropy
-  floors on long base64/hex runs. Whole-token secret rejection also
-  propagates to the token's camelCase/snake_case sub-word fragments
-  (ingest memo poisoning — poisoned drafts skip admission), so
-  `CYEXAMPLEKEY`-style fragments never store. Masked keys yield zero
+  floors on long base64/hex runs. Identifiers are ATOMIC (2026-10 owner
+  rule): no camelCase/snake_case sub-word fragments exist to leak — a
+  secret-shaped whole token dies at the gate with nothing left behind
+  (the former layer-2 fragment poisoning is structurally unnecessary),
+  so `CYEXAMPLEKEY`-style fragments never store. Masked keys yield zero
   candidates; ordinary prose passes through byte-identical. Pinned by
   `test/mask-secrets.test.ts` and the synthetic-token paste battery
   (npm/glpat/sk_live/Bearer shapes) in `test/adversarial-ingest.test.ts`
@@ -237,8 +241,9 @@ as they do in stock pi. The result line is strictly take-it-or-leave.
 Two layers:
 
 - `src/core/` — pure, agent-agnostic computation: `dictionary` (packed
-  binary loader), `segment` (word segmentation + camelCase/snake_case
-  splitting; word-boundary guards step by full code points — a non-ASCII,
+  binary loader), `segment` (word segmentation; identifiers are ATOMIC
+  since the 2026-10 owner rule — no camelCase/snake_case splitting;
+  word-boundary guards step by full code points — a non-ASCII,
   including astral-plane, letter adjacent to an ASCII run disqualifies
   the run; slash-joined path runs are whole tokens per rule 4d),
   `shapeGate` (noise/secret rejection), `score` (length-conditioned R_eff

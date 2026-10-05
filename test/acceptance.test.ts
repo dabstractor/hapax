@@ -279,7 +279,7 @@ describe("acceptance item 2 — ordinary prose never hijacks (prose.jsonl)", () 
     // is a directly-upserted dictionary-absent jargon sighting.
     store.upsert({
       key: "lwlock", display: "lwlock", ordinal: store.currentOrdinal() + 1,
-      fromUser: true, properName: false, rankGroup: 0, isSubword: false,
+      fromUser: true, properName: false, rankGroup: 0 ,
     });
     const provider = createHapaxProvider(store, cfg(), mockCurrent(SENTINEL));
     const result = await provider.getSuggestions(["lwl"], 0, 3, opts());
@@ -506,7 +506,6 @@ describe("acceptance item 5 — fake API keys are never suggested (large-100k.js
       key: display.toLowerCase(),
       display,
       properName: false,
-      isSubword: false,
     });
     expect(passesShape(draftOf(FAKE_SK))).toEqual({ ok: false, reason: "secret" });
     expect(passesShape(draftOf(FAKE_GHP))).toEqual({ ok: false, reason: "secret" });
@@ -825,7 +824,7 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     // The bare word co-presents in the menu (the phrase layer is gone —
     // rankMatches is word-only, PRD 002 delta R1 — and the successor
     // index arms the chain from it, h2.43 whole-word arming).
-    const menu = rankMatches(store, "zorp");
+    const menu = rankMatches(store, "zor");
     expect(menu.map((m) => m.key)).toContain("zorp");
     // zorp TOPS the menu: dictionary-absent (group 0, rarity bonus)
     // outranks the q≤26 walk partners (group 2).
@@ -861,14 +860,14 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
 
     // Live menu for "zorp": word-only (PRD 002 delta R1) — the bare
     // word candidate is offered and can arm the chain.
-    const menu = await provider.getSuggestions(["zorp"], 0, 4, opts());
+    const menu = await provider.getSuggestions(["zor"], 0, 3, opts());
     expect(menu?.items.map((i) => i.value)).toContain("Zorp");
-    expect(menu?.prefix).toBe("zorp");
+    expect(menu?.prefix).toBe("zor");
     const zorpItem = menu!.items[0]!; // group-0 rarity → zorp tops the menu
 
     // Tab accepts the word item → harness buffer "zorp" becomes
     // "Zorp", cursor adjacent; the arming intercept arms the chain.
-    provider.applyCompletion(["zorp"], 0, 4, zorpItem, "zorp");
+    provider.applyCompletion(["zor"], 0, 3, zorpItem, "zor");
     expect(chain.state()).toEqual({ word: "zorp" });
     expect(current.state.lines).toEqual(["Zorp"]);
     expect(current.state.cursorCol).toBe(4);
@@ -943,8 +942,8 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
     await replayChain(pipeline, entries.slice(0, CHAIN_PHASE1));
-    await provider.getSuggestions(["zorp"], 0, 4, opts());
-    provider.applyCompletion(["zorp"], 0, 4, { value: "Zorp", label: "Zorp" }, "zorp");
+    await provider.getSuggestions(["zor"], 0, 3, opts());
+    provider.applyCompletion(["zor"], 0, 3, { value: "Zorp", label: "Zorp" }, "zor");
     await replayChain(pipeline, entries.slice(CHAIN_PHASE1));
 
     // FIRST post-accept query at the word start ("National ") — the
@@ -978,8 +977,8 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
     await replayChain(pipeline, entries.slice(0, CHAIN_PHASE1));
-    await provider.getSuggestions(["zorp"], 0, 4, opts());
-    provider.applyCompletion(["zorp"], 0, 4, { value: "Zorp", label: "Zorp" }, "zorp");
+    await provider.getSuggestions(["zor"], 0, 3, opts());
+    provider.applyCompletion(["zor"], 0, 3, { value: "Zorp", label: "Zorp" }, "zor");
     await replayChain(pipeline, entries.slice(CHAIN_PHASE1));
 
     // First post-accept query carries a typed fragment "r": the armed
@@ -1007,16 +1006,18 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     const provider = createHapaxProvider(store, cfg(), current, chain);
 
     await replayChain(pipeline, entries.slice(0, CHAIN_PHASE1));
-    await provider.getSuggestions(["zorp"], 0, 4, opts());
-    provider.applyCompletion(["zorp"], 0, 4, { value: "Zorp", label: "Zorp" }, "zorp");
+    await provider.getSuggestions(["zor"], 0, 3, opts());
+    provider.applyCompletion(["zor"], 0, 3, { value: "Zorp", label: "Zorp" }, "zor");
     await replayChain(pipeline, entries.slice(CHAIN_PHASE1));
 
     chain.reset(); // the before_agent_start handler
 
     // Adjacent cursor position, but the arm is gone: the armed branch
-    // never runs, so plain threshold matching answers — plain word menu.
-    const menu = await provider.getSuggestions(["Zorp"], 0, 4, opts());
-    expect(menu?.prefix).toBe("Zorp");
+    // never runs, so plain threshold matching answers — plain word menu
+    // (typed one char short of the full word: the exact-equal exclusion
+    // offers nothing once "Zorp" is fully typed).
+    const menu = await provider.getSuggestions(["Zor"], 0, 3, opts());
+    expect(menu?.prefix).toBe("Zor");
     expect(menu?.items.map((i) => i.value)).toContain("Zorp");
     expect(chain.state()).toBeNull();
   });
@@ -1032,8 +1033,8 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     await replayChain(pipeline, entries.slice(0, CHAIN_PHASE1));
     // Arm on the inner provider (Tab resolves against the live cache —
     // the display layer never gates the inner query, S3 rule 1).
-    await inner.getSuggestions(["zorp"], 0, 4, opts());
-    inner.applyCompletion(["zorp"], 0, 4, { value: "Zorp", label: "Zorp" }, "zorp");
+    await inner.getSuggestions(["zor"], 0, 3, opts());
+    inner.applyCompletion(["zor"], 0, 3, { value: "Zorp", label: "Zorp" }, "zor");
     await replayChain(pipeline, entries.slice(CHAIN_PHASE1));
 
     // The word-start offer through the DISPLAY provider: live prefix ""

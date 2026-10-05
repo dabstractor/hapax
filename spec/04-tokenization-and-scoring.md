@@ -100,7 +100,7 @@ Rules:
          two-char codes (`4K`) stay out.
        - **Strictly additive.** A literal whose post-trim span EQUALS OR
          IS CONTAINED IN a kept base/hexish/compound token defers to
-         that token (`utf8Reader` keeps camelCase subword splitting;
+         that token (`utf8Reader` stays its base token;
          `0f3a9c2` stays hexish-flagged; `FOO_1_` keeps its base token —
          the trailing-`_` trim cannot fork a `FOO_1` literal);
          literals absorb every base/hexish token inside or OVERLAPPING
@@ -112,8 +112,7 @@ Rules:
          shred `z9_`; `X=1ZZ_` → `X=1ZZ`, never `ZZ_`). One span per
          character class region — never overlapping tokens. Rule 3
          (Unicode-letter adjacency) applies to literals like every
-         pass. Literals are OPAQUE to subword splitting — codes
-         complete whole as typed.
+         pass. Codes complete whole as typed.
 
        Shape-gate interplay: letter-free keys (pure digits,
          digit+symbol codes) skip the character-entropy floor —
@@ -163,8 +162,7 @@ Rules:
          practice paths cannot equal a base/hexish/compound span —
          they contain `/`); post-trim key length 4–96 (the shape
          gate's path-class cap; the literal scan window is sized to
-         96 for this rule); opaque to subword splitting, exactly
-         like 4c literals. Secret rules apply unchanged: a path
+         96 for this rule). Secret rules apply unchanged: a path
          segment with base64url-secret texture rejects the whole
          candidate (conservative), and `@`+`.` keeps URL userinfo
          out. The entropy floor applies like any letter-bearing key
@@ -188,25 +186,43 @@ Rules:
          interior `..` rejects; Windows backslash paths are not in
          the charset (POSIX-shaped input assumed).
 
-### camelCase / snake_case splitting
+### Atomic identifiers (2026-10 owner rule; sub-word splitting REMOVED)
 
-Each base token yields **the whole token plus its sub-words**, all as separate
-candidates:
+Each token yields **exactly one candidate: the whole token**, exactly as
+typed — identical in kind to hyphen compounds (4b) and dotted filenames
+(4a), which never split. A variable name IS the value class:
+dictionary-absent, completed whole. Its parts, by contrast, are attested
+English admitted through the length ramp — sub-word emission was the one
+systematic pipeline by which ordinary English entered the menu from
+inside identifiers (`searchReplacementDownloads` manufacturing
+"Replacement", phantom display-casing included).
 
-- Split on `_` segments.
-- Split camelCase boundaries: lowercase→uppercase (`fixR` → `fix|R`), and
-  acronym-lowercase (`HTTPServer` → `HTTP|Server`).
-- Sub-words shorter than 4 are dropped as standalone candidates (still counted
-  for the whole token).
-
-The whole token is what users usually Tab; sub-words enable mid-identifier
-completion (`roun` → `Rounding` from `fixRoundingError`).
+History: the pre-2026-10 rule split on `_` segments and camelCase
+boundaries (lower→upper: `fixR` → `fix|R`; acronym-lowercase:
+`HTTPServer` → `HTTP|Server`), dropping parts <4 chars, to enable
+mid-identifier completion (`roun` → `Rounding` from `fixRoundingError`).
+The owner retired it (2026-10): non-initial mid-identifier entry
+survives only through the anchorless zero-result fallback tier (query,
+below) — never as a stored candidate. Retired with it: the subword admission
+clamp (group 2 is now unreachable everywhere), the sub-word shape-gate
+band (2–32), the store's `isSubword`/`parentKey` fields, and BUG-003
+layer 2's parent-secret poisoning (structurally unnecessary — a
+secret-rejected whole token has no children).
 
 ### Normalization
 
 - Lookup keys and store keys are **lowercase**.
-- Each candidate remembers its **display casing**: the most recently seen
-  casing variant (recency wins; "how it was last used is how you want it").
+- **Casing evidence is tallied, never recency-merged.** Each candidate
+  keeps two casing tallies: mid-sentence capitalized sightings count
+  toward the capitalized tally; lowercase sightings count toward the
+  lowercase tally; sentence-initial (structural-start) capitalized
+  sightings count toward the capitalized tally only while the word
+  has never been seen lowercase — the first lowercase sighting
+  removes them permanently (a capitalized sentence-initial form
+  whose lowercase twin exists in the session is dropped entirely;
+  the lowercase form is the word). The completed/displayed form is
+  resolved at query time from these tallies (Case handling below;
+  07 insertion).
 - **properName hint (2026-09 structural-start rule, extended after a
   live audit of real session history):** a Capitalized token sets the
   `properName` hint ONLY when its capital is not orthographic — i.e.
@@ -218,7 +234,7 @@ completion (`roun` → `Rounding` from `fixRoundingError`).
   sentence or clause punctuation (`.` `!` `?` `;` `:`). Mid-sentence
   "then Check the logs" keeps the hint; "Done. Check", "- Check",
   "## Check", "Note: Check", and message-initial "Check" do not.
-  Applies to the whole token and its FIRST sub-word. Detection is a
+  Applies to the whole token. Detection is a
   bounded walk-back (a fixed window per token; an unbounded scan made
   ingest quadratic and failed the 800 KB perf gate). Downstream:
   unhinted capitals lose the proper-noun relief and the conjugation
@@ -232,14 +248,50 @@ completion (`roun` → `Rounding` from `fixRoundingError`).
   also filter words like `national` that appear both ways. The
   alternative is retiring relief outright and relying on the
   dictionary-absent class (identifiers rarely need relief). No decision
-  recorded; nothing changes until the owner calls it.
+  recorded; nothing changes until the owner calls it. RESOLVED by the
+  capitalized-run rules below: named-entity completion returns via
+  casing evidence, and twin suppression applies to sentence-initial
+  sightings only.
+
+## Capitalized runs (proper-noun series)
+
+A **capitalized run** is a maximal sequence of two or more
+consecutive whole tokens on the same line in which every token
+begins with an uppercase ASCII letter and adjacent tokens are
+separated by nothing but plain spaces or tabs (the same strict
+adjacency window as bigram capture, 06). Runs are detected wherever
+they sit — line-initial and after-punctuation positions included;
+the structural-start exclusion does not apply to run detection,
+because the capitals of the second and later words cannot be
+orthographic. Each member must pass the shape gate; a secret-shaped
+or noise member splits the run around it.
+
+- **Admission.** A run member admits regardless of the commonness
+  band, whatever its dictionary attestation and whatever lowercase
+  sightings of it exist (run evidence outranks both). Attested
+  members land at rank group 1; absent members at group 0.
+  Membership grants candidacy only — no ranking priority of any
+  kind attaches (result ordering is unchanged: tier → sessionCount
+  → length → lex).
+- **Dictionary top-band ceiling.** A member whose dictionary
+  commonness lies in the table's very top band (a baked ceiling
+  constant — the most common couple hundred words: the, and, of, …)
+  never gains admission from casing, run or single. Such members are
+  **chain-only**: they never appear as standalone suggestions, but
+  the run's bigrams still form and the after-space offer (07) still
+  presents their neighbors — typing `The ` offers `Fed`. The
+  ceiling applies to attested words only; absent members admit as
+  always.
+- **Successors.** Every adjacent pair inside a run is recorded as a
+  series bigram (06), including chain-only members, remembering the
+  run casing of both words for offer display.
 
 ## Shape gate (`src/core/shapeGate.ts`)
 
 Applied to **every** segmented candidate before dictionary lookup. Rejects:
 
 1. **Too short/long:** whole-token candidates must be 2–64 chars
-   (path-class candidates 4–96, rule 4d); sub-words 2–32. (Floor dropped 4 → 2, 2026: short dictionary-absent acronyms —
+   (path-class candidates 4–96, rule 4d). (Floor dropped 4 → 2, 2026: short dictionary-absent acronyms —
    API, CLI — are hapax's core class; common short English is rejected
    downstream by the commonness band, not by length.)
 2. **Low entropy:** character-entropy < 1.5 bits/char, for LETTER-BEARING
@@ -347,9 +399,9 @@ little more heavily", owner), and the old `[20, 50)` group-2 band
 stays dead. That band was the 2026-09 live-audit noise leak (1,183
 everyday words: `provider`, `default`, `null`, `node`, `enable`,
 `spec`, `cache`, against 4,889 absent identifiers); the ramp does not
-revive it. The `RankGroup` type keeps group 2 for compatibility (the
-subword clamp can still produce it); it is unreachable via the table
-and via relief.
+revive it. The `RankGroup` type keeps group 2 for compatibility; it is
+unreachable via the table, via relief, and — since the 2026-10
+atomic-identifier rule — via the retired subword clamp.
 
 The bands are baked constants calibrated against the shipped artifact
 with `tools/calibrate-bands.mjs`, which doubles as a word probe:
@@ -398,8 +450,19 @@ dictionary-absent admits as group 0 — no tier can fire (`parse` and
 word). Derivational suffixes (`-tion`, `-ment`, `-er`) are
 deliberately NOT stripped: `deletion` is a distinct lexeme.
 
-Sub-word candidates require their own admission (same table, plus the
-guard) but never rank above rank group +1 of their parent whole token.
+Every candidate is a whole token; there are no sub-word admissions
+(2026-10 atomic-identifier rule — segmentation above).
+
+**Casing-evidence admission (single mid-sentence capitals).** A
+capitalized candidate not at a structural start (the properName
+hint's mid-sentence condition) admits under a relaxed band: the
+effective threshold is `max(R_eff(len), 95)` — the floor eases from
+30 to 95 for such words while the length ramp still rides above
+unchanged. Capitalized candidates at structural starts receive no
+relaxation; they admit on the merits exactly as their lowercase form
+does. Capitalized (properName-hinted) candidates continue to skip
+the conjugation guard. Casing evidence changes admission only —
+never ordering, on any path.
 
 ## Salience formula (eviction)
 
@@ -433,8 +496,8 @@ lowercase) iff:
    character must equal the candidate's FIRST character
    (case-insensitive). A fragment that does not start with the
    candidate's first character never matches (`esk` never matches
-   `zendesk`; mid-identifier entry stays available through sub-word
-   candidates — segmentation above).
+   `zendesk`; the 2026-10 atomic-identifier rule removed the sub-word
+   candidates that used to serve mid-identifier entry).
 2. **Anchored subsequence:** `f[1..]` appears in `c[1..]` in order
    (subsequence, greedy leftmost matching).
 
@@ -520,8 +583,7 @@ continues; the collisions are overwhelmingly morphological cousins
 accepted by the owner. Wins: mid-word recall no anchored rule can
 serve (`esk`→`zendesk`, `tok`→`session_token`) and, in particular,
 path-filename entry (`query`→`src/core/query.ts`, score 64) — rule-4d
-path tokens are opaque to subword splitting, so nothing else serves
-this. This AMENDS integration item 2 (09): "no menu for common
+path tokens complete whole, so nothing else serves this. This AMENDS integration item 2 (09): "no menu for common
 words" now reads "no menu for common words WITH ANCHORED MATCHES; the
 zero-result fallback may surface contiguous-run cousins."
 
@@ -554,31 +616,54 @@ consult tiers 1–3 only — tier-0 matches never arm or extend a chain.
 
 ## Query ranking (final result order)
 
-**2026-10 owner rule — frequency tie-breaking (settled).** Order is:
+**2026-10 owner rule — progressive completion (settled; supersedes
+the earlier 2026-10 frequency-first amendment).** Match-path order
+is:
 
 1. **Strictness tier descending** (3 exact prefix > 2 contiguous tail
    > 1 scattered > 0 anchorless run — 04 Query matching). A
    1-occurrence exact-prefix word outranks a
    40-occurrence scattered match — strictness always wins first.
-2. **Within a tier: `sessionCount` descending** — conversation
-   frequency breaks ties among equally strict matches (the owner's
-   rule: higher occurrence counts make a word rank higher than
-   another word matching the query exactly).
-3. Ties → shorter candidate key first.
+2. **Within a tier: shorter candidate key first** — length outranks
+   frequency. A proper-prefix sibling always completes before its
+   extension (`anchor-match` before `anchor-matches`): the shorter
+   accept loses zero information, because the next Tab reaches the
+   longer one. Ladders (`config` → `configuration` →
+   `configurations`) walk shortest-first, monotone end to end.
+3. **Equal length → `sessionCount` descending** — counts survive only
+   as the equal-length tie-break (`request` vs `retreat`, both 7).
 4. Ties → lexicographic (byte order on the lowercase key).
 
-**Zero-fragment listing** (`#` alone — no fragment, no tiers):
-sessionCount descending, then rules 3–4.
+**Exact-equal exclusion (2026-10 owner rule):** a candidate whose key
+EQUALS the typed fragment is never offered — in every tier, in the
+tier-0 anchorless pass, and in the chain membership filter
+(§07 h2.49, parity). Completing the fully-typed word saves zero
+characters (pi's applyCompletion adds no trailing space — the accept
+is a byte-identical no-op), and under rule 2 it would hold the top
+slot and stall its own ladder. The fully-typed word's disappearance
+from the menu is the signal that an extension remains.
 
-**Retired (same rule):** the pure content-derived order ("shortest
-first, then byte-lex; never salience"). Its 2026-09 rationale was
-cross-session muscle-memory stability. Superseding rationale (owner,
-2026-10): among equally strict matches the more conversation-relevant
-word (higher session count) belongs leftmost; the accepted cost is
-that same-tier neighbors may swap as counts change during a session.
-Residual stability: tiers and rules 3–4 are content-derived, and two
-candidates only reorder relative to each other when one's
-sessionCount strictly passes the other's.
+**Zero-fragment listing** (`#` alone — no fragment, no tiers):
+sessionCount descending, then rules 3–4. The listing keeps its own
+relevance-first board — a full-vocabulary listing ordered by length
+would surface the shortest junk words — and the match path never
+reuses it.
+
+**Retired (history):** the earlier 2026-10 frequency-first amendment
+(count desc within tier, before length) — rationale: "among equally
+strict matches the more conversation-relevant word belongs
+leftmost"; superseded by the owner's progressive-completion pushback
+after the live anchor-match/anchor-matches complaint (completing the
+longer sibling first wastes the shorter one; Tab chains make
+shortest-first lossless). Also rejected on measurement: reordering
+ONLY prefix pairs over the count order — pairwise prefix rules over
+a frequency backbone are non-transitive (`re` < `repo` by prefix,
+`repo` < `router` by count 9 > 5, `router` < `re` by count 5 > 1 —
+a cycle), so no comparator can express it; length dominates
+globally instead. The 2026-09 pure content-derived order ("shortest
+first, then byte-lex; never salience" — cross-session muscle-memory
+stability) is thereby substantially restored, with counts retained
+as the equal-length tie-break.
 
 **Plural pruning (2026-09 owner rule):** when a result set contains
 both a key and that key + `"s"` (exact single-`s` pair: `plugin` /
@@ -613,6 +698,16 @@ trigger char, same rules.
 
 - Matching is **case-insensitive** throughout — anchor, tiers, and score
   all computed on lowercase keys: typed `nrel` matches `NREL`.
-- Insertion uses the candidate's display casing (`NREL`).
+- **Insertion casing is resolved at completion time from the casing
+  tallies.** When the typed fragment begins with an uppercase letter,
+  the capitalized form wins — the user's Shift press is never
+  overridden; only the first letter is adapted and the rest of the
+  word comes from the winning form's spelling. When the fragment is
+  typed all-lowercase, the form that occurred more often in the
+  conversation wins (ties → lowercase; a word seen only capitalized
+  completes capitalized). Words seen only in all caps complete
+  verbatim in all caps; paths and technical literals always insert
+  verbatim. Menu labels use the same resolution against the live
+  fragment's first letter.
 - The store keys on lowercase; one candidate per lowercase key (casing
-  variants merge, display casing = most recent).
+  variants merge into the tallies).

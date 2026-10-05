@@ -102,6 +102,8 @@ not a rejection.
 
 - Salience weights, the mid-frequency band (20; retired 2026-10 — both
   conjugation-guard tiers ride the length-conditioned R_eff), the
+  capitalized-series admission band (95) and the dictionary top-band
+  ceiling (04), the
   proper-noun relief ceiling (30, retired-in-place — scales with the
   floor), the
   length-gradient curve shape (sqrt, 8-char floor hold, 20-char

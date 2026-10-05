@@ -884,7 +884,11 @@ export function createVisibilityMachine(
             succ.push(
               ...deps.store
                 .topSuccessors(armed.word)
-                .filter((s) => matchFragment(frag, s.next) !== null)
+                .filter(
+                  (s) =>
+                    s.next !== frag.toLowerCase() && // exact-equal exclusion (§07 h2.49 parity with §04 h2.29)
+                    matchFragment(frag, s.next) !== null,
+                )
                 .slice(0, deps.config.maxSuggestions),
             );
           }

@@ -472,7 +472,6 @@ describe("provider getSuggestions — mode-aware loose wiring (plan 004)", () =>
     fromUser: false,
     properName: false,
     rankGroup: 2,
-    isSubword: false,
     ...over,
   });
 

@@ -34,7 +34,6 @@ export interface Candidate {
   properName: boolean;
   /** admission group (PRD §04) */
   rankGroup: RankGroup;
-  isSubword: boolean;
 }
 
 /** The unit the ingest pipeline feeds `store.upsert`. Produced by
@@ -50,10 +49,6 @@ export interface Sighting {
   fromUser: boolean;
   properName: boolean;
   rankGroup: RankGroup;
-  isSubword: boolean;
-  /** whole-token key when this sighting is a subword; absent for
-   *  whole tokens (subword rankGroup ≤ parent group + 1, PRD §04) */
-  parentKey?: string;
 }
 
 
@@ -74,20 +69,20 @@ export interface RawToken {
   /** the matched text, original casing (normalization is P1.M2.T1.S2) */
   raw: string;
   /** true when the token came from the hexish scan (6–40 hex chars,
-   *  at least one letter a–f; commit-hash-shaped). Hexish tokens are
-   *  opaque — subword splitting (S2) skips them. */
+   *  at least one letter a–f; commit-hash-shaped). Hexish tokens
+   *  complete whole (one draft, like every token since 2026-10). */
   hexish: boolean;
   /** true when the token came from the technical-literal scan (2026-10
    *  rule 4c: digit-bearing mixed-class strings like `2560x1440@2`,
    *  `v1.2.3`, `192.168.1.1`, and pure digit runs ≥ 4). Like hexish,
-   *  literals are opaque — subword splitting (S2) skips them; codes
+   *  literals complete whole as typed (one draft), like hexish; codes
    * complete whole as typed. Optional because base/hexish/compound
    * tokens are not literals. */
   literal?: boolean;
   /** true when the token came from the path scan (2026-10 rule 4d):
    *  slash-joined path-shaped runs — `src/core/query.ts`,
-   *  `/home/user/x`, `../tools/build.mjs`, `example.com/a/b`. Paths are
-   *  opaque (never subword-split) and carry the codebase's first
+   *  `/home/user/x`, `../tools/build.mjs`, `example.com/a/b`. Paths complete
+   *  whole and carry the codebase's first
    *  key≠display divergence beyond casing: the STORE KEY is the
    *  edge/line:col-trimmed lowercase slice `raw.slice(trimFrom,
    *  trimTo)`, while `raw` — the insertion display — keeps the original

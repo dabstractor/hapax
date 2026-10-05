@@ -470,7 +470,6 @@ describe("visibility machine — query seam receives (fragment, mode) (plan 004)
       fromUser: false,
       properName: false,
       rankGroup: 2,
-      isSubword: false,
     });
     const store = new CandidateStore();
     store.upsert(sighting("queryplan"));
@@ -642,7 +641,6 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
         fromUser: false,
         properName: false,
         rankGroup: 0,
-        isSubword: false,
       });
     put("zorpwibble", "zorpwibble");
     put("quuxblat", "Quuxblat"); // distinct casing: display comes from the store entry
@@ -828,18 +826,24 @@ describe("visibility machine — armed chain consult (BUG-001 fix)", () => {
     // Typing INTO the offered word — same word, still armed, still offering.
     // (The narrowed set differs inside the 100 ms swap window → parked;
     // promote it before asserting, mirroring S1's case (2).)
-    editor.set("zorpwibble quuxblat", 19);
+    editor.set("zorpwibble quuxbla", 18);
     machine.onInput();
     await vi.advanceTimersByTimeAsync(100);
     expect(machine.painted().map((m) => m.display)).toEqual(["Quuxblat"]);
     expect(c.reset).not.toHaveBeenCalled();
 
-    // The NEXT word start → the grant is spent: chain reset + fall
-    // through — the normal path answers THIS tick (trailing space → R3
-    // close; never a chain shim, never a stuck offer).
+    // The offer word typed to COMPLETION: the exact-equal exclusion
+    // (§04 h2.29 parity) empties the chain filter — disqualification
+    // resets the arm on this SAME tick and the normal path closes the
+    // line (fragment equals the stored key → zero candidates → R4).
+    editor.set("zorpwibble quuxblat", 19);
+    const full = machine.onInput();
+    expect(c.reset).toHaveBeenCalledTimes(1);
+    expect(full.visible).toBe(false);
+
+    // The next word start: no re-arm, no successor shim — stays closed.
     editor.set("zorpwibble quuxblat ", 20);
     const st = machine.onInput();
-    expect(c.reset).toHaveBeenCalledTimes(1);
     expect(st.visible).toBe(false);
     expect(machine.painted().every((m) => m.description !== "chain")).toBe(true);
   });
@@ -941,7 +945,6 @@ describe("R4 — fingerprint release (BUG-003)", () => {
         fromUser: false,
         properName: false,
         rankGroup: 0,
-        isSubword: false,
       });
     put("zorpwibble", "zorpwibble");
     put("quuxblat", "Quuxblat");

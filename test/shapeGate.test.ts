@@ -1,6 +1,6 @@
 /**
- * PRD §04 h2.23 shape-gate suite (P1.M2.T2.S1): length bounds (whole 4–64,
- * sub-word 4–32), char-entropy < 1.5 bits/char, unigram runs ≥ 4, consonant
+ * PRD §04 h2.23 shape-gate suite (P1.M2.T2.S1): length bounds (whole 2–64),
+ * char-entropy < 1.5 bits/char, unigram runs ≥ 4, consonant
  * runs ≥ 6, hexish pass-through, reason precedence (length → entropy →
  * unigramRun → consonantRun), and the no-reason-on-ok contract.
  *
@@ -17,13 +17,11 @@ import { describe, expect, it } from "vitest";
 import { passesShape } from "../src/core/shapeGate.js";
 import type { CandidateDraft } from "../src/core/segment.js";
 
-/** Whole-token draft by default; isSubword=true adds a parentKey. */
-const draft = (key: string, isSubword = false): CandidateDraft => ({
+/** Whole-token draft (every draft is whole since the 2026-10 rule). */
+const draft = (key: string): CandidateDraft => ({
   key,
   display: key,
   properName: false,
-  isSubword,
-  ...(isSubword ? { parentKey: "p" } : {}),
 });
 
 describe("passesShape — length (PRD §04 h2.23 rule 1)", () => {
@@ -56,22 +54,10 @@ describe("passesShape — length (PRD §04 h2.23 rule 1)", () => {
     expect(passesShape(draft("aghi".repeat(16)))).toEqual({ ok: true });
   });
 
-  it("rejects a 1-char sub-word as tooShort", () => {
-    expect(passesShape(draft("a", true))).toEqual({
-      ok: false,
-      reason: "tooShort",
-    });
-  });
-
-  it("rejects a 33-char sub-word as tooLong (sub-word cap is 32, not 64)", () => {
-    expect(passesShape(draft("s".repeat(33), true))).toEqual({
-      ok: false,
-      reason: "tooLong",
-    });
-  });
-
-  it("accepts a 32-char sub-word (sub-word upper bound)", () => {
-    expect(passesShape(draft("aghi".repeat(8), true))).toEqual({ ok: true });
+  it("accepts a 34-char whole token (the old 32-char sub-word cap is retired)", () => {
+    // "s".repeat(33) used to pin the sub-word 32 cap; whole tokens cap
+    // at 64, and a varied 33+ char key now passes (2026-10 rule).
+    expect(passesShape(draft("aghi".repeat(8) + "jk"))).toEqual({ ok: true });
   });
 });
 
@@ -83,7 +69,6 @@ describe("passesShape — path-class caps (2026-10 rule 4d, 4–96)", () => {
     key,
     display,
     properName: false,
-    isSubword: false,
     path: true,
   });
 
@@ -365,7 +350,6 @@ describe("secret rules (PRD §04 h2.23 rule 3 / §09 item 5)", () => {
         key: "camelcaseidentifierx9",
         display: "camelCaseIdentifierX9",
         properName: false,
-        isSubword: false,
       })
     ).toEqual({ ok: true });
   });
@@ -465,7 +449,6 @@ describe("secret rules (PRD §04 h2.23 rule 3 / §09 item 5)", () => {
         key: "nrel",
         display: "NREL",
         properName: true,
-        isSubword: false,
       })
     ).toEqual({ ok: true });
   });
@@ -588,7 +571,6 @@ describe("technical-literal interplay (2026-10 rule 4c)", () => {
     key,
     display: key,
     properName: false,
-    isSubword: false,
   });
 
   it("letter-free keys skip the entropy floor: repeating digit codes pass", () => {

@@ -216,7 +216,7 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
 
     await replayChain(pipeline, entries);
 
-    const menu = await suggest(provider, ["zorp"], 0, 4);
+    const menu = await suggest(provider, ["zor"], 0, 3);
     expect(menu?.items.map((i) => i.value)).toContain("Zorp");
     const zorpItem = menu!.items.find((i) => i.value === "Zorp")!;
 
@@ -332,14 +332,15 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     );
 
     // Threshold mode ("zorp", 4 chars ≥ 2): byte-identical menus.
-    const gatedMenu = await suggest(gated, ["zorp"], 0, 4);
-    const ungatedMenu = await suggest(ungated, ["zorp"], 0, 4);
+    const gatedMenu = await suggest(gated, ["zor"], 0, 3);
+    const ungatedMenu = await suggest(ungated, ["zor"], 0, 3);
     expect(gatedMenu).toEqual(ungatedMenu);
     expect(gatedMenu?.items.length).toBeGreaterThan(0);
 
-    // Trigger mode ("#zorp"): byte-identical menus.
-    const gatedTrigger = await suggest(gated, ["#zorp"], 0, 5);
-    const ungatedTrigger = await suggest(ungated, ["#zorp"], 0, 5);
+    // Trigger mode ("#zor" — one char short of the key: exact-equal
+    // fragments offer nothing): byte-identical menus.
+    const gatedTrigger = await suggest(gated, ["#zor"], 0, 4);
+    const ungatedTrigger = await suggest(ungated, ["#zor"], 0, 4);
     expect(gatedTrigger).toEqual(ungatedTrigger);
     expect(gatedTrigger?.items.length).toBeGreaterThan(0);
 
@@ -361,9 +362,9 @@ describe("enableChaining inertness (PRD §08 h2.46 — successor chain layer onl
     expect(store.topSuccessors("zorp").length).toBeGreaterThan(0);
 
     // Arm via the production path: live menu → Tab accept.
-    const menu = await suggest(provider, ["zorp"], 0, 4);
+    const menu = await suggest(provider, ["zor"], 0, 3);
     const zorpItem = menu!.items.find((i) => i.value === "Zorp")!;
-    provider.applyCompletion(["zorp"], 0, 4, zorpItem, "zorp");
+    provider.applyCompletion(["zor"], 0, 3, zorpItem, "zor");
     expect(chain.state()).toEqual({ word: "zorp" });
 
     // The zero-typed-char offer fires: bare single-word successors at

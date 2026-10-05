@@ -47,8 +47,9 @@
  * Output: linear merge of the two ascending, disjoint span lists — document
  * order, hexish tokens in their textual position.
  *
- * Consumed by P1.M2.T1.S2 (camelCase/snake_case subword expansion over this
- * RawToken[]; hexish tokens are opaque to it) and by ingest (P1.M3.T2) per
+ * Consumed by P1.M2.T1.S2 (candidate expansion over this RawToken[] — one
+ * whole-token draft per token since the 2026-10 atomic-identifier rule) and
+ * by ingest (P1.M3.T2) per
  * ≤64KB message slice. No normalization/lowercasing here (S2); no shape-gate
  * rules (≥4 chars, entropy, secrets) here (P1.M2.T2).
  *
@@ -61,12 +62,11 @@
  * time a consumer sees them.
  *
  * Stage 2 — expandCandidates() (S2, same module): takes each RawToken and
- * emits the whole token plus its camelCase/snake_case sub-words (length ≥ 4)
- * as CandidateDrafts, normalized per PRD §04 h3.4/h3.5 (lowercase key,
- * as-seen display casing, per-candidate properName hint). Hexish tokens are
- * opaque — returned as a single whole-token draft, never split. Consumers:
- * shapeGate (P1.M2.T2 passesShape) and score admission (P1.M2.T3.S1), which
- * read isSubword/parentKey.
+ * emits EXACTLY ONE CandidateDraft — the whole token (2026-10
+ * atomic-identifier rule; sub-word splitting removed) — normalized per
+ * PRD §04 h3.4/h3.5 (lowercase key, as-seen display casing, per-candidate
+ * properName hint). Consumers: shapeGate (P1.M2.T2 passesShape) and score
+ * admission (P1.M2.T3.S1).
  */
 
 import type { RawToken } from "./types.js";
@@ -497,7 +497,7 @@ export function tokenize(text: string): RawToken[] {
   //    compound) defers to that token — the pass is STRICTLY ADDITIVE.
   //    Equal spans mean identical raw, and the existing token's class
   //    carries richer semantics: letter-initial mixed identifiers
-  //    ("utf8Reader") keep camelCase subword splitting as base tokens,
+  //    ("utf8Reader") stay whole base tokens,
   //    and hexish flags (opacity, gate interplay) stay intact. The
   //    literal class exists for what the other passes CANNOT see:
   //    digit-initial runs and symbol-joined codes.
@@ -726,9 +726,6 @@ export interface CandidateDraft {
   display: string;
   /** first char of display is uppercase at extraction */
   properName: boolean;
-  isSubword: boolean;
-  /** lowercase key of the parent whole token; set iff isSubword */
-  parentKey?: string;
   /** true for path-shaped candidates (2026-10 rule 4d): the key is the
    *  edge/line:col-trimmed lowercase path while display keeps the
    *  original edge symbols (the first key≠display divergence beyond
@@ -743,49 +740,23 @@ function isUpperAscii(c: string): boolean {
 }
 
 /**
- * Split one `_`-free segment at camelCase boundaries (PRD §04 h3.4): before
- * an uppercase char whose previous char is lowercase or a digit (lower→up:
- * "fixR" → "fix|R"), or whose previous char is uppercase and next char is
- * lowercase (acronym-lowercase: "HTTPServer" → "HTTP|Server"). Digits
- * themselves never create boundaries ("utf8Reader" splits only before R).
- * The lookahead means an acronym run with no trailing lowercase ("HTTPS")
- * stays whole. The boundary regex has no /g flag — no shared lastIndex.
- */
-function splitCamel(seg: string): string[] {
-  const parts: string[] = [];
-  let start = 0;
-  for (let i = 1; i < seg.length; i++) {
-    const c = seg[i];
-    if (isUpperAscii(c)) {
-      const prev = seg[i - 1];
-      const next = i + 1 < seg.length ? seg[i + 1] : "";
-      if (
-        /[a-z0-9]/.test(prev) ||
-        (isUpperAscii(prev) && next >= "a" && next <= "z")
-      ) {
-        parts.push(seg.slice(start, i));
-        start = i;
-      }
-    }
-  }
-  parts.push(seg.slice(start));
-  return parts;
-}
-
-/**
- * Expand one raw token into candidate drafts (PRD §04 h3.4/h3.5): the whole
- * token first, then every camelCase/snake_case sub-word of length ≥ 4.
- * Shorter sub-words are dropped as standalone candidates; the whole token
- * survives regardless of length (shape-gate length rules are P1.M2.T2's).
- *
- * Splitting: on `_` segments (empties dropped; underscores are KEPT in the
- * whole token — users Tab the identifier as typed) and camelCase boundaries
- * within each segment. Hexish tokens are opaque: exactly the whole-token
- * draft, never split.
+ * Expand one raw token into candidate drafts (PRD §04 h3.4/h3.5): exactly
+ * ONE draft — the whole token. Identifiers are ATOMIC (2026-10 owner
+ * rule): camelCase/snake_case sub-word splitting is REMOVED. A variable
+ * name is the value class itself — dictionary-absent, completed whole
+ * exactly as typed — while its parts are attested English that flooded
+ * the menu from inside identifiers (searchReplacementDownloads
+ * manufacturing "Replacement"). The retired rule emitted the whole
+ * token PLUS camel/_ sub-words ≥4 chars to enable mid-identifier entry
+ * ("roun" → Rounding); the owner judged the fragment noise not worth
+ * it — mid-identifier entry now belongs to the anchored-fuzzy query
+ * alone, and only for fragments that start with the identifier's first
+ * character. Hexish/literal/path tokens were already opaque to
+ * splitting; with splitting gone, atomicity is universal.
  *
  * Normalization: `key` is lowercase; `display` is this sighting's casing
  * (recency merge is the store's job, P1.M2.T4.S1); `properName` comes from
- * the candidate's own display initial; `parentKey` is set iff `isSubword`.
+ * the candidate's own display initial.
  *
  * Pure: no state, no runtime imports (RawToken is a type-only import).
  */
@@ -793,21 +764,9 @@ export function expandCandidates(token: RawToken): CandidateDraft[] {
   // properName (2026-09 sentence-initial rule): a Capitalized token
   // right after sentence-ending punctuation is sentence-INITIAL — the
   // capital is orthographic, not a name signal, so the hint is
-  // suppressed. Same for the token's FIRST sub-word (it begins the
-  // token; mid-token sub-words keep their own semantics).
+  // suppressed.
   const nameInitial = isUpperAscii(token.raw.charAt(0)) && !token.sentenceStart;
-  const whole: CandidateDraft = {
-    key: token.raw.toLowerCase(),
-    display: token.raw,
-    properName: nameInitial,
-    isSubword: false,
-  };
-  // Opaque classes — never subword-split: hexish (2026-09, S2 rule),
-  // technical literals (2026-10 rule 4c), and paths (2026-10 rule 4d).
-  // A code like "2560x1440@2" or a commit-hash-shaped token completes
-  // whole as typed; splitting codes at camel/underscore boundaries would
-  // manufacture junk sub-candidates.
-  //
+
   // PATHS (rule 4d) — the ONLY key≠display site beyond casing: the key
   // is the trimmed lowercase slice (edge `/~.` chains, one
   // ':line(:col)?' tail, trailing sentence periods stripped) while
@@ -825,35 +784,15 @@ export function expandCandidates(token: RawToken): CandidateDraft[] {
           .toLowerCase(),
         display: token.raw, // ORIGINAL edges preserved for insertion
         properName: false,
-        isSubword: false,
         path: true,
       },
     ];
   }
-  if (token.hexish || token.literal) return [whole];
-
-  const parentKey = whole.key;
-  const subs: CandidateDraft[] = [];
-  let firstPart = true; // the first split part begins the token
-  for (const seg of token.raw.split("_")) {
-    if (seg.length === 0) continue;
-    for (const sub of splitCamel(seg)) {
-      const atTokenStart = firstPart;
-      firstPart = false;
-      // A part equal to the whole token (single segment, no boundary — e.g.
-      // "HTTPS") IS the whole token, never a sub-word of itself.
-      if (sub === token.raw) continue;
-      if (sub.length < 4) continue;
-      subs.push({
-        key: sub.toLowerCase(),
-        display: sub,
-        // First sub-word of a sentence-initial token: its capital is
-        // orthographic too ("DownloadManager" after ". ").
-        properName: atTokenStart ? nameInitial : isUpperAscii(sub.charAt(0)),
-        isSubword: true,
-        parentKey,
-      });
-    }
-  }
-  return [whole, ...subs];
+  return [
+    {
+      key: token.raw.toLowerCase(),
+      display: token.raw,
+      properName: nameInitial,
+    },
+  ];
 }

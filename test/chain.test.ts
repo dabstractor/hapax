@@ -88,7 +88,6 @@ const sighting = (over: Partial<Sighting> = {}): Sighting => ({
   fromUser: false,
   properName: false,
   rankGroup: 2,
-  isSubword: false,
   ...over,
 });
 
@@ -335,12 +334,22 @@ describe("chain machine — armed successor chaining (PRD §07 h2.43, plan 002 S
 
     // The user TYPES THROUGH without accepting: same-word narrowing
     // queries keep the chain (each prefix extends the last)…
-    for (const c of ["b", "e", "t", "a"]) {
+    for (const c of ["b", "e", "t"]) {
       ed.type(c);
       const narrowing = await suggest(inner, ed.state.lines, 0, ed.state.cursorCol);
       expect(narrowing?.items.some((i) => i.description === "chain")).toBe(true);
     }
     expect(chain.state()).toEqual({ word: "alpha" }); // still armed within the word
+
+    // …but typing the offer word to COMPLETION ("beta") empties the
+    // chain filter — the exact-equal exclusion (§04 h2.29 parity)
+    // drops the fully-typed successor too — so the (c) disqualification
+    // resets the arm on this SAME tick and the normal path answers
+    // (fragment equals the stored key → empty → delegate).
+    ed.type("a");
+    const full = await suggest(inner, ed.state.lines, 0, ed.state.cursorCol);
+    expect(full).toBeNull();
+    expect(chain.state()).toBeNull();
 
     // …but the NEXT word boundary (space, zero-char query) disarms and
     // falls through: the normal path answers (no fragment → delegate),
@@ -832,12 +841,12 @@ describe("replayed-store arming end-to-end (real ingest pipeline, zephra-chain f
     // acceptance arms the chain — h2.43), topping the candidates:
     // dictionary-absent "zorp" (group 0, rarity bonus) outranks its
     // q≤26 walk partners (group 2).
-    const menu = await suggest(provider, ["zorp"], 0, 4);
+    const menu = await suggest(provider, ["zor"], 0, 3);
     const zorpItem = menu!.items[0]!;
     expect(zorpItem.value).toBe("Zorp");
     expect(zorpItem.description).toMatch(/^session x\d+$/);
 
-    provider.applyCompletion(["zorp"], 0, 4, zorpItem, "zorp");
+    provider.applyCompletion(["zor"], 0, 3, zorpItem, "zor");
     expect(chain.state()).toEqual({ word: "zorp" });
     expect(current.state.lines).toEqual(["Zorp"]);
 
@@ -893,9 +902,9 @@ describe("replayed-store arming end-to-end (real ingest pipeline, zephra-chain f
     // (i) Arming is gated: accepting a live word item must NOT arm
     // (word completion itself still works — the flag disables the chain
     // layer, not hapax's word menu).
-    const menu = await suggest(provider, ["zorp"], 0, 4);
+    const menu = await suggest(provider, ["zor"], 0, 3);
     expect(menu?.items.map((i) => i.value)).toContain("Zorp");
-    provider.applyCompletion(["zorp"], 0, 4, menu!.items[0]!, "zorp");
+    provider.applyCompletion(["zor"], 0, 3, menu!.items[0]!, "zor");
     expect(chain.state()).toBeNull();
 
     // (ii) Even a machine armed by ANY means never offers: the armed

@@ -1,9 +1,10 @@
 /**
  * PRD §04 query-ranking suite (P1.M2.T5.S1): the rankMatches contract —
  * case-insensitive prefix matching with stored display casing (h2.27),
- * the 2026-10 menu order (spec §04 h2.29: tier desc → sessionCount desc
- * within tier → shorter key → byte-lex; zero-fragment listings order by
- * sessionCount desc → shorter → byte-lex with no tiers) verified with
+ * the 2026-10 menu order (spec §04 h2.29: tier desc → shorter key →
+ * sessionCount desc → byte-lex, with exact-equal keys excluded;
+ * zero-fragment listings keep sessionCount desc → shorter → byte-lex)
+ * verified with
  * deliberate ties at the rankMatches AND comparator levels, the default
  * limit 8 plus explicit/defensive limits, the description "session
  * x<count>" item contract, empty results, count-vs-recency interplay, an
@@ -69,7 +70,6 @@ const sighting = (over: Partial<Sighting> = {}): Sighting => ({
   fromUser: false,
   properName: false,
   rankGroup: 2,
-  isSubword: false,
   ...over,
 });
 
@@ -87,12 +87,15 @@ const put = (
 };
 
 /** Oracle: expected key order per the 2026-10 menu order (spec §04
- *  h2.29) — tier desc → sessionCount desc within tier → shorter key →
- *  byte-lex — the same math rankMatches must apply, computed here from
- *  matchFragment + store entries, deliberately independent of
- *  compareRankedMatches. Membership mirrors the T2.S2 first-char-bucket
- *  scan: non-empty fragments consider every key sharing the fragment's
- *  first char that survives matchFragment at the default fuzzThreshold
+ *  h2.29, progressive completion) — match path: tier desc → shorter
+ *  key → sessionCount desc → byte-lex, with exact-equal keys
+ *  excluded from membership; zero-fragment listing: sessionCount desc
+ *  → shorter → byte-lex (the listing's own relevance board) — the
+ *  same math rankMatches must apply, computed here from matchFragment
+ *  + store entries, deliberately independent of compareRankedMatches.
+ *  Membership mirrors the T2.S2 first-char-bucket scan: non-empty
+ *  fragments consider every key sharing the fragment's first char
+ *  that survives matchFragment at the default fuzzThreshold
  *  (tiers 3/2/1); zero-fragment lists everything (no tiers —
  *  matchFragment("") is null → uniform tier 0). The composite salience
  *  is NOT a sort key. */
@@ -104,24 +107,26 @@ const expectedOrder = (s: CandidateStore, prefix: string): string[] => {
     .filter((c) => c.key.startsWith(bucket))
     .flatMap((c) => {
       if (lower === "") return [{ tier: 0, c }];
+      if (c.key === lower) return []; // exact-equal exclusion (§04 h2.29)
       const m = matchFragment(prefix, c.key);
       return m !== null && m.score >= DEFAULT_FUZZ_THRESHOLD
         ? [{ tier: m.tier, c }]
         : [];
     })
-    .sort((a, b) =>
-      a.tier !== b.tier
-        ? b.tier - a.tier
-        : a.c.sessionCount !== b.c.sessionCount
-          ? b.c.sessionCount - a.c.sessionCount
-          : a.c.key.length !== b.c.key.length
-            ? a.c.key.length - b.c.key.length
-            : a.c.key < b.c.key
-              ? -1
-              : a.c.key > b.c.key
-                ? 1
-                : 0,
-    )
+    .sort((a, b) => {
+      if (lower === "") {
+        // Listing board: count first, then the shared tail.
+        if (a.c.sessionCount !== b.c.sessionCount)
+          return b.c.sessionCount - a.c.sessionCount;
+      } else if (a.tier !== b.tier) {
+        return b.tier - a.tier;
+      }
+      if (a.c.key.length !== b.c.key.length)
+        return a.c.key.length - b.c.key.length;
+      if (a.c.sessionCount !== b.c.sessionCount)
+        return b.c.sessionCount - a.c.sessionCount;
+      return a.c.key < b.c.key ? -1 : a.c.key > b.c.key ? 1 : 0;
+    })
     .map((r) => r.c.key);
 };
 
@@ -171,7 +176,7 @@ describe("rankMatches — case-insensitive prefix, display casing (h2.27)", () =
     const s = new CandidateStore();
     s.upsert(sighting({ key: "nrel", display: "NREL", ordinal: 1 }));
     s.upsert(sighting({ key: "nrel", display: "nrel", ordinal: 2 }));
-    expect(rankMatches(s, "nrel")[0]!.display).toBe("nrel");
+    expect(rankMatches(s, "nre")[0]!.display).toBe("nrel");
   });
 });
 
@@ -228,16 +233,31 @@ describe("rankMatches — result shape (work-item contract)", () => {
   });
 });
 
-describe("rankMatches — ordering (spec §04 h2.29: tier → count → shorter → lex)", () => {
-  it("same-tier counts reorder: higher sessionCount leftmost", () => {
+describe("rankMatches — ordering (spec §04 h2.29: tier → shorter → count → lex)", () => {
+  it("THE progressive ladder (owner case): shorter sibling completes first regardless of counts", () => {
     const s = new CandidateStore();
-    put(s, "zaghigh", 3); // all tier-3 exact prefixes — raw count orders
-    put(s, "zaglow", 1);
-    put(s, "zagmid", 2);
+    put(s, "anchor-matches", 3); // 3 sightings — count-first order served this first
+    put(s, "anchor-match", 1);
+    expect(rankMatches(s, "anchor").map((m) => m.key)).toEqual([
+      "anchor-match", // shorter key wins (progressive completion)
+      "anchor-matches",
+    ]);
+    // Second Tab: the fully-typed word is excluded — only the extension
+    // remains, so the ladder advances instead of re-offering itself.
+    expect(rankMatches(s, "anchor-match").map((m) => m.key)).toEqual([
+      "anchor-matches",
+    ]);
+  });
+
+  it("counts order only EQUAL-LENGTH rivals: shorter key beats a 9-count", () => {
+    const s = new CandidateStore();
+    put(s, "zaghi", 9); // 5 chars, 9 sightings
+    put(s, "zagmid", 2); // 6 chars
+    put(s, "zaglow", 1); // 6 chars
     expect(rankMatches(s, "zag").map((m) => m.key)).toEqual([
-      "zaghigh", // count 3
-      "zagmid", // count 2
-      "zaglow", // count 1
+      "zaghi", // length 5 beats count 9
+      "zagmid", // equal length 6: count 2 > 1
+      "zaglow",
     ]);
   });
 
@@ -405,16 +425,18 @@ describe("rankMatches — tier-0 anchorless ambient fallback (2026-10, spec §04
     ]);
   });
 
-  it("fallback records are ordinary records: tier-0 orders by count → shorter → byte-lex", () => {
+  it("fallback records are ordinary records: tier-0 orders by shorter → count → byte-lex", () => {
     const s = new CandidateStore();
     put(s, "warpath", 3);
     put(s, "warped");
     // "arp" (3 chars, mid-word, no anchor): warpath runStart 1, len 7 →
     // 85−5.7≈79; warped runStart 1, len 6 → 85−6.7≈78 — both admit at
-    // tier 0; the comparator's keys 2–4 order within the tier (count first).
+    // tier 0; the comparator's keys 2–4 order within the tier (length
+    // first under h2.29 — warped is shorter and leads despite the
+    // count deficit).
     expect(rankMatches(s, "arp").map((m) => m.key)).toEqual([
-      "warpath",
       "warped",
+      "warpath",
     ]);
   });
 });
@@ -464,8 +486,8 @@ describe("compareRankedMatches — 4-key order (spec §04 h2.29, comparator leve
     expect(compareRankedMatches(same, { ...same })).toBe(0); // total: identical records tie
   });
 
-  it("zero-fragment records (uniform tier 0) order by count → shorter → lex", () => {
-    expect(compareRankedMatches(rec(0, "zzlongestkey", 9), rec(0, "a", 1))).toBeLessThan(0);
+  it("match-path comparator is LENGTH-first even among uniform tier-0 records (listings order via compareListing)", () => {
+    expect(compareRankedMatches(rec(0, "zzlongestkey", 9), rec(0, "a", 1))).toBeGreaterThan(0); // shorter key wins regardless of count
     expect(compareRankedMatches(rec(0, "a", 1), rec(0, "bb", 1))).toBeLessThan(0);
     expect(compareRankedMatches(rec(0, "bb", 1), rec(0, "a", 1))).toBeGreaterThan(0);
   });
@@ -491,10 +513,11 @@ describe("rankMatches — zero-fragment listing ('#' alone: no tiers)", () => {
     put(s, "zzzzzzzzzz", 9); // long, but 9× the count
     // '#' alone: no matchFragment call, no tiers — count desc, then length.
     expect(rankMatches(s, "").map((m) => m.key)).toEqual(["zzzzzzzzzz", "zz"]);
-    // Same store, 1-char fragment: both tier-3 exact prefixes — the SAME
-    // order. Pinned side by side to show the zero-fragment path and the
-    // tiered path agree on counts within a tier.
-    expect(rankMatches(s, "z").map((m) => m.key)).toEqual(["zzzzzzzzzz", "zz"]);
+    // Same store, 1-char fragment: both tier-3 exact prefixes — the
+    // match path is LENGTH-first (h2.29 progressive completion), so the
+    // two paths deliberately DIVERGE: the listing is a relevance board,
+    // the match path is a completion ladder.
+    expect(rankMatches(s, "z").map((m) => m.key)).toEqual(["zz", "zzzzzzzzzz"]);
   });
 
   it("ties: shorter key, then byte-lex", () => {
@@ -678,6 +701,28 @@ describe("rankMatches — perf sanity (PRD §02 h3.1: < 1 ms per keystroke)", ()
     }
   });
 });
+describe("rankMatches — exact-equal exclusion (spec §04 h2.29, 2026-10 owner rule)", () => {
+  it("a fully-typed word is never offered — ambient, loose (tier-0 parity), listing unaffected", () => {
+    const s = new CandidateStore();
+    put(s, "zendesk", 5);
+    put(s, "zendeskdocs", 1);
+    expect(rankMatches(s, "zendesk").map((m) => m.key)).toEqual([
+      "zendeskdocs", // the exact word itself is gone; extensions remain
+    ]);
+    expect(rankMatches(s, "zendesk", { loose: true }).map((m) => m.key)).toEqual([
+      "zendeskdocs", // tier-0 pass skips the exact-equal key too (parity)
+    ]);
+    // The '#' listing has no fragment — nothing to exclude.
+    expect(rankMatches(s, "").map((m) => m.key)).toEqual(["zendesk", "zendeskdocs"]);
+  });
+
+  it("zero candidates remain → [] (provider delegates; the empty menu is the signal)", () => {
+    const s = new CandidateStore();
+    put(s, "hapax", 2);
+    expect(rankMatches(s, "hapax")).toEqual([]);
+  });
+});
+
 describe("rankMatches — plural pruning (2026-09 owner rule)", () => {
   it("singular + plural both match → only the singular is returned", () => {
     const s = new CandidateStore();
@@ -697,9 +742,13 @@ describe("rankMatches — plural pruning (2026-09 owner rule)", () => {
     put(s, "agent", 3);
     put(s, "agents", 2);
     // "agen" matches both; "agents" alone (prefix "agents") has no
-    // singular in its result set — the plural must still return.
+    // singular in its result set — but the fragment EQUALS the plural
+    // key, and the exact-equal exclusion (h2.29) fires first: a
+    // fully-typed word is never offered. The plural now completes only
+    // via fragments shorter than itself ("agent" → Tab-walk, "agents"
+    // is the walk's terminus).
     expect(rankMatches(s, "agen").map((m) => m.key)).toEqual(["agent"]);
-    expect(rankMatches(s, "agents").map((m) => m.key)).toEqual(["agents"]);
+    expect(rankMatches(s, "agents").map((m) => m.key)).toEqual([]);
   });
 
   it("\"ss\" and \"es\" forms never prune: glass stays, class/classes coexist", () => {
@@ -708,8 +757,8 @@ describe("rankMatches — plural pruning (2026-09 owner rule)", () => {
     put(s, "glass", 1); // ss-final — must survive even with glas present
     put(s, "class", 1);
     put(s, "classes", 1); // different key shape — not a single-s pair
-    expect(rankMatches(s, "glas").map((m) => m.key)).toEqual(["glas", "glass"]);
-    expect(rankMatches(s, "clas").map((m) => m.key)).toEqual(["class", "classes"]);
+    expect(rankMatches(s, "gla").map((m) => m.key)).toEqual(["glas", "glass"]);
+    expect(rankMatches(s, "cla").map((m) => m.key)).toEqual(["class", "classes"]);
   });
 
   it("pruning runs BEFORE the limit slice — a pruned plural frees its slot under count order", () => {

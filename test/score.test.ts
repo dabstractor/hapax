@@ -57,21 +57,19 @@ const dict = (entries: Record<string, number>): Dictionary => ({
   entryCount: Object.keys(entries).length,
 });
 
-/** Whole-token draft by default; isSubword=true adds a parentKey. The
- *  third parameter overrides any CandidateDraft field — used by the
- *  relief-band cases to set properName/display (admit() reads only
- *  key/isSubword/properName, and the key stays lowercase per its
- *  contract; display carries the capitalized form for realism). */
+/** Whole-token draft (every draft is whole since the 2026-10
+ *  atomic-identifier rule). The second parameter overrides any
+ *  CandidateDraft field — used by the relief-band cases to set
+ *  properName/display (admit() reads only key/properName, and the key
+ *  stays lowercase per its contract; display carries the capitalized
+ *  form for realism). */
 const draft = (
   key: string,
-  isSubword = false,
   over: Partial<CandidateDraft> = {},
 ): CandidateDraft => ({
   key,
   display: key,
   properName: false,
-  isSubword,
-  ...(isSubword ? { parentKey: "parent" } : {}),
   ...over,
 });
 
@@ -85,7 +83,6 @@ const cand = (over: Partial<Candidate> = {}): Candidate => ({
   userTyped: false,
   properName: false,
   rankGroup: 0,
-  isSubword: false,
   ...over,
 });
 
@@ -178,24 +175,24 @@ describe("R_eff length-conditioned admission (2026-10 gradient)", () => {
   it("rejectCommonness knob moves the floor AND the curve", () => {
     // Floor at knob 10: q=10 rejects at len 8 (admits at default 12).
     expect(
-      admit(draft("tokenish"), dict({ tokenish: 10 }), undefined, {
+      admit(draft("tokenish"), dict({ tokenish: 10 }), {
         rejectCommonness: 10,
       }),
     ).toBe("reject");
     expect(
-      admit(draft("tokenish"), dict({ tokenish: 9 }), undefined, {
+      admit(draft("tokenish"), dict({ tokenish: 9 }), {
         rejectCommonness: 10,
       }),
     ).toBe(1);
     // Curve: rEff(10, 9) = 10 + 245·√(1/12) ≈ 80.725 → 80 admits, 81 rejects.
     expect(rEff(10, 9)).toBeCloseTo(80.725, 2);
     expect(
-      admit(draft("ninechars"), dict({ ninechars: 80 }), undefined, {
+      admit(draft("ninechars"), dict({ ninechars: 80 }), {
         rejectCommonness: 10,
       }),
     ).toBe(1);
     expect(
-      admit(draft("ninechars"), dict({ ninechars: 81 }), undefined, {
+      admit(draft("ninechars"), dict({ ninechars: 81 }), {
         rejectCommonness: 10,
       }),
     ).toBe("reject");
@@ -246,12 +243,6 @@ describe("admit — conjugation guard (2026-09, 'deleted' leak)", () => {
     expect(admit(draft("badly"), dict({ bad: REJECT_COMMON_THRESHOLD }))).toBe("reject");
   });
 
-  it("subwords are guarded too (typed as a subword of typedFlag)", () => {
-    expect(admit(draft("typed", true), dict({ type: REJECT_COMMON_THRESHOLD }), 2)).toBe(
-      "reject",
-    );
-  });
-
   it("properName drafts SKIP the guard — casing evidence outranks morphology (Andrews)", () => {
     // 2026-09: with the relief retired (ceiling == REJECT), a capitalized
     // table-rejected word ALSO rejects — but still WITHOUT consulting the
@@ -260,14 +251,14 @@ describe("admit — conjugation guard (2026-09, 'deleted' leak)", () => {
     // is rare-attested, and properName keeps it admitting via the table.
     const d = { andrews: REJECT_COMMON_THRESHOLD, andrew: REJECT_COMMON_THRESHOLD };
     expect(
-      admit(draft("andrews", false, { display: "Andrews", properName: true }), dict(d)),
+      admit(draft("andrews", { display: "Andrews", properName: true }), dict(d)),
     ).toBe("reject"); // table-rejected; relief retired
     expect(admit(draft("andrews"), dict(d))).toBe("reject"); // lowercase: same table + guard agrees
     // Rare-attested word with a COMMON stem: properName skips the guard
     // (admits at 1); lowercase hits the guard and rejects.
     const d2 = { andrews: REJECT_COMMON_THRESHOLD - 1, andrew: REJECT_COMMON_THRESHOLD };
     expect(
-      admit(draft("andrews", false, { display: "Andrews", properName: true }), dict(d2)),
+      admit(draft("andrews", { display: "Andrews", properName: true }), dict(d2)),
     ).toBe(1);
     expect(admit(draft("andrews"), dict(d2))).toBe("reject");
   });
@@ -295,7 +286,7 @@ describe("admit — conjugation guard (2026-09, 'deleted' leak)", () => {
     // to 10 the stem clears the bar → reject.
     expect(admit(draft("listses"), dict({ listses: 5, listse: 10 }))).toBe(1);
     expect(
-      admit(draft("listses"), dict({ listses: 5, listse: 10 }), undefined, {
+      admit(draft("listses"), dict({ listses: 5, listse: 10 }), {
         rejectCommonness: 10,
       }),
     ).toBe("reject");
@@ -332,12 +323,6 @@ describe("conjugation guard rides R_eff(len(word)) — 2026-10", () => {
     );
   });
 
-  it("'typed' subword still guarded at the floor (stem type=12)", () => {
-    expect(
-      admit(draft("typed", true), dict({ type: REJECT_COMMON_THRESHOLD }), 2),
-    ).toBe("reject");
-  });
-
   it("guard threshold rides the WORD's length, not the stem's", () => {
     // Same stem quant (30): the 7-char word rejects at the floor
     // (30 ≥ 12) while the 14-char 'configurations' admits
@@ -351,7 +336,7 @@ describe("conjugation guard rides R_eff(len(word)) — 2026-10", () => {
     // the absent inflection; at the default 12 the same pair rejects.
     expect(admit(draft("uploads"), dict({ upload: 38 }))).toBe("reject");
     expect(
-      admit(draft("uploads"), dict({ upload: 38 }), undefined, {
+      admit(draft("uploads"), dict({ upload: 38 }), {
         rejectCommonness: 40,
       }),
     ).toBe(0);
@@ -360,7 +345,7 @@ describe("conjugation guard rides R_eff(len(word)) — 2026-10", () => {
   it("properName skips the guard: 'Uploads' admits via the table (guard bypassed)", () => {
     expect(
       admit(
-        draft("uploads", false, { display: "Uploads", properName: true }),
+        draft("uploads", { display: "Uploads", properName: true }),
         dict({ upload: 38 }),
       ),
     ).toBe(0); // absent word → table group 0; lowercase twin rejects via the guard
@@ -395,7 +380,7 @@ describe("proper-noun relief stays dead under the ramp (2026-10)", () => {
     // skipped (properName), the TABLE rejects, relief stays dead.
     expect(
       admit(
-        draft("quizzical", false, { display: "Quizzical", properName: true }),
+        draft("quizzical", { display: "Quizzical", properName: true }),
         dict({ quizzical: 200 }),
       ),
     ).toBe("reject");
@@ -406,7 +391,7 @@ describe("proper-noun relief stays dead under the ramp (2026-10)", () => {
     // group 1; a live relief would have returned 2.
     expect(
       admit(
-        draft("sensationalize", false, {
+        draft("sensationalize", {
           display: "Sensationalize",
           properName: true,
         }),
@@ -452,58 +437,6 @@ describe("admit — whole-token bands (PRD §04 h2.24)", () => {
   it("q = 255 (most common) → reject", () => {
     expect(admit(draft("context"), dict({ context: 255 }))).toBe("reject");
   });
-
-  it("clamp applies only to subwords: whole token ignores parentGroup", () => {
-    // Whole tokens never pass parentGroup (ingest admits them first), but
-    // the isSubword check must gate the clamp regardless of the argument.
-    expect(admit(draft("tokenish"), dict({ tokenish: 0 }), 2)).toBe(1);
-  });
-});
-
-describe("admit — subword clamp (PRD §04 h2.24)", () => {
-  it("parent group 0 + table group 0 → 1", () => {
-    expect(admit(draft("token", true), dict({ token: 0 }), 0)).toBe(1);
-  });
-
-  it("parent group 1 + table group 0 → 2", () => {
-    expect(admit(draft("token", true), dict({ token: 0 }), 1)).toBe(2);
-  });
-
-  it("parent group 2 + table group 0 → 2 (saturates, never returns 3)", () => {
-    expect(admit(draft("token", true), dict({ token: 0 }), 2)).toBe(2);
-  });
-
-  it("parent group 0 + table group 1 → 1 (table already at parent + 1)", () => {
-    // q = 10: attested but below MID_FREQ_THRESHOLD → table group 1.
-    expect(admit(draft("token", true), dict({ token: 10 }), 0)).toBe(1);
-  });
-
-  it("the old g2 table band (q=30) now REJECTS even for subwords (2026-09 retighten)", () => {
-    // MID ≤ q < 50 was table group 2; with REJECT=12 it rejects before
-    // the clamp — group 2 remains reachable only via parentGroup values.
-    expect(admit(draft("token", true), dict({ token: 30 }), 1)).toBe("reject");
-    expect(admit(draft("token", true), dict({ token: 30 }), 0)).toBe("reject");
-  });
-
-  it("subword with q ≥ REJECT_COMMON_THRESHOLD → 'reject' regardless of parent (clamp never rescues)", () => {
-    for (const parent of [0, 1, 2] as const) {
-      expect(
-        admit(draft("the", true), dict({ the: REJECT_COMMON_THRESHOLD }), parent),
-      ).toBe("reject");
-    }
-  });
-
-  it("subword without parentGroup → unclamped table result", () => {
-    // Defensive path: ingest always supplies parentGroup for subwords, but
-    // a missing one must not fabricate a clamp — every table row passes
-    // through raw: q = null → 0, q = 0 → 1, q = REJECT−1 → 1 (2026-09:
-    // the g2 row is retired).
-    expect(admit(draft("token", true), dict({}))).toBe(0);
-    expect(admit(draft("token", true), dict({ token: 0 }))).toBe(1);
-    expect(
-      admit(draft("token", true), dict({ token: REJECT_COMMON_THRESHOLD - 1 })),
-    ).toBe(1); // 2026-09: rarest-attested tail is group 1 (g2 retired)
-  });
 });
 
 describe("admit — proper-noun relief (RETIRED-IN-PLACE, 2026-09)", () => {
@@ -516,7 +449,7 @@ describe("admit — proper-noun relief (RETIRED-IN-PLACE, 2026-09)", () => {
   it("capitalized attested English no longer relieves (ceiling == reject band)", () => {
     expect(
       admit(
-        draft("national", false, { display: "National", properName: true }),
+        draft("national", { display: "National", properName: true }),
         dict({ national: 90 }),
       ),
     ).toBe("reject");
@@ -528,7 +461,7 @@ describe("admit — proper-noun relief (RETIRED-IN-PLACE, 2026-09)", () => {
 
   it("capitalized word at/above the ceiling still rejects (The = 240)", () => {
     expect(
-      admit(draft("the", false, { display: "The", properName: true }), dict({ the: 240 })),
+      admit(draft("the", { display: "The", properName: true }), dict({ the: 240 })),
     ).toBe("reject");
   });
 
@@ -539,52 +472,16 @@ describe("admit — proper-noun relief (RETIRED-IN-PLACE, 2026-09)", () => {
     const proper = { display: "Nadroj", properName: true };
     expect(
       admit(
-        draft("nadroj", false, proper),
+        draft("nadroj", proper),
         dict({ nadroj: PROPER_NOUN_ADMIT_CEILING }),
       ),
     ).toBe("reject");
     expect(
       admit(
-        draft("nadroj", false, proper),
+        draft("nadroj", proper),
         dict({ nadroj: PROPER_NOUN_ADMIT_CEILING - 1 }),
       ),
     ).toBe(1);
-  });
-
-  it("sub-words never relieve: a table-rejected sub-word stays rejected (clamp-immune)", () => {
-    // The PRP's literal case (sub-word at q=94, relieved parent → 2)
-    // contradicts the module contract this suite already pins: relief
-    // requires !isSubword, and 'reject' returns BEFORE the clamp (it is
-    // clamp-immune) — so the sub-word of a relieved parent whose OWN
-    // lookup lands in the reject band stays rejected. Pinned as such.
-    expect(
-      admit(
-        draft("energy", true, { display: "Energy", properName: true }),
-        dict({ energy: 94 }),
-        2,
-      ),
-    ).toBe("reject");
-  });
-
-  it("sub-word of a group-2 parent clamps at group 2 (never above parent + 1)", () => {
-    // 2026-09: table group 2 is retired, so a 2-parent arrives only via
-    // the (retired) relief or legacy store entries — the clamp itself is
-    // unchanged and stays pinned: own table result rare (→ 1) with
-    // parent 2 → min(2, max(1, 3)) = 2. Under the 2026-10 gradient an
-    // ATTESTED 9-char sub-word (q=30 < R_eff(9)=82.15) also reaches the
-    // clamp and lands at 2; mid-band q still rejects outright at floor
-    // lengths (≤ 8 chars), where the flat band is unchanged.
-    expect(
-      admit(draft("energise", true), dict({ energise: 10 }), 2),
-    ).toBe(2);
-    expect(
-      admit(draft("energetic", true), dict({ energetic: 30 }), 2),
-    ).toBe(2); // 2026-10: 9-char q=30 rides the ramp down (82.15) → table 1, clamps to 2
-    // Mid-band q must still reject at floor lengths (≤ 8 chars): the old g2
-    // table row is gone, so 6-char q=30 ≥ floor(12) rejects before the clamp.
-    expect(
-      admit(draft("energy", true), dict({ energy: 30 }), 2),
-    ).toBe("reject");
   });
 
   it("capitalized dictionary-absent word stays group 0 (relief never demotes)", () => {
@@ -592,7 +489,7 @@ describe("admit — proper-noun relief (RETIRED-IN-PLACE, 2026-09)", () => {
     // 2 here would DEMOTE it. The q !== null guard prevents that.
     expect(
       admit(
-        draft("zorpwibble", false, { display: "Zorpwibble", properName: true }),
+        draft("zorpwibble", { display: "Zorpwibble", properName: true }),
         dict({}),
       ),
     ).toBe(0);

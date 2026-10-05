@@ -178,9 +178,11 @@ inner editor sees them:
   highlighted), synchronously against the live query — never gated by
   the display debounce (invariant 2). Insertion replaces the live
   fragment span (word regex or `#fragment`, below) with the
-  candidate's display casing: stock `applyCompletion` semantics,
-  reimplemented on the widget path because no provider item exists
-  there.
+  candidate's resolved casing (04 Case handling: a typed capital first
+  letter is preserved — only the first letter adapts; typed lowercase
+  inserts the winning form verbatim): stock `applyCompletion`
+  semantics, reimplemented on the widget path because no provider
+  item exists there.
 - **Enter ALWAYS submits, never inserts** — the Enter-submits proxy
   rule extends to the widget: Enter dismisses the line, then forwards
   the keystroke so the inner editor submits.
@@ -307,8 +309,8 @@ completion must keep working exactly as before, including inside quoted
 paths).
 
 Case-insensitive **anchored fuzzy** match (04 — first char exact,
-subsequence after, threshold-gated, tier-ranked); insertion uses
-candidate display casing.
+subsequence after, threshold-gated, tier-ranked); insertion uses the
+resolved casing (04 Case handling).
 
 **Match gates per mode (2026-10 owner rules; 04).** Word matching is
 anchored-only PLUS the zero-result tier-0 fallback: one anchorless
@@ -545,16 +547,20 @@ through, exactly as this proxy does).
 
 ## M2: chained completion
 
-State machine, armed only via Tab acceptance of a whole-word candidate:
+State machine, armed by acceptance or by typing of a series member:
 
 ```
 idle ──Tab accepts word W──► armed(W)
+idle ──space closes a typed word whose first letter is UPPERCASE and
+       whose lowercase key has series successors──► armed(W)
 armed(W):
   - word start (cursor at the empty next word, ZERO typed chars) → offer
-    the top successor from the successor index immediately (lookup W →
-    top-3, ranked by count). No trigger char, no threshold, no typed
-    fragment needed — the successor IS the top result before the user
-    types anything. This is the entire meaning of "phrase completion".
+    the successors of W immediately: series successors first (count
+    descending among them), then ordinary successors (count descending).
+    No trigger char, no threshold, no typed
+    fragment needed — the top series successor is the top result before
+    the user types anything. This is the entire meaning of "phrase
+    completion".
   - ONE-SHOT GRANT (2026-09): the immediate offer is granted for exactly
     ONE word per acceptance. Typing through that offer without accepting
     disarms at the next word boundary — the normal path (under the
@@ -565,8 +571,12 @@ armed(W):
     Acceptance re-arms with a fresh grant: Tab→offer→Tab→offer flows
     exactly as before.
   - typed chars filter the live successor list with the same
-    anchored fuzzy matcher (04) as a membership gate; ranking within a
-    chain stays SUCCESSOR-COUNT-based (the successor index's counts,
+    anchored fuzzy matcher (04) as a membership gate — INCLUDING its
+    exact-equal exclusion (04 h2.29 parity): a successor the user has
+    fully typed is filtered out, so typing an offered word to
+    completion empties the filter, disqualifies, and resets the arm on
+    that same keystroke; ranking within a chain stays
+    SUCCESSOR-COUNT-based (the successor index's counts,
     not sessionCount — chains are bigram-driven by design); threshold
     stays 0 for the duration of the chain
   - Tab during armed (selected item, or top if none selected, per rule 0)
@@ -577,10 +587,20 @@ armed(W):
   - No successors for W → idle (normal threshold matching resumes)
 ```
 
-- Chaining arms only from our own candidates, never from path completion.
+- Chaining arms from our own candidates and from typed series-member
+  words — never from path completion. Typed-word arming requires the
+  typed word's first letter to be uppercase (the casing form the
+  series was learned from; a lowercase typing of a top-band word must
+  not arm, or every prose `the ` would offer its run successor) and
+  consults the successor index directly, so chain-only members (04)
+  arm it too — typing `The ` offers `Fed`.
 - Chain offers render on the widget line (or fallback menu) like any
   result set — with the description column retired there is no `chain`
   marker; the offer is visually indistinguishable from a typed match.
+  Series items display and insert their run casing at zero typed
+  chars; once the user types, the first-char anchor is case-insensitive
+  as everywhere, and insertion preserves a typed capital first letter
+  (lowercase typing inserts the offer item verbatim).
   On the widget path, arming happens at the widget's Tab-insert (the
   applyCompletion equivalent) and successor offers publish through the
   visibility machine's intent bypass.
@@ -590,7 +610,8 @@ armed(W):
 
 ## Result item shape
 
-A result item is **one word**: the candidate display casing. On the
+A result item is **one word**: the candidate's resolved casing (04
+Case handling). On the
 widget path an item carries NO metadata — no `Session xN` frequency,
 no provenance (`chain`), no rank-group markers. The line is words,
 `" | "` separators, and one highlight, nothing else. (Frequency and

@@ -7,7 +7,7 @@
  * Rules, evaluated in order — first failure wins (the reason precedence
  * contract): length → secret → lowEntropy → unigramRun → consonantRun.
  *
- *  1. Length on draft.key: whole tokens 2–64, sub-words 2–32,
+ *  1. Length on draft.key: whole tokens 2–64,
  *     path-class candidates 4–96 (`tooShort` / `tooLong`). Floor dropped
  *     4 → 2 (2026): short dictionary-absent acronyms (TUI, API, CLI)
  *     are hapax's core class, and common short English (the, and, for)
@@ -57,7 +57,7 @@
 import type { CandidateDraft } from "./segment.js";
 import type { GateResult } from "./types.js";
 
-/** Admission minimum on draft.key (whole and sub-word alike). 2 since
+/** Admission minimum on draft.key. 2 since
  *  the 2026 floor drop (was 4): short dictionary-absent acronyms (TUI,
  *  API, CLI) are hapax's core class, and common short English is
  *  already rejected by the commonness band in score.ts — the floor was
@@ -67,10 +67,10 @@ import type { GateResult } from "./types.js";
  *  making 3 the EFFECTIVE floor for all-distinct keys. */
 const MIN_LENGTH = 2;
 /** Whole-token cap. tokenize()'s base regex caps at 64, but the gate
- *  re-enforces the bound so it holds regardless of upstream. */
+ *  re-enforces the bound so it holds regardless of upstream. Every
+ *  draft is a whole token since the 2026-10 atomic-identifier rule
+ *  (sub-word drafts no longer exist). */
 const MAX_WHOLE_LENGTH = 64;
-/** Sub-word cap (h3.4 sub-words are ≤ 32). */
-const MAX_SUBWORD_LENGTH = 32;
 /** Path-class floor (2026-10 rule 4d, spec/04 h2.25 rule 1): sub-4 path
  *  fragments (e.g. the trimmed key "a/b") are shape noise. Deliberately
  *  NOT the global MIN_LENGTH — only path drafts branch here. */
@@ -169,8 +169,8 @@ const VOWELS = "aeiou";
  * Apply the shape rules to one candidate draft (PRD §04 h2.23).
  *
  * Length bounds are class-conditional: path drafts (draft.path, 2026-10
- * rule 4d) are 4–96; every other class keeps the global 2 floor with the
- * whole 64 / sub-word 32 caps. All downstream rules (secret → entropy →
+ * rule 4d) are 4–96; every other draft is a whole token under the
+ * whole-64 cap. All downstream rules (secret → entropy →
  * unigramRun → consonantRun) apply to path drafts unchanged — secret
  * scans draft.display (the ORIGINAL raw, edge symbols intact), entropy
  * floors letter-bearing keys as usual.
@@ -183,15 +183,10 @@ export function passesShape(draft: CandidateDraft): GateResult {
   const key = draft.key;
   // Class-conditional bounds (2026-10 rule 4d, spec/04 h2.25 rule 1):
   // path drafts are 4–96 (wider literal-scan window; sub-4 fragments are
-  // noise); every other class keeps the global floor and its own cap.
-  // Path drafts are never sub-words (segmentation pins isSubword:false),
-  // so the branch order below has no precedence question.
+  // noise); every other draft is a whole token (2–64) — sub-word drafts
+  // no longer exist since the 2026-10 atomic-identifier rule.
   const min = draft.path ? PATH_MIN_LENGTH : MIN_LENGTH;
-  const max = draft.path
-    ? PATH_MAX_LENGTH
-    : draft.isSubword
-      ? MAX_SUBWORD_LENGTH
-      : MAX_WHOLE_LENGTH;
+  const max = draft.path ? PATH_MAX_LENGTH : MAX_WHOLE_LENGTH;
   if (key.length < min) return { ok: false, reason: "tooShort" };
   if (key.length > max) return { ok: false, reason: "tooLong" };
   // Secret check sits between length and entropy so the precedence

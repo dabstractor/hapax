@@ -63,6 +63,19 @@ matching word (or the 1st character after the trigger char, default `#`).
     CLAIMED for the prompt's duration once first shown — blank when
     empty, so the input area never jumps mid-prompt (07).
 
+## Goals — capitalized-series completion
+
+11. Consecutive capitalized words are recognized as proper-noun
+   series: every run member becomes completable vocabulary, and the
+   words chain — completing or typing a member offers the next member
+   as the top suggestion with zero additional typed characters.
+12. Casing evidence admits, never ranks: mid-sentence capitals ease
+   admission (runs fully, singles under a relaxed band); result
+   ordering stays content-derived and unchanged.
+13. Completion casing respects the user's typing: a typed capital
+   first letter is never uncased, and displayed forms follow
+   conversation frequency rather than recency.
+
 ## Non-goals (explicit)
 
 - No ingestion of tool-call results, file reads, thinking tokens, or any

@@ -7,14 +7,12 @@
  * UPSERT SEMANTICS (h2.36, verbatim contract):
  *
  *   Absent  → create { key, display, sessionCount: 1, firstSeenOrdinal,
- *             lastSeenOrdinal, userTyped, properName, rankGroup, isSubword }.
+ *             lastSeenOrdinal, userTyped, properName, rankGroup }.
  *   Present → mutate in place: sessionCount++, lastSeenOrdinal = ordinal,
  *             display refreshed (most recent wins), userTyped / properName
  *             OR-in (sticky once true, never unset), rankGroup =
  *             min(existing, new) — a word first seen mid-frequency then
- *             seen rare keeps the better (lower) group. isSubword is
- *             intentionally NOT merged: a key's identity as subword is
- *             fixed by its first admission.
+ *             seen rare keeps the better (lower) group.
  *
  * ORDINAL: the pipeline assigns message ordinals (P1.M3.T2) — it calls
  * nextOrdinal() ONCE per message BEFORE processing that message's
@@ -77,8 +75,9 @@ import type {
   Successor,
 } from "./types.js";
 
-/** Hard cap on stored word candidates — whole tokens AND sub-words count
- *  toward the same cap. PRD §06 h2.37; baked, not config (PRD §08 h2.47). */
+/** Hard cap on stored word candidates (every candidate is a whole token
+ *  since the 2026-10 atomic-identifier rule). PRD §06 h2.37; baked, not
+ *  config (PRD §08 h2.47). */
 export const STORE_CAP = 20_000;
 /** Eviction batch size: the snapshot + sort that selects victims is
  *  amortized over drops of this many entries (PRD §06 h2.37: "Evict in
@@ -274,7 +273,6 @@ export class CandidateStore {
         userTyped: sighting.fromUser,
         properName: sighting.properName,
         rankGroup: sighting.rankGroup,
-        isSubword: sighting.isSubword,
       });
       // New key — the prefix index (h2.35) picks it up at the next
       // consolidation. Deliberately NOT sorted here: the key is parked in
@@ -296,7 +294,6 @@ export class CandidateStore {
     // A word first seen mid-frequency then seen rare keeps the better
     // (lower) group.
     existing.rankGroup = Math.min(existing.rankGroup, sighting.rankGroup) as RankGroup;
-    // isSubword intentionally NOT merged — fixed at creation.
     this.evictIfOverCap(); // unconditional but guarded: free below the cap
   }
 

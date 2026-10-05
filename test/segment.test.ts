@@ -1,9 +1,10 @@
 /**
  * PRD §09 segment suite — base tokenization (PRD §04 rules 1–4, P1.M2.T1.S1)
- * and camelCase/snake_case subword expansion (PRD §04 h3.4/h3.5, P1.M2.T1.S2):
- * identifier/word extraction, length bounds, hexish capture + dedupe,
- * CJK/non-ASCII skipping, punctuation termination, document order; subword
- * splitting, hexish opacity, CandidateDraft normalization.
+ * and candidate expansion (PRD §04 h3.4/h3.5): identifier/word extraction,
+ * length bounds, hexish capture + dedupe, CJK/non-ASCII skipping,
+ * punctuation termination, document order; atomic identifiers (2026-10
+ * owner rule — no sub-word splitting), hexish opacity, CandidateDraft
+ * normalization.
  *
  * Regex behaviors (41+ runs, 64-cap, dedupe shapes) verified empirically
  * against the exact PRD §04 regexes before the assertions were written.
@@ -352,88 +353,68 @@ describe("tokenize — span offsets (P1.M1.T3.S1)", () => {
   });
 });
 
-describe("expandCandidates — camelCase/snake_case subwords (PRD §04 h3.4/h3.5)", () => {
+describe("expandCandidates — atomic identifiers (2026-10 owner rule, PRD §04 h3.4/h3.5)", () => {
   const expand = (raw: string): CandidateDraft[] =>
     expandCandidates({ raw, hexish: false, start: 0, end: raw.length, sentenceStart: false });
 
-  it("fixRoundingError → whole + Rounding + Error (fix dropped, len<4)", () => {
+  it("camelCase → exactly one whole draft (sub-words are gone)", () => {
     expect(expand("fixRoundingError")).toEqual([
       {
         key: "fixroundingerror",
         display: "fixRoundingError",
         properName: false,
-        isSubword: false,
-      },
-      {
-        key: "rounding",
-        display: "Rounding",
-        properName: true,
-        isSubword: true,
-        parentKey: "fixroundingerror",
-      },
-      {
-        key: "error",
-        display: "Error",
-        properName: true,
-        isSubword: true,
-        parentKey: "fixroundingerror",
       },
     ]);
   });
 
-  it("HTTPServer → whole + HTTP + Server (acronym boundary before S only)", () => {
+  it("acronym camelCase → exactly one whole draft", () => {
     expect(expand("HTTPServer")).toEqual([
       {
         key: "httpserver",
         display: "HTTPServer",
         properName: true,
-        isSubword: false,
-      },
-      {
-        key: "http",
-        display: "HTTP",
-        properName: true,
-        isSubword: true,
-        parentKey: "httpserver",
-      },
-      {
-        key: "server",
-        display: "Server",
-        properName: true,
-        isSubword: true,
-        parentKey: "httpserver",
       },
     ]);
   });
 
-  it("session_token_valid → whole (underscores kept) + session + token + valid", () => {
+  it("snake_case → exactly one whole draft (underscores kept, parts never emitted)", () => {
     expect(expand("session_token_valid")).toEqual([
       {
         key: "session_token_valid",
         display: "session_token_valid",
         properName: false,
-        isSubword: false,
       },
+    ]);
+  });
+
+  it("searchReplacementDownloads → whole only — 'Replacement' can never surface", () => {
+    // The 2026-10 trigger case: sub-word emission manufactured the
+    // dictionary-attested "Replacement" from inside this identifier.
+    expect(expand("searchReplacementDownloads")).toEqual([
       {
-        key: "session",
-        display: "session",
+        key: "searchreplacementdownloads",
+        display: "searchReplacementDownloads",
         properName: false,
-        isSubword: true,
-        parentKey: "session_token_valid",
       },
+    ]);
+  });
+
+  it("digit boundary: utf8Reader → one whole draft", () => {
+    expect(expand("utf8Reader")).toEqual([
       {
-        key: "token",
-        display: "token",
+        key: "utf8reader",
+        display: "utf8Reader",
         properName: false,
-        isSubword: true,
-        parentKey: "session_token_valid",
       },
+    ]);
+  });
+
+  it("'__init__' → one whole draft with underscores", () => {
+    expect(expand("__init__")).toEqual([
       {
-        key: "valid",
-        display: "valid",
+        key: "__init__",
+        display: "__init__",
         properName: false,
-        isSubword: true,
-        parentKey: "session_token_valid",
       },
     ]);
   });
@@ -444,14 +425,13 @@ describe("expandCandidates — camelCase/snake_case subwords (PRD §04 h3.4/h3.5
         key: "tokenizer",
         display: "tokenizer",
         properName: false,
-        isSubword: false,
       },
     ]);
   });
 
   it("short whole word 'ok' survives (length gates are the shape gate's job)", () => {
     expect(expand("ok")).toEqual([
-      { key: "ok", display: "ok", properName: false, isSubword: false },
+      { key: "ok", display: "ok", properName: false  },
     ]);
   });
 
@@ -463,80 +443,31 @@ describe("expandCandidates — camelCase/snake_case subwords (PRD §04 h3.4/h3.5
         key: "f3a9c2e",
         display: "f3a9c2e",
         properName: false,
-        isSubword: false,
       },
     ]);
   });
 
   it("acronym with no trailing lowercase stays whole (HTTPS → 1 draft)", () => {
     expect(expand("HTTPS")).toEqual([
-      { key: "https", display: "HTTPS", properName: true, isSubword: false },
+      { key: "https", display: "HTTPS", properName: true  },
     ]);
   });
 
-  it("digit boundary: utf8Reader → whole + utf8 (len 4 kept) + Reader", () => {
-    expect(expand("utf8Reader")).toEqual([
-      {
-        key: "utf8reader",
-        display: "utf8Reader",
-        properName: false,
-        isSubword: false,
-      },
-      {
-        key: "utf8",
-        display: "utf8",
-        properName: false,
-        isSubword: true,
-        parentKey: "utf8reader",
-      },
-      {
-        key: "reader",
-        display: "Reader",
-        properName: true,
-        isSubword: true,
-        parentKey: "utf8reader",
-      },
-    ]);
-  });
-
-  it("'__init__' → whole with underscores + init (len 4 kept)", () => {
-    expect(expand("__init__")).toEqual([
-      {
-        key: "__init__",
-        display: "__init__",
-        properName: false,
-        isSubword: false,
-      },
-      {
-        key: "init",
-        display: "init",
-        properName: false,
-        isSubword: true,
-        parentKey: "__init__",
-      },
-    ]);
-  });
-
-  it("normalization invariants: lowercase keys, parentKey iff isSubword, as-seen display", () => {
-    const drafts = [
-      ...expand("fixRoundingError"),
-      ...expand("HTTPServer"),
-      ...expand("session_token_valid"),
-      ...expand("utf8Reader"),
-      ...expand("__init__"),
-      ...expand("HTTPS"),
+  it("normalization invariants: one draft per token, lowercase keys, as-seen display", () => {
+    const raws = [
+      "fixRoundingError",
+      "HTTPServer",
+      "session_token_valid",
+      "utf8Reader",
+      "__init__",
+      "HTTPS",
     ];
-    expect(drafts.length).toBeGreaterThan(0);
-    for (const d of drafts) {
+    // Atomicity: exactly one draft per token — the count IS the pin.
+    expect(raws.flatMap(expand)).toHaveLength(raws.length);
+    for (const d of raws.flatMap(expand)) {
       expect(d.key).toBe(d.key.toLowerCase());
       expect(d.display.length).toBeGreaterThan(0);
       expect(d.properName).toBe(d.display[0] >= "A" && d.display[0] <= "Z");
-      if (d.isSubword) {
-        expect(typeof d.parentKey).toBe("string");
-        expect(d.display).not.toContain("_");
-      } else {
-        expect(d.parentKey).toBeUndefined();
-      }
     }
   });
 });
@@ -580,13 +511,13 @@ describe("sentence-start flag + properName suppression (2026-09 rule)", () => {
     expect(afterDraft.properName).toBe(false); // orthographic capital
     expect(midDraft.properName).toBe(true); // genuine capitalization signal
 
-    // First sub-word of a sentence-initial identifier too.
+    // A sentence-initial identifier is one atomic draft; its own
+    // orthographic capital is suppressed (sub-words no longer exist).
     const [init] = tokenize(". DownloadManager");
-    const subs = expandCandidates(init).filter((d) => d.isSubword);
-    expect(subs[0]!.key).toBe("download");
-    expect(subs[0]!.properName).toBe(false);
-    expect(subs[1]!.key).toBe("manager");
-    expect(subs[1]!.properName).toBe(true); // mid-token camel capital keeps the hint
+    const initDrafts = expandCandidates(init);
+    expect(initDrafts).toHaveLength(1);
+    expect(initDrafts[0]!.key).toBe("downloadmanager");
+    expect(initDrafts[0]!.properName).toBe(false);
   });
 });
 
@@ -794,10 +725,10 @@ describe("technical literals (2026-10 rule 4c)", () => {
     expect(
       expandCandidates(lit("2560x1440@2")!).map((d) => d.key),
     ).toEqual(["2560x1440@2"]);
-    expect(tokenize("utf8Reader")).toHaveLength(1); // equal-span BASE wins → subwords intact
+    expect(tokenize("utf8Reader")).toHaveLength(1); // equal-span BASE wins
     expect(
       expandCandidates(tokenize("utf8Reader")[0]!).map((d) => d.key),
-    ).toEqual(["utf8reader", "utf8", "reader"]);
+    ).toEqual(["utf8reader"]); // atomic (2026-10): no sub-words
     expect(
       expandCandidates(tokenize("2ndReader")[0]!).map((d) => d.key),
     ).toEqual(["2ndreader"]); // digit-initial: literal, whole-only (net-new)
@@ -836,7 +767,6 @@ describe("path tokens (2026-10 rule 4d)", () => {
     const d = draftOf(p);
     expect(d.key).toBe("src/core/query.ts");
     expect(d.path).toBe(true);
-    expect(d.isSubword).toBe(false);
     // Absorption: components never surface alone.
     expect(raws(text)).toEqual(["use", "src/core/query.ts", "here"]);
   });

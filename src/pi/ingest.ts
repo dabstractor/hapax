@@ -20,7 +20,6 @@ import type {
   Dictionary,
   GateResult,
   IngestStats,
-  RankGroup,
   RawToken,
   Sighting,
 } from "../core/types.js";
@@ -500,8 +499,9 @@ export class IngestPipeline {
    *  admitted WHOLE tokens, in document order. Spans are the RawToken's own
    *  UTF-16 offsets into the MASKED segment (tokenize runs on the masked
    *  text and maskSecrets is length-preserving, so they index the raw text
-   *  too). Sub-words are stored as candidates but never enter runs
-   *  (PRD 002 §06 h3.6). Gate/admission accounting and #stats updates are
+   *  too). Every candidate is a whole token (2026-10 atomic-identifier
+   *  rule), so every admitted candidate enters runs at its own span.
+   *  Gate/admission accounting and #stats updates are
    *  exactly the message-loop behavior this was extracted from
    *  (P1.M3.T2.S2). Masking (BUG-003 layer 1) runs FIRST so structured
    *  secret windows never reach tokenize — this method is the single
@@ -552,68 +552,33 @@ export class IngestPipeline {
 
   /** Compute one token's admission plan (expand → gate → admit) WITHOUT
    *  stats, upserts, or run entries — those are per-occurrence effects
-   *  applied by #replayAdmitMemo. Mirrors the original draft loop exactly,
-   *  including the subword parent clamp input (wholeGroup = the admitted
-   *  whole token's group, computed before sub-drafts are admitted) and
-   *  the post-lookup isDisabled re-check (NEW-001): when the gate fires,
-   *  the draft's lookup result is discarded, `complete` stays false, and
-   *  the caller replays the computed prefix once without caching.
+   *  applied by #replayAdmitMemo. Includes the post-lookup isDisabled
+   *  re-check (NEW-001): when the gate fires, the draft's lookup result
+   *  is discarded, `complete` stays false, and the caller replays the
+   *  computed prefix once without caching.
    *
-   *  Parent-secret propagation (BUG-003 layer 2, PRD h3.5 minimum bar):
-   *  when the WHOLE-token draft is gate-rejected with reason 'secret',
-   *  every later sub-word draft of that token inherits a synthetic
-   *  {ok:false, reason:'secret'} gate instead of being gated — let alone
-   *  admitted — independently. CamelCase/snake_case fragments of a
-   *  pasted secret (cyexamplekey, femik7, …) are short and letter-heavy
-   *  and defeat isSecretShaped's token-level rules on their own gate, so
-   *  without the poison they surface as completions (§01 "never
-   *  embarrass"; §09 integration item 5; masking is layer 1 and never
-   *  reaches tokenize). Only 'secret' propagates, and only whole →
-   *  sub-word: the other reject reasons are per-draft noise shapes, and
-   *  a sub-word secret reject already dies at its own gate (no
-   *  secret→secret chain). The plan stays a pure function of the token's
-   *  drafts — the flag lives only inside this call, ordered reliance is
-   *  expandCandidates' whole-token-first contract — so memoization is
-   *  untouched; #replayAdmitMemo counts the synthetic gates per
-   *  occurrence through its existing !gate.ok branch (no new stats
-   *  field), and poisoned drafts skip admit() so the disable seams and
-   *  wholeGroup clamp semantics are unaffected. */
+   *  Every draft is a whole token (2026-10 atomic-identifier rule:
+   *  expandCandidates emits exactly one draft), which structurally
+   *  retires two former seams — the subword parent clamp (wholeGroup)
+   *  and BUG-003 layer 2's parent-secret poisoning (a secret-rejected
+   *  whole token now has no sub-word children to poison; layer-1
+   *  masking plus the token-level isSecretShaped check remain the
+   *  secret defense). */
   #computeAdmitMemo(token: RawToken): AdmitMemoEntry {
-    const drafts = expandCandidates(token); // whole token first
+    const drafts = expandCandidates(token); // exactly one whole-token draft
     const entry: AdmitMemoEntry = { drafts, gates: [], admits: [], complete: true };
-    // Group of the whole token WHEN ADMITTED — the only state shared
-    // by a token's drafts (subword clamp input, PRD §04).
-    let wholeGroup: RankGroup | undefined;
-    // BUG-003 layer 2 (PRD h3.5 minimum bar): set when the whole-token
-    // draft is secret-rejected; poisons every later sub-word draft.
-    let parentSecret = false;
     for (const draft of drafts) {
-      if (parentSecret && draft.isSubword) {
-        // Fragment of a secret-rejected whole token: inherits the
-        // parent's verdict as a synthetic secret gate — never gated
-        // independently, never admitted, counted per occurrence by
-        // #replayAdmitMemo's existing !gate.ok branch. passesShape is
-        // deliberately not recomputed (cheaper, and semantically the
-        // fragment "inherits" rather than re-earns the verdict).
-        entry.gates.push({ ok: false, reason: "secret" });
-        entry.admits.push(undefined);
-        continue;
-      }
       const gate = passesShape(draft);
       entry.gates.push(gate);
       if (!gate.ok) {
         // reason is present iff !ok (GateResult contract); gate-rejected
         // drafts never reach admit (and can never trigger the dict load).
         entry.admits.push(undefined);
-        // Only a WHOLE-token 'secret' reject poisons sub-words (BUG-003
-        // layer 2); non-secret reasons stay per-draft (§04 semantics).
-        if (!draft.isSubword && gate.reason === "secret") parentSecret = true;
         continue;
       }
       const result = admit(
         draft,
         this.#dictionary,
-        draft.isSubword ? wholeGroup : undefined,
         this.#rejectCommonness === undefined
           ? undefined
           : { rejectCommonness: this.#rejectCommonness },
@@ -627,7 +592,6 @@ export class IngestPipeline {
         entry.complete = false;
         break;
       }
-      if (!draft.isSubword && result !== "reject") wholeGroup ??= result;
       entry.admits.push(result);
     }
     return entry;
@@ -660,9 +624,7 @@ export class IngestPipeline {
       if (result === "reject") continue; // admission reject: simply
       // not stored (PRD §04 h2.24); no IngestStats field by design.
       this.#stats.admitted++;
-      if (!draft.isSubword) {
-        entries.push({ key: draft.key, start: token.start, end: token.end });
-      }
+      entries.push({ key: draft.key, start: token.start, end: token.end });
       const sighting: Sighting = {
         key: draft.key,
         display: draft.display,
@@ -670,10 +632,6 @@ export class IngestPipeline {
         fromUser,
         properName: draft.properName,
         rankGroup: result,
-        isSubword: draft.isSubword,
-        ...(draft.parentKey !== undefined
-          ? { parentKey: draft.parentKey }
-          : {}),
       };
       this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)
     }

@@ -3,7 +3,7 @@
  * (absent → create, present → merge), the ordinal counter (monotonic from
  * 1; upsert never advances it — the pipeline owns assignment), casing
  * merging into one entry with most-recent display, sticky OR-in flags,
- * rankGroup min-on-merge, isSubword fixed at creation, defensive entries()
+ * rankGroup min-on-merge, defensive entries()
  * snapshots, and the group histogram. Also the prefix index suite
  * (P1.M2.T4.S2): lazy dirty-flag rebuild, binary-searched prefix ranges
  * verified against brute force (20k keys + interleaved rounds), and the
@@ -38,7 +38,6 @@ const sighting = (over: Partial<Sighting> = {}): Sighting => ({
   fromUser: false,
   properName: false,
   rankGroup: 2,
-  isSubword: false,
   ...over,
 });
 
@@ -81,7 +80,6 @@ describe("upsert — absent → create (PRD §06 h2.36)", () => {
         fromUser: true,
         properName: false,
         rankGroup: 0,
-        isSubword: false,
       }),
     );
     expect(s.size).toBe(1);
@@ -94,7 +92,6 @@ describe("upsert — absent → create (PRD §06 h2.36)", () => {
       userTyped: true,
       properName: false,
       rankGroup: 0,
-      isSubword: false,
     });
   });
 
@@ -164,13 +161,6 @@ describe("upsert — present → merge (PRD §06 h2.36)", () => {
     expect(s.get("hapax")!.rankGroup).toBe(1);
     s.upsert(sighting({ rankGroup: 2 }));
     expect(s.get("hapax")!.rankGroup).toBe(1);
-  });
-
-  it("isSubword is fixed at creation — a later true sighting does not merge", () => {
-    const s = new CandidateStore();
-    s.upsert(sighting({ isSubword: false }));
-    s.upsert(sighting({ isSubword: true, parentKey: "hapaxologism" }));
-    expect(s.get("hapax")!.isSubword).toBe(false);
   });
 
   it("merge never resets counts: three sightings → sessionCount 3", () => {
@@ -552,7 +542,7 @@ describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
     expect(s.sortedKeysSnapshot()).not.toContain("ev00000");
   });
 
-  it("sub-words count toward the cap and evict identically", () => {
+  it("candidates count toward the cap and evict identically (2026-10: every candidate is a whole token)", () => {
     const s = new CandidateStore();
     const ord = s.nextOrdinal();
     for (let i = 0; i <= STORE_CAP; i++) {
@@ -561,17 +551,16 @@ describe("eviction (PRD §06 h2.37 / §05 h2.33)", () => {
           key: `w${padded(i)}`,
           ordinal: ord,
           rankGroup: 0,
-          isSubword: i % 2 === 0,
         }),
       );
     }
     expect(s.size).toBe(STORE_CAP - EVICT_BATCH + 1);
-    // w00000..w00255 went — subwords (even) and whole tokens (odd) alike
-    // on both sides of the ledger: no special casing in either direction.
-    expect(s.get("w00000")).toBeUndefined(); // a subword victim
-    expect(s.get("w00002")).toBeUndefined(); // a subword victim
-    expect(s.get("w00003")).toBeUndefined(); // a whole-token victim
-    expect(s.get("w00256")).toBeDefined(); // subword survivor
-    expect(s.get("w00257")).toBeDefined(); // whole-token survivor
+    // w00000..w00255 went — victims on both sides of the ledger:
+    // no special casing in either direction.
+    expect(s.get("w00000")).toBeUndefined();
+    expect(s.get("w00002")).toBeUndefined();
+    expect(s.get("w00003")).toBeUndefined();
+    expect(s.get("w00256")).toBeDefined();
+    expect(s.get("w00257")).toBeDefined();
   });
 });

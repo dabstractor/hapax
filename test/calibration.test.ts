@@ -257,7 +257,7 @@ describe("BUG-001 e2e — ordinary prose never opens a common-word menu", () => 
     // absent class the tool actually exists for).
     store.upsert({
       key: "lwlock", display: "lwlock", ordinal: store.currentOrdinal() + 1,
-      fromUser: true, properName: false, rankGroup: 0, isSubword: false,
+      fromUser: true, properName: false, rankGroup: 0 ,
     });
     expect(rankMatches(store, "lwl").map((m) => m.display)).toEqual(["lwlock"]);
     const current = mockCurrent(SENTINEL);

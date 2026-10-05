@@ -14,26 +14,28 @@
  * measured p99 0.4 ms over ~900 keys at cap), one key slice, one get
  * per candidate, one sort of the matches.
  *
- * MENU ORDER (2026-10 owner rule, spec §04 h2.29 — supersedes the
- * retired 2026-09 content-derived order, kept as history below):
+ * MENU ORDER (2026-10 owner rule, spec §04 h2.29 — progressive
+ * completion; supersedes the earlier 2026-10 frequency-first
+ * amendment, which superseded the 2026-09 content-derived order —
+ * both kept as history in the spec):
  * compareRankedMatches is a 4-KEY TOTAL ORDER — tier desc
  * (strictness class: exact prefix (3) > contiguous tail (2) > scattered
- * (1) > anchorless ambient run (0)) →
- * sessionCount desc WITHIN a tier → shorter key → byte-lex. Among equally
- * strict matches the more conversation-relevant word (higher raw
- * sessionCount) belongs leftmost. The composite salience score still
- * NEVER sorts: it decides MEMBERSHIP (the fuzzThreshold admission gate
- * here, the admission bands in score.ts) and eviction; only its raw
- * sessionCount component orders, and only among same-tier neighbors — a
- * count difference can never cross a tier boundary. Two candidates swap
- * positions ONLY when one's sessionCount strictly passes the other's
- * within the same tier (owner-accepted churn; tiers and keys 3–4 stay
- * content-derived, so narrowing keeps its shape). The zero-fragment
- * listing ("#" alone) has no tiers — order is sessionCount desc →
- * shorter → byte-lex. History: 2026-09 ordered purely by content
- * (shorter key → byte-lex, counts invisible) so menus were keystroke-
- * stable but conversation-blind; h2.29 trades that for relevance within
- * the strictness tiers.
+ * (1) > anchorless ambient run (0)) → SHORTER KEY → sessionCount desc
+ * → byte-lex. Length outranks frequency within a tier (owner,
+ * 2026-10): a proper-prefix sibling always completes before its
+ * extension — the shorter accept loses zero information because the
+ * next Tab reaches the longer one, so ladders (config →
+ * configuration → configurations) walk shortest-first, and the
+ * exact-equal exclusion (rankMatches, below) keeps a fully-typed
+ * word from stalling its own ladder. Counts decide only equal-length
+ * rivals; salience NEVER sorts (membership and eviction only). A
+ * length-first-with-count-crossing hybrid was measured and rejected:
+ * pairwise prefix reordering over a count order is non-transitive
+ * (re < repo by prefix, repo < router by count 9 > 5, router < re by
+ * count 5 > 1 — a cycle), so no comparator expresses it; length
+ * dominates globally. The zero-fragment listing ("#" alone) has no
+ * tiers and nothing typed to extend — it keeps its own relevance
+ * board (sessionCount desc → shorter → byte-lex, compareListing).
  * TIER-0 AMBIENT FALLBACK (spec §04 h2.28, 2026-10): when the anchored
  * scan admits ZERO records and the fragment is ≥ 3 chars, ONE
  * anchorless full-store pass (contiguous run anywhere,
@@ -209,8 +211,10 @@ const clampScore = (n: number): number => (n < 0 ? 0 : n > 100 ? 100 : n);
  *    char (case-insensitive) — 'esk' NEVER matches 'zendesk'. This is
  *    load-bearing for performance: only the store's first-char bucket is
  *    fuzzy-scanned per query (T2.S2), keeping the < 1 ms keystroke
- *    budget. Mid-identifier entry stays available through sub-word
- *    candidates (§04), not anchor-less fuzzy.
+ *    budget. Mid-identifier entry from non-initial fragments survives
+ *    only through this anchor-less tier (sub-word candidates were
+ *    removed by the 2026-10 atomic-identifier rule), never as a stored
+ *    candidate.
  *  - Tier 3 (score 100): exact prefix — 'roun' → 'rounding'; also a
  *    1-char fragment whose anchor char matches (the provider's 1-char
  *    auto-open contract).
@@ -368,14 +372,33 @@ export function compareRankedMatches(
   b: RankedSortRecord,
 ): number {
   if (a.tier !== b.tier) return b.tier - a.tier; // key 1: strictness desc
+  if (a.m.key.length !== b.m.key.length) {
+    return a.m.key.length - b.m.key.length; // key 2: shorter key (2026-10 progressive-completion rule)
+  }
+  // Key 3: raw session count desc — EQUAL-LENGTH rivals only. Counts
+  // no longer outrank length (the earlier 2026-10 frequency-first
+  // amendment is superseded): a proper-prefix sibling always completes
+  // before its extension, so Tab walks ladders shortest-first
+  // (config → configuration → configurations).
   const ca = a.m.sessionCount;
   const cb = b.m.sessionCount;
-  if (ca !== cb) return cb - ca; // key 2: raw session count desc (within tier)
-  if (a.m.key.length !== b.m.key.length) {
-    return a.m.key.length - b.m.key.length; // key 3: shorter key
-  }
+  if (ca !== cb) return cb - ca;
   // Byte order (keys are ASCII, so UTF-16 code-unit comparison equals
   // byte order; locale-independent). The menu never shows a visible tie.
+  return a.m.key < b.m.key ? -1 : a.m.key > b.m.key ? 1 : 0;
+}
+
+/** Zero-fragment listing order (spec §04 h2.29): the "#"-alone board
+ *  has no tiers and no fragment to extend — frequency leads (count
+ *  desc → shorter key → byte-lex). Deliberately NOT the match-path
+ *  order: length-first on a full-vocabulary listing would surface the
+ *  shortest junk words; relevance-first is the listing's job. Tier is
+ *  ignored (listing records are uniform tier 0). */
+function compareListing(a: RankedSortRecord, b: RankedSortRecord): number {
+  const ca = a.m.sessionCount;
+  const cb = b.m.sessionCount;
+  if (ca !== cb) return cb - ca;
+  if (a.m.key.length !== b.m.key.length) return a.m.key.length - b.m.key.length;
   return a.m.key < b.m.key ? -1 : a.m.key > b.m.key ? 1 : 0;
 }
 
@@ -484,6 +507,17 @@ export function rankMatches(
     // empty the '#'-alone listing). The comparison is STRICT: a score
     // exactly at the threshold survives.
     if (lower !== "") {
+      // EXACT-EQUAL EXCLUSION (2026-10 owner rule, spec §04 h2.29): a
+      // candidate whose key EQUALS the typed fragment is never offered.
+      // Completing the fully-typed word saves zero characters (pi's
+      // applyCompletion adds no trailing space, so the accept is a
+      // byte-identical no-op), and under length-first order it would
+      // hold the TOP slot — stalling the progressive ladder exactly
+      // where it should advance (anchor-match fully typed → the next
+      // Tab must reach anchor-matches, not re-offer anchor-match).
+      // Excluding at membership keeps every tier and the tier-0 pass
+      // consistent; extensions of the typed word remain offered.
+      if (k === lower) continue;
       const m = matchFragment(lower, k);
       if (m === null || m.score < threshold) continue;
       tier = m.tier;
@@ -532,6 +566,7 @@ export function rankMatches(
     const allKeys = store.sortedKeysSnapshot().slice(fStart, fEnd);
     for (const k of allKeys) {
       if (anchored.has(k)) continue; // anchored record wins (dedup)
+      if (k === lower) continue; // exact-equal exclusion (§04 h2.29) — parity with the anchored pass
       const runStart = k.indexOf(lower);
       if (runStart === -1) continue;
       const score = clampScore(
@@ -556,12 +591,15 @@ export function rankMatches(
 
   // Sort of the (typically small) set: O(r log r), well under the <1 ms
   // keystroke gate at realistic sizes. §04 h2.29 order (module doc):
-  // tier desc → sessionCount desc within tier → shorter → byte-lex; the
-  // salience value is carried per item for diagnostics/eviction parity
-  // but NEVER sorts the menu. If the P1.M4.T1.S2 bench pass ever shows
+  // match path — tier desc → shorter key → sessionCount → byte-lex
+  // (progressive completion); zero-fragment listing — its own
+  // frequency-first board (count desc → shorter → byte-lex,
+  // compareListing). The salience value is carried per item for
+  // diagnostics/eviction parity but NEVER sorts the menu. If the
+  // P1.M4.T1.S2 bench pass ever shows
   // huge hot ranges, a partial top-N selection is the documented
   // fallback — keep it simple until measured.
-  recs.sort(compareRankedMatches);
+  recs.sort(lower === "" ? compareListing : compareRankedMatches);
   // Populate/omit contract: `m` records built on the MATCH path carry
   // their tier (anchored 1–3, anchorless 0); zero-fragment listing
   // records omit the key entirely — the map copies as-is, so public

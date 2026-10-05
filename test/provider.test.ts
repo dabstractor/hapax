@@ -57,7 +57,6 @@ const sighting = (over: Partial<Sighting> = {}): Sighting => ({
   fromUser: false,
   properName: false,
   rankGroup: 2,
-  isSubword: false,
   ...over,
 });
 
@@ -332,7 +331,6 @@ describe("never-hijack acceptance (PRD §07)", () => {
         key,
         display: key,
         properName: false,
-        isSubword: false,
       });
 
       expect(admit(draft("the"), commonAt(REJECT_COMMON_THRESHOLD))).toBe("reject");
@@ -391,17 +389,19 @@ describe("never-hijack acceptance (PRD §07)", () => {
   });
 
   describe("case (g) — case-insensitive match, display casing inserted", () => {
-    it("typed 'nrel' matches stored NREL — item.value === 'NREL', prefix === 'nrel', no delegation", async () => {
+    it("typed 'nre' matches stored NREL — item.value === 'NREL', prefix 'nre', no delegation", async () => {
       const store = new CandidateStore();
       put(store, "nrel", 2, 3, { display: "NREL", properName: true });
       const current = makeCurrent();
       const { inner, provider } = makeStack(store, current);
 
-      const result = await suggest(provider, ["nrel"], 0, 4);
+      // One char short of the full key: the exact-equal exclusion (§04
+      // h2.29) offers nothing once "nrel" is fully typed.
+      const result = await suggest(provider, ["nre"], 0, 3);
 
       expect(current.getSuggestions).not.toHaveBeenCalled(); // hapax answered
-      expect(inner.__hapaxLive()?.prefix).toBe("nrel"); // live menu, not delegate
-      expect(result?.prefix).toBe("nrel");
+      expect(inner.__hapaxLive()?.prefix).toBe("nre"); // live menu, not delegate
+      expect(result?.prefix).toBe("nre");
       const nrel = result?.items.filter((i) => i.value === "NREL") ?? [];
       expect(nrel).toHaveLength(1); // prefix matched case-insensitively…
       expect(nrel[0].label).toBe("NREL"); // …insertion uses display casing
@@ -410,9 +410,9 @@ describe("never-hijack acceptance (PRD §07)", () => {
 });
 
 describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", () => {
-  /** Fresh ze-fixture: Zendesk ×3 out-COUNTS zephyr ×1 → forced top is
-   *  "Zendesk" (same fixture as provider-live.test.ts; §04 h2.29 count
-   *  order within the tier-3 tie). */
+  /** Fresh ze-fixture: zephyr (6 chars) is SHORTER than Zendesk (7) →
+   *  forced top is "zephyr" (same fixture as provider-live.test.ts;
+   *  §04 h2.29 progressive-completion order: length before count). */
   const zeStore = (): CandidateStore => {
     const s = new CandidateStore();
     put(s, "zendesk", 3, 9, { display: "Zendesk" });
@@ -436,7 +436,7 @@ describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", 
 
     expect(current.getSuggestions).not.toHaveBeenCalled(); // hapax answered
     expect(result?.items).toHaveLength(1);
-    expect(result?.items[0].value).toBe("Zendesk"); // count-desc top (h2.29)
+    expect(result?.items[0].value).toBe("zephyr"); // length-first top (h2.29)
     expect(result?.prefix).toBe("ze");
   });
 
@@ -466,7 +466,7 @@ describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", 
     const store = new CandidateStore();
     put(store, "alpha", 3, 5);
     const chainInner = createHapaxProvider(store, cfg(), current);
-    const menu = await chainInner.getSuggestions(["alpha"], 0, 5, opts());
+    const menu = await chainInner.getSuggestions(["alph"], 0, 4, opts());
     expect(menu?.items.map((i) => i.value)).toContain("alpha");
     for (let r = 0; r < 3; r++) store.recordBigramRuns([["alpha", "beta"]]);
     for (let r = 0; r < 2; r++) store.recordBigramRuns([["alpha", "bravo"]]);
@@ -497,7 +497,7 @@ describe("Tab-only-completes — forced path (PRD §09 bullet; PRD §07 h3.8)", 
       force: false,
     });
 
-    expect(result?.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]); // count-desc (h2.29)
+    expect(result?.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]); // length-first (h2.29)
   });
 });
 // ── stock-context delegation (BUG-001) ──────────────────────────────────────

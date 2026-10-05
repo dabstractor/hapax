@@ -23,8 +23,9 @@
  * stops being noise evidence as words lengthen: typing savings grow,
  * noise mass collapses), then admit-all from 20 chars (sentinel 256 so
  * even q=255 admits). Attested admissions are ALWAYS group 1 — the old
- * mid-band demotion row is gone; group 2 remains reachable only via the
- * subword clamp (and the retired-in-place relief).
+ * mid-band demotion row is gone; group 2 is unreachable via the table
+ * (and via relief; the 2026-10 atomic-identifier rule retired the
+ * subword clamp, its last reachable path).
  *
  * + proper-noun relief: RETIRED-IN-PLACE (ceiling == reject band —
  *   can no longer admit table-rejected words; see
@@ -39,19 +40,11 @@
  * reject 50 → 12 after a live audit showed the mid band admitting 1,183
  * everyday words against 4,889 absent identifiers).
  *
- * Smaller groups rank better (rare words are the most valuable completions),
- * so the subword clamp RAISES the numeric group: a sub-word never ranks above
- * its parent whole token's group + 1 — final group is
- * max(tableGroup, parentGroup + 1), saturated at 2 (RankGroup has no 3).
- * 'reject' is immune to the clamp: a table-rejected subword
- * (q ≥ REJECT_COMMON_THRESHOLD) stays rejected; the clamp only ever demotes
- * admitted groups.
+ * 'reject' is final for every draft — there is no clamp since the 2026-10
+ * atomic-identifier owner rule removed sub-word candidates entirely.
  *
- * Pipeline order (ingest, P1.M3.T2): whole tokens are admitted BEFORE their
- * sub-words so the parent's group is known — pass it as `parentGroup` when
- * scoring a draft with isSubword. Whole tokens omit the argument; a subword
- * arriving without one takes the raw table result (defensive only — the
- * ingest pipeline always supplies it for subwords).
+ * Pipeline order (ingest, P1.M3.T2): every draft is a whole token; the
+ * former parentGroup plumbing is deleted.
  *
  * The thresholds are baked constants (PRD §08): the ONLY tuning surface,
  * tuned in-codebase per §09 — never read from config or env, never
@@ -139,7 +132,7 @@ export const MID_FREQ_THRESHOLD = 20 as const;
  *  (2026-09 retighten)**: set equal to REJECT_COMMON_THRESHOLD (12), so
  *  the strict `q < ceiling` test can never reach past the reject band
  *  and the relief can no longer admit table-rejected words. The
- *  mechanism (properName-flagged, non-subword, dictionary-attested
+ *  mechanism (properName-flagged, dictionary-attested
  *  candidates admitting at group 2 instead of rejecting) stays in code
  *  and spec per the owner's "don't take them out just yet" — restoring
  *  it is a one-constant change. The design answer for wanting named
@@ -249,18 +242,14 @@ function inflectionStems(word: string): string[] {
  * 2026-10 R_eff gradient).
  *
  * Looks up the draft's lowercase key and applies the banding table against
- * the length-conditioned threshold R_eff(rejectAt, len) (see rEff), then —
- * for sub-words only — clamps the result so it never ranks above the
- * parent whole token's group + 1 (saturated at 2). 'reject' passes through
- * unclamped. Attested admissions are ALWAYS group 1 (the old mid-band row
- * is gone); group 2 remains reachable only via the clamp.
+ * the length-conditioned threshold R_eff(rejectAt, len) (see rEff).
+ * Attested admissions are ALWAYS group 1 (the old mid-band row is gone);
+ * group 2 is unreachable (the subword clamp is retired).
  *
  * Proper-noun relief (BUG-002, bugfix/001_0f4b641cf9ce): BEFORE the reject
  * early-return, a candidate that tabled as 'reject' is admitted at group 2
  * when ALL of the following hold —
  *   - `result === "reject"` (the table rejected it),
- *   - `!draft.isSubword` (whole tokens only; sub-words keep the clamp and
- *     never relieve — a table-rejected sub-word stays rejected),
  *   - `draft.properName` (capitalized occurrences only: set by
  *     expandCandidates from the display's first char at extraction time —
  *     lowercase prose like "energy" still rejects, so menu noise stays
@@ -285,8 +274,6 @@ function inflectionStems(word: string): string[] {
  *
  * @param draft the shape-gated candidate (key must be lowercase)
  * @param dictionary quantized commonness dictionary (0–255 rank or null)
- * @param parentGroup the already-admitted parent whole token's group;
- *   required for subwords by the ingest pipeline, omitted for whole tokens
  * @param opts { rejectCommonness } band override (pi config knob);
  *   omitted → the baked constant
  * @returns the admission rank group, or 'reject' when the word is too
@@ -295,7 +282,6 @@ function inflectionStems(word: string): string[] {
 export function admit(
   draft: CandidateDraft,
   dictionary: Dictionary,
-  parentGroup?: RankGroup,
   opts: AdmissionOptions = {},
 ): AdmissionResult {
   const rejectAt = opts.rejectCommonness ?? REJECT_COMMON_THRESHOLD;
@@ -311,12 +297,11 @@ export function admit(
   // Proper-noun relief (BUG-002): capitalized whole tokens below the
   // ceiling admit at group 2 — M2 integration item 7 (National Renewable
   // Energy Laboratory) without re-admitting lowercase prose words. Must
-  // precede the reject early-return (after it this branch is dead code)
-  // and the subword clamp (relief is whole-token-only; 'reject' stays
-  // clamp-immune for every non-relieved draft).
+  // precede the reject early-return (after it this branch is dead code);
+  // every draft is a whole token since the 2026-10 atomic-identifier
+  // rule (the old whole-token-only condition is vacuous).
   if (
     result === "reject" &&
-    !draft.isSubword &&
     draft.properName &&
     q !== null &&
     q < PROPER_NOUN_ADMIT_CEILING
@@ -332,8 +317,8 @@ export function admit(
   // is for proper nouns and identifiers, not verb/adverb/plural
   // morphology: skip the guard when properName is set (casing evidence —
   // "Andrews", "Sanders" — outranks morphology, mirroring the relief's
-  // philosophy). ONE stripping level, no recursion; subwords are guarded
-  // as well ("typedFlag" → subword "typed" is still a conjugation).
+  // philosophy). ONE stripping level, no recursion. (Sub-words used to
+  // share this guard; they no longer exist.)
   //
   // 2026-10 (spec h2.26): BOTH former tiers ride ONE threshold —
   // R_eff(len(WORD)), the same length-conditioned curve the table uses —
@@ -363,11 +348,6 @@ export function admit(
   }
 
   if (result === "reject") return result;
-  if (draft.isSubword && parentGroup !== undefined) {
-    // Smaller group = rarer = better rank, so the clamp RAISES the number:
-    // never rank above parent + 1; saturate at 2 (parent 2 + 1 → 2, not 3).
-    return Math.min(2, Math.max(result, parentGroup + 1)) as RankGroup;
-  }
   return result;
 }
 

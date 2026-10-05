@@ -30,7 +30,6 @@ function see(
     fromUser: false,
     properName: false,
     rankGroup: 0,
-    isSubword: false,
     ...extra,
   };
   store.upsert(sighting);

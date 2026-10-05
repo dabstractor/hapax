@@ -60,9 +60,11 @@ stage that rejects it:
      hyphens (`load-bearing`, `e2e-test`). **Leading/doubled hyphens never
      form tokens**: `--flag` yields bare `flag`; `--load-bearing` yields
      `load-bearing` (dashes dropped). Trailing hyphens split.
-3. **Subword expansion** (`expandCandidates`, same file) — whole token plus
-   camelCase/snake sub-words ≥4 chars; `properName` hint suppressed at
-   structural starts (line start, bullets, after `.!?;:`).
+3. **Expansion** (`expandCandidates`, same file) — each token yields
+   exactly ONE draft: the whole token. Identifiers are ATOMIC (2026-10
+   owner rule): camelCase/snake_case sub-word splitting is REMOVED
+   (mid-identifier entry died with it — first-char-anchored fuzzy
+   matches only).
 4. **Shape gate** (`src/core/shapeGate.ts`, `passesShape`) — whole tokens
    2–64 chars, subwords 2–32; entropy ≥1.5 bits/char (kills ≤3-distinct-char
    keys, so `-v`-class flags can NEVER pass); no ≥4 unigram run; no ≥6
@@ -78,9 +80,13 @@ stage that rejects it:
    retired-in-place. Salience (`score.ts`) feeds eviction only.
 6. **Store** (`src/core/store.ts`) — lowercase keys, display casing = most
    recent sighting, 20k cap with salience eviction, 10k bigram/successor cap.
-7. **Query** (`src/core/query.ts`, `rankMatches`) — lowercase prefix match;
-   shortest-first then byte order; single-`s` plural pruning; top 8
-   (`maxSuggestions`).
+7. **Query** (`src/core/query.ts`, `rankMatches`) — anchored-fuzzy
+   match (first-char anchor; tiers: exact prefix > contiguous tail >
+   scattered; tier-0 anchorless rescue on empty anchored results);
+   order tier → shorter key → sessionCount → byte (progressive
+   completion, 2026-10); a candidate equal to the typed fragment is
+   NEVER offered (exact-equal exclusion); single-`s` plural pruning;
+   top 8 (`maxSuggestions`).
 8. **Match state / provider** (`src/pi/provider.ts`, `extractMatchState`) —
    the OTHER half of any "why doesn't it complete" answer: even a stored
    candidate only fires when the typed fragment matches. Threshold-mode

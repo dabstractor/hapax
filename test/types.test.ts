@@ -10,7 +10,7 @@ describe('core type contracts', () => {
     const candidate: Candidate = {
       key: 'nrel', display: 'NREL', sessionCount: 1,
       lastSeenOrdinal: 0, firstSeenOrdinal: 0, userTyped: false,
-      properName: true, rankGroup: 0, isSubword: false,
+      properName: true, rankGroup: 0 ,
     };
     expect(candidate.rankGroup satisfies RankGroup).toBe(0);
 
@@ -32,8 +32,7 @@ describe('core type contracts', () => {
     expect(dict.lookup('x')).toBeNull();
 
     const s: Sighting = { key: 'nrel', display: 'NREL', ordinal: 1,
-      fromUser: true, properName: true, rankGroup: 0, isSubword: true,
-      parentKey: 'nrelconfig' };
-    expect(s.parentKey).toBe('nrelconfig');
+      fromUser: true, properName: true, rankGroup: 0 };
+    expect(s.rankGroup).toBe(0);
   });
 });

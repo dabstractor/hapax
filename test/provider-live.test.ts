@@ -31,7 +31,6 @@ const sighting = (over: Partial<Sighting> = {}): Sighting => ({
   fromUser: false,
   properName: false,
   rankGroup: 2,
-  isSubword: false,
   ...over,
 });
 
@@ -49,8 +48,9 @@ const put = (
 };
 
 /** Store with ze* + alpha candidates: Zendesk ×3 (recent), zephyr ×1,
- *  alpha ×2 (older). Zendesk ×3 out-COUNTS zephyr ×1 — under §04 h2.29
- *  (tier 3 tie → sessionCount desc) Zendesk sorts FIRST. */
+ *  alpha ×2 (older). zephyr (6 chars) is SHORTER than Zendesk (7) —
+ *  under §04 h2.29 (progressive completion: tier tie → shorter key
+ *  first, count only breaks equal-length ties) zephyr sorts FIRST. */
 const zeStore = (): CandidateStore => {
   const s = new CandidateStore();
   put(s, "zendesk", 3, 9, { display: "Zendesk" });
@@ -125,7 +125,7 @@ describe("delegation — null match state (args untouched)", () => {
     const result = await provider.getSuggestions(lines, 0, 1, options);
 
     expect(result!.prefix).toBe("z");
-    expect(result!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]); // count order (§04 h2.29)
+    expect(result!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]); // length-first (§04 h2.29)
     expect(current.getSuggestions).not.toHaveBeenCalled(); // hapax owns the word-start request
   });
 });
@@ -162,12 +162,12 @@ describe("hapax result path — synchronous query, pi-shaped mapping", () => {
     expect(result!.prefix).toBe("#ze"); // trigger prefix includes '#'
     expect(result!.items).toHaveLength(2); // exactly the ze* candidates
     expect(result!.items[0]).toEqual({
-      value: "Zendesk", // stored display casing (h2.27), count-desc top
-      label: "Zendesk",
-      description: "session x3", // query.ts provenance, verbatim
+      value: "zephyr", // stored display casing (h2.27), length-first top
+      label: "zephyr",
+      description: "session x1", // query.ts provenance, verbatim
     });
-    expect(result!.items[1].value).toBe("zephyr");
-    expect(result!.items[1].description).toBe("session x1");
+    expect(result!.items[1].value).toBe("Zendesk");
+    expect(result!.items[1].description).toBe("session x3");
   });
 
   it("threshold mode 'ze' → same items, bare-fragment prefix 'ze'", async () => {
@@ -176,7 +176,7 @@ describe("hapax result path — synchronous query, pi-shaped mapping", () => {
     const result = await provider.getSuggestions(["ze"], 0, 2, opts());
 
     expect(result!.prefix).toBe("ze"); // no trigger char in threshold mode
-    expect(result!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]); // count-desc (§04 h2.29)
+    expect(result!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]); // length-first (§04 h2.29)
   });
 
   it("items.length respects maxSuggestions (1 → only the top match)", async () => {
@@ -189,7 +189,7 @@ describe("hapax result path — synchronous query, pi-shaped mapping", () => {
     const result = await provider.getSuggestions(["ze"], 0, 2, opts());
 
     expect(result!.items).toHaveLength(1);
-    expect(result!.items[0].value).toBe("Zendesk"); // highest count (tier-3 tie → h2.29 key 2)
+    expect(result!.items[0].value).toBe("zephyr"); // length-first top (tier-3 tie → h2.29 key 2)
   });
 
   it("zero awaits on the hapax path — the live cache is published before the promise is awaited", () => {
@@ -214,7 +214,7 @@ describe("live-result seams for S3 / P2.M2.T2.S1", () => {
     const live = provider.__hapaxLive();
     expect(live).not.toBeNull();
     expect(live!.prefix).toBe("#ze");
-    expect(live!.matches.map((m) => m.key)).toEqual(["zendesk", "zephyr"]); // count-desc publication order
+    expect(live!.matches.map((m) => m.key)).toEqual(["zephyr", "zendesk"]); // length-first publication order
     expect(live!.ts).toBeGreaterThanOrEqual(before);
     expect(live!.ts).toBeLessThanOrEqual(Date.now());
   });
@@ -303,16 +303,16 @@ describe("forced single-item returns (PRD §07 h3.8)", () => {
     provider: ReturnType<typeof createHapaxProvider>,
   ): Promise<void> => {
     put(store, "alpha", 3, 5);
-    const menu = await provider.getSuggestions(["alpha"], 0, 5, opts());
+    const menu = await provider.getSuggestions(["alph"], 0, 4, opts());
     expect(menu!.items.map((i) => i.value)).toContain("alpha");
     for (let r = 0; r < 3; r++) store.recordBigramRuns([["alpha", "beta"]]);
     for (let r = 0; r < 2; r++) store.recordBigramRuns([["alpha", "bravo"]]);
     provider.applyCompletion(
-      ["alpha"],
+      ["alph"],
       0,
-      5,
+      4,
       { value: "alpha", label: "alpha" },
-      "alpha",
+      "alph",
     );
   };
 
@@ -323,11 +323,11 @@ describe("forced single-item returns (PRD §07 h3.8)", () => {
 
     expect(result).not.toBeNull();
     expect(result!.items).toHaveLength(1); // pi-tui's === 1 fast path fires
-    expect(result!.items[0].value).toBe("Zendesk"); // count-desc top (h2.29 key 2)
+    expect(result!.items[0].value).toBe("zephyr"); // length-first top (h2.29 key 2)
     expect(result!.prefix).toBe("ze"); // prefix unchanged under force
     // The seam keeps the FULL set — only the returned payload narrowed.
     expect(provider.__hapaxLive()!.matches).toHaveLength(2);
-    expect(provider.__hapaxLive()!.matches[0].key).toBe("zendesk");
+    expect(provider.__hapaxLive()!.matches[0].key).toBe("zephyr");
     expect(provider.__hapaxLive()!.prefix).toBe("ze");
   });
 
@@ -337,8 +337,8 @@ describe("forced single-item returns (PRD §07 h3.8)", () => {
     const unforced = await provider.getSuggestions(["ze"], 0, 2, opts());
     const forceFalse = await provider.getSuggestions(["ze"], 0, 2, opts({ force: false }));
 
-    expect(unforced!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
-    expect(forceFalse!.items.map((i) => i.value)).toEqual(["Zendesk", "zephyr"]);
+    expect(unforced!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
+    expect(forceFalse!.items.map((i) => i.value)).toEqual(["zephyr", "Zendesk"]);
   });
 
   it("force:true + trigger fragment '#ze' → 1 item, trigger prefix kept", async () => {
@@ -347,7 +347,7 @@ describe("forced single-item returns (PRD §07 h3.8)", () => {
     const result = await provider.getSuggestions(["#ze"], 0, 3, opts({ force: true }));
 
     expect(result!.items).toHaveLength(1);
-    expect(result!.items[0].value).toBe("Zendesk"); // count-desc top (h2.29)
+    expect(result!.items[0].value).toBe("zephyr"); // length-first top (h2.29)
     expect(result!.prefix).toBe("#ze");
     expect(provider.__hapaxLive()!.matches).toHaveLength(2); // full set published
   });
@@ -361,7 +361,7 @@ describe("forced single-item returns (PRD §07 h3.8)", () => {
     const result = await provider.getSuggestions(lines, 0, 1, options);
 
     expect(result!.items).toHaveLength(1); // pi-tui's === 1 fast path
-    expect(result!.items[0].value).toBe("Zendesk"); // count-desc top (h2.29)
+    expect(result!.items[0].value).toBe("zephyr"); // length-first top (h2.29)
     expect(result!.prefix).toBe("z");
     expect(current.getSuggestions).not.toHaveBeenCalled();
   });
@@ -429,14 +429,14 @@ describe("armed chain + stock context (BUG-001)", () => {
     provider: ReturnType<typeof createHapaxProvider>,
   ): Promise<void> => {
     put(store, "alpha", 3, 5);
-    const menu = await provider.getSuggestions(["alpha"], 0, 5, opts());
+    const menu = await provider.getSuggestions(["alph"], 0, 4, opts());
     expect(menu!.items.map((i) => i.value)).toContain("alpha");
     provider.applyCompletion(
-      ["alpha"],
+      ["alph"],
       0,
-      5,
+      4,
       { value: "alpha", label: "alpha" },
-      "alpha",
+      "alph",
     );
   };
 

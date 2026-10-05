@@ -510,7 +510,11 @@ export function createHapaxProvider(
                 // order (the chain's ranking identity). matchFragment
                 // lowercases both arguments internally — frag goes in
                 // raw; the old explicit toLowerCase() is gone.
-                .filter((s) => matchFragment(frag, s.next) !== null)
+                .filter(
+                  (s) =>
+                    s.next !== frag.toLowerCase() && // exact-equal exclusion (§07 h2.49 parity with §04 h2.29)
+                    matchFragment(frag, s.next) !== null,
+                )
                 .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
         if (frag === undefined || !fragAtWordStart || succ.length === 0) {
           // (c) Disqualify: punctuation, word-less non-start input, a

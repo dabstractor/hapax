@@ -1350,7 +1350,6 @@ const seedStore = (entries: readonly (readonly [string, string])[]): CandidateSt
       fromUser: false,
       properName: false,
       rankGroup: 0,
-      isSubword: false,
     });
   }
   return s;
@@ -1738,13 +1737,18 @@ describe("widget chain end-to-end — BUG-001 acceptance (PRD §Issue 1 repro)",
       "Quuxblat",
     ]);
 
-    for (const ch of "quuxblat") await typeChar(h, ch); // type THROUGH the offer
-    // Fragment filtering kept the offer alive across the typed word…
+    for (const ch of "quuxbla") await typeChar(h, ch); // type INTO the offer
+    // Fragment filtering keeps the offer alive across the typed prefix…
     expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
       "Quuxblat",
     ]);
-    await typeChar(h, " "); // …and the boundary SPENDS the grant (word 2)
-    expect(chain.state()).toBeNull(); // disarmed exactly at the boundary
+    // …but the offer word typed to COMPLETION empties the chain filter
+    // (exact-equal exclusion, §04 h2.29 parity): the arm resets on this
+    // same tick and the normal path closes the line.
+    await typeChar(h, "t");
+    expect(chain.state()).toBeNull(); // disarmed at the completed word
+    expect(h.machine.getState().visible).toBe(false);
+    await typeChar(h, " "); // the boundary stays quiet
     expect(h.machine.getState().visible).toBe(false); // no chain paint
 
     // The normal gated path answers subsequent fragments with REAL records:

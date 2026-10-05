@@ -113,7 +113,6 @@ export function makeStore(cap: number = STORE_CAP, seed = 42): CandidateStore {
       fromUser: rng() < 0.3,
       properName,
       rankGroup: pickRankGroup(rng),
-      isSubword: false,
     };
     store.upsert(sighting);
   }
@@ -130,7 +129,6 @@ export function makeStore(cap: number = STORE_CAP, seed = 42): CandidateStore {
       fromUser: rng() < 0.3,
       properName,
       rankGroup: pickRankGroup(rng),
-      isSubword: false,
     });
   }
   return store;
