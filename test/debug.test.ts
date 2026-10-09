@@ -10,6 +10,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { readFileSync } from "node:fs";
 import { STORE_CAP, CandidateStore } from "../src/core/store.js";
 import type { IngestStats, Sighting } from "../src/core/types.js";
 import { formatAcwordsDump, registerAcwordsCommand } from "../src/pi/debug.js";
@@ -165,6 +166,23 @@ describe("acwords dump (PRD §08)", () => {
     expect(rows[0]).toContain("group 0 (rare)");
   });
 
+  it("top rows carry the casing tallies: (cap X/lower Y) from mid-cap and lowercase sightings", () => {
+    const store = new CandidateStore();
+    const ord = store.nextOrdinal();
+    for (let i = 0; i < 3; i++) {
+      see(store, "nrel", "NREL", { ordinal: ord, casing: "mid-cap" });
+    }
+    for (let i = 0; i < 2; i++) {
+      see(store, "nrel", "nrel", { ordinal: ord, casing: "lower" });
+    }
+    const rows = topRows(formatAcwordsDump(store, fakeStats));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("1. NREL  ×5"); // resolved capitalized tally form
+    expect(rows[0]).toContain("(cap 3/lower 2)"); // the R1 tally evidence
+    expect(rows[0]).toContain("group 0 (rare)"); // format otherwise unchanged
+  });
+
   it("renders path candidates as their resolved form — the key when no capitalized sighting exists (rule 4d)", () => {
     const store = new CandidateStore();
     const ord = store.nextOrdinal();
@@ -245,6 +263,32 @@ describe("acwords dump (PRD §08)", () => {
         "successor index sample",
         "  national → renewable ×4, license ×1",
         "  zendesk → suite ×2",
+      ]);
+    });
+
+    it("series successors render nextDisplay run casing + (series); ordinary pairs stay plain (store order kept)", () => {
+      const store = new CandidateStore();
+      const ord = store.nextOrdinal();
+      see(store, "national", "national", { ordinal: ord });
+      // Series seeding per bigrams.test.ts's convention: run members with
+      // series:true — the store stamps series + nextDisplay (the second
+      // word's run casing). An ordinary plain-string pair rides along at
+      // a HIGHER count: series-first ordering is the store's (h2.53), so
+      // the row proves the dump renders that order instead of re-sorting
+      // by count.
+      for (let r = 0; r < 2; r++) {
+        store.recordBigramRuns([
+          [
+            { key: "national", rawCasing: "National", series: true },
+            { key: "renewable", rawCasing: "Renewable", series: true },
+          ],
+        ]);
+      }
+      for (let r = 0; r < 3; r++) store.recordBigramRuns([["national", "license"]]);
+
+      expect(successorSection(formatAcwordsDump(store, fakeStats))).toEqual([
+        "successor index sample",
+        "  national → Renewable ×2 (series), license ×3",
       ]);
     });
 
@@ -343,6 +387,37 @@ describe("acwords registration (PRD §08)", () => {
     expect(message).toContain("zendesk");
     expect(message).toContain("words seen: 5432   admitted: 1234");
     expect(message).toContain("gate rejections:");
+  });
+
+  it("the /tmp dump TSV carries the tally columns in fixed order (cap/lower between count and group)", async () => {
+    const store = new CandidateStore();
+    const ord = store.nextOrdinal();
+    for (let i = 0; i < 3; i++) {
+      see(store, "nrel", "NREL", { ordinal: ord, casing: "mid-cap" });
+    }
+    for (let i = 0; i < 2; i++) {
+      see(store, "nrel", "nrel", { ordinal: ord, casing: "lower" });
+    }
+    see(store, "zendesk", "zendesk", {
+      ordinal: ord,
+      fromUser: true,
+      properName: true,
+    });
+    const { pi, register } = fakePi();
+    registerAcwordsCommand(pi, {
+      store,
+      pipeline: statsStub(),
+      config: { debug: true },
+    });
+    await register.mock.calls[0]![1].handler("", { ui: { notify: vi.fn() } });
+
+    // count-desc sort: nrel (×5) before zendesk (×1). Column order is
+    // fixed across rows: key, resolved display, x<count>, cap<n>,
+    // lower<n>, g<group>, then the optional proper/typed flags.
+    expect(readFileSync("/tmp/hapax-store.txt", "utf8")).toBe(
+      "nrel\tNREL\tx5\tcap3\tlower2\tg0\n" +
+        "zendesk\tzendesk\tx1\tcap0\tlower1\tg0\tproper\ttyped\n",
+    );
   });
 
   it("handler renders a fresh snapshot per invocation (ordinal advances)", async () => {

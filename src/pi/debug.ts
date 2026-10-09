@@ -8,9 +8,15 @@
  * inside its session_start handler after loadConfig. The dump shows
  * words and successor rows only, by design (PRD 002 delta R1): the
  * successor-index sample section (P1.M3.T2.S1, R5) renders word →
- * successor ×count rows for the tuning protocol (§09 h2.52) — build
- * sections through the small helpers so a new section lands in exactly
- * one place (one builder + one spread entry).
+ * successor ×count rows for the tuning protocol (§09 h2.52) — series
+ * pairs (spec 06 h3.6) render their nextDisplay run casing with a
+ * `(series)` marker, ordinary pairs stay plain. Word rows carry the
+ * casing tallies (spec 06 h2.41) — `×count (cap X/lower Y)` in the
+ * popup, dedicated cap/lower TSV columns in the /tmp dump — the R1
+ * evidence for the display-free schema (no stored display field;
+ * the resolved form shown is capDisplay-when-present, else the key).
+ * Build sections through the small helpers so a new section lands in
+ * exactly one place (one builder + one spread entry).
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { writeFileSync } from "node:fs";
@@ -63,18 +69,19 @@ function storeSection(
   ];
 }
 
-/** Numbered top-N rows: display, ×sessionCount, group + label. Salience
- *  itself is deliberately not printed — count + group is the tuning
- *  signal (PRD §09). */
+/** Numbered top-N rows: display, ×sessionCount, casing tallies
+ *  (capCount/lowerCount, spec 06 h2.41), group + label. Display is the
+ *  resolved interim form — capDisplay when the word has a capitalized
+ *  tally form, else the bare key (never fabricated); completion-time
+ *  casing resolution (spec 04 h2.32) is the query layer's job, the dump
+ *  only shows the resolved form. Salience itself is deliberately not
+ *  printed — count + group is the tuning signal (PRD §09). */
 function topSection(rows: Candidate[]): string[] {
   return [
     `  top ${TOP_N} by salience:`,
     ...rows.map(
       (c, i) =>
-        // TODO(P1.M2.T3.S1): tally columns replace this interim form —
-        // completion-time casing resolution (spec 04 h2.32) collapses to
-        // capDisplay-when-present; the dump shows the resolved form only.
-        `    ${i + 1}. ${c.capDisplay !== "" ? c.capDisplay : c.key}  ×${c.sessionCount}  group ${c.rankGroup} (${GROUP_LABEL[c.rankGroup]})`,
+        `    ${i + 1}. ${c.capDisplay !== "" ? c.capDisplay : c.key}  ×${c.sessionCount}  (cap ${c.capCount}/lower ${c.lowerCount})  group ${c.rankGroup} (${GROUP_LABEL[c.rankGroup]})`,
     ),
   ];
 }
@@ -96,12 +103,17 @@ const SUCCESSOR_SAMPLE_N = 10;
 /** "successor index sample" section (PRD §08 h2.48, P1.M3.T2.S1): for
  *  the SUCCESSOR_SAMPLE_N highest-salience words that HAVE successors,
  *  render `word → next ×count, next2 ×count2` rows (topSuccessors is
- *  already count-desc, byte-lex ties, max 3 — store.ts h3.9). An empty
- *  index (empty store, or enableChaining:false — nothing ever reaches
- *  recordBigramRuns) renders one `(none)` line. Pure read: topSuccessors
- *  hands back the LIVE array (or a shared frozen empty) — mapped/joined,
- *  never mutated. Sampling follows `rows`, the SAME topCandidates order
- *  the top section renders (salience desc, byte-lex ties) — no second
+ *  already count-desc with series-first ordering, byte-lex ties, max 3
+ *  — store.ts h3.9). Series pairs (spec 06 h3.6) render their
+ *  nextDisplay RUN CASING plus a ` (series)` marker; ordinary pairs
+ *  stay plain `next ×count`. The marker keys off `series` alone (a
+ *  series entry without nextDisplay — unreachable via the store, kept
+ *  defensive — degrades to the bare key). An empty index (empty store,
+ *  or enableChaining:false — nothing ever reaches recordBigramRuns)
+ *  renders one `(none)` line. Pure read: topSuccessors hands back the
+ *  LIVE array (or a shared frozen empty) — mapped/joined, never
+ *  mutated. Sampling follows `rows`, the SAME topCandidates order the
+ *  top section renders (salience desc, byte-lex ties) — no second
  *  "now", no re-sorting. */
 function successorsSection(
   rows: Candidate[],
@@ -118,9 +130,11 @@ function successorsSection(
     ...sampled.map((c) => {
       const succ = store
         .topSuccessors(c.key)
-        .map((s) => `${s.next} ×${s.count}`)
+        .map((s) => {
+          const word = s.series && s.nextDisplay ? s.nextDisplay : s.next;
+          return `${word} ×${s.count}${s.series ? " (series)" : ""}`;
+        })
         .join(", ");
-      // TODO(P1.M2.T3.S1): interim completion-time form (spec 04 h2.32).
       return `  ${c.capDisplay !== "" ? c.capDisplay : c.key} → ${succ}`;
     }),
   ];
@@ -188,9 +202,12 @@ export function registerAcwordsCommand(
       // Full dump (2026-09): the notify popup caps at top-50, but the
       // menu limits are per-query slices of a store that can hold
       // thousands of words — owners auditing admission need the
-      // COMPLETE list. Written to /tmp/hapax-store.txt (one line per
-      // word: key, display, count, group, flags), count-desc then
-      // content order for stable diffs.
+      // COMPLETE list. Written to /tmp/hapax-store.txt, one TSV line
+      // per word — columns, in fixed order: key, resolved display
+      // (capDisplay-when-present, else key), x<sessionCount>,
+      // cap<capCount>, lower<lowerCount> (casing tallies, spec 06
+      // h2.41), g<rankGroup>, then the optional proper/typed flags —
+      // count-desc then content order for stable diffs.
       let written = "";
       try {
         const rows = [...deps.store.entries()]
@@ -204,8 +221,7 @@ export function registerAcwordsCommand(
         written = rows
           .map(
             ({ c }) =>
-              // TODO(P1.M2.T3.S1): interim completion-time form.
-              `${c.key}\t${c.capDisplay !== "" ? c.capDisplay : c.key}\tx${c.sessionCount}\tg${c.rankGroup}` +
+              `${c.key}\t${c.capDisplay !== "" ? c.capDisplay : c.key}\tx${c.sessionCount}\tcap${c.capCount}\tlower${c.lowerCount}\tg${c.rankGroup}` +
               `${c.properName ? "\tproper" : ""}${c.userTyped ? "\ttyped" : ""}`,
           )
           .join("\n");
