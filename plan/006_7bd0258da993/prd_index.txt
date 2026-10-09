@@ -64,14 +64,15 @@ h1.7 07 — Completion UI
   h3.8 One-line widget (primary display)
   h3.9 Line claim — the row is owned for the prompt's duration (2026-10 owner rule; status: adopted ahead of implementation — code lands with this spec)
   h3.10 Widget key handling (amends the never-hijack invariant; 2026-10)
-  h3.11 Widget visibility state machine (auto-open, re-based)
+  h3.11 Post-Tab extension offer (2026-10 owner rule; status: adopted ahead of implementation — code lands with this spec)
+  h3.12 Widget visibility state machine (auto-open, re-based)
  h2.47 Provider integration (fallback path only)
  h2.48 Auto-open (fallback path): how the menu ever appears
  h2.49 Trigger modes
  h2.50 Debounce, flicker, and the Tab contract
-  h3.12 Startup restore gate
-  h3.13 Tab-open gesture: root cause (traced) and mitigation
-  h3.14 pi-tui contract dependencies (re-verify on upgrades)
+  h3.13 Startup restore gate
+  h3.14 Tab-open gesture: root cause (traced) and mitigation
+  h3.15 pi-tui contract dependencies (re-verify on upgrades)
  h2.51 Never-hijack rules (acceptance-critical)
  h2.52 Enter always submits (editor proxy)
  h2.53 M2: chained completion
@@ -92,4 +93,4 @@ h1.9 09 — Testing and Acceptance
  h2.66 Decision log (all settled)
  h2.67 Implementation milestones
 ---
-code:16 para:139 list:65 table:5
+code:16 para:144 list:66 table:5

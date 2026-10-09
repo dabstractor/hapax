@@ -255,3 +255,97 @@ describe("BUG-006 — same-call cap drain through the real ingest path", () => {
     expect(store.bigramSize).toBe(10_000);
   });
 });
+// ── series bigrams (spec 06 h3.6/h3.7, plan 006 P1.M1.T2.S2) ───────────────
+
+/** Enriched run member — structurally src/pi/ingest.ts's RunMember (kept
+ *  structural here so the store stays core-pure: no pi imports). */
+const mem = (
+  key: string,
+  rawCasing: string,
+  extra: { series?: boolean; chainOnly?: boolean } = {},
+): { key: string; rawCasing: string; series?: boolean; chainOnly?: boolean } => ({
+  key,
+  rawCasing,
+  ...extra,
+});
+
+describe("recordBigramRuns — series bigrams (spec 06 h3.6/h3.7)", () => {
+  it("a series-marked run records every adjacent pair with series:true and the second word's run casing", () => {
+    const s = new CandidateStore();
+    s.recordBigramRuns([
+      [
+        mem("national", "National", { series: true }),
+        mem("renewable", "Renewable", { series: true }),
+        mem("energy", "Energy", { series: true }),
+      ],
+    ]);
+    expect(s.bigramSize).toBe(2);
+    expect(s.topSuccessors("national")).toEqual([
+      { next: "renewable", count: 1, series: true, nextDisplay: "Renewable" },
+    ]);
+    expect(s.topSuccessors("renewable")).toEqual([
+      { next: "energy", count: 1, series: true, nextDisplay: "Energy" },
+    ]);
+  });
+
+  it("chain-only members (never upserted — top-band ceiling) still form their series pairs", () => {
+    const s = new CandidateStore();
+    s.recordBigramRuns([
+      [
+        mem("the", "The", { series: true, chainOnly: true }),
+        mem("fed", "Fed", { series: true }),
+      ],
+    ]);
+    expect(s.bigramSize).toBe(1); // the store is admission-agnostic
+    expect(s.topSuccessors("the")).toEqual([
+      { next: "fed", count: 1, series: true, nextDisplay: "Fed" },
+    ]);
+  });
+
+  it("ordinary pairs — plain strings, unmarked members, or a mixed run — carry no series fields", () => {
+    const s = new CandidateStore();
+    s.recordBigramRuns([["alpha", "beta"]]); // plain strings (legacy feeders)
+    s.recordBigramRuns([
+      [mem("gamma", "gamma"), mem("delta", "delta")], // unmarked members
+    ]);
+    s.recordBigramRuns([
+      [mem("epsilon", "Epsilon", { series: true }), "zeta"], // mixed run
+    ]);
+    expect(s.topSuccessors("alpha")).toEqual([{ next: "beta", count: 1 }]);
+    expect(s.topSuccessors("gamma")).toEqual([{ next: "delta", count: 1 }]);
+    expect(s.topSuccessors("epsilon")).toEqual([{ next: "zeta", count: 1 }]);
+  });
+
+  it("series marking is one-directional: a later ordinary sighting never downgrades", () => {
+    const s = new CandidateStore();
+    s.recordBigramRuns([
+      [mem("hub", "Hub", { series: true }), mem("zeta", "Zeta", { series: true })],
+    ]);
+    s.recordBigramRuns([["hub", "zeta"]]); // ordinary re-sighting, same pair
+    expect(s.topSuccessors("hub")).toEqual([
+      { next: "zeta", count: 2, series: true, nextDisplay: "Zeta" },
+    ]);
+  });
+
+  it("eviction parity: series bigrams evict under the same cap policy (no series protection)", () => {
+    const s = new CandidateStore();
+    const runs: (string[] | ReturnType<typeof mem>[])[] = [];
+    for (let i = 0; i < 10_001; i++) {
+      runs.push(
+        i % 3 === 0
+          ? [mem(`w${i}`, `W${i}`, { series: true }), mem("end", "End", { series: true })]
+          : [`w${i}`, "end"],
+      );
+    }
+    s.recordBigramRuns(runs);
+    expect(s.bigramSize).toBe(10_000); // same-call drain to cap (BUG-006)
+    // All count 1 at one ordinal → victims are the byte-lex-lowest keys,
+    // series or not: "w0 end" (a series pair) is the lexically lowest and
+    // is evicted exactly like an ordinary entry — h2.45's same policy.
+    expect(s.topSuccessors("w0")).toEqual([]);
+    // A surviving series entry keeps its marking through the drain:
+    expect(s.topSuccessors("w3")).toEqual([
+      { next: "end", count: 1, series: true, nextDisplay: "End" },
+    ]);
+  });
+});

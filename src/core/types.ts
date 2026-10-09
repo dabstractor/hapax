@@ -99,6 +99,13 @@ export interface Successor {
   next: string;
   /** occurrences of the bigram "word next" this session */
   count: number;
+  /** True when this pair came from a capitalized run (spec 06 h3.6): a
+   *  proper-noun series pair. Series successors rank above ordinary ones
+   *  in the per-word top-3 regardless of counts (07 h2.53). */
+  series?: boolean;
+  /** Run casing of the SECOND word of a series pair (e.g. "Renewable") —
+   *  the offer's display form. Undefined for ordinary pairs. */
+  nextDisplay?: string;
 }
 
 /** Output of src/core/segment.ts tokenize(). PRD §04 segmentation. */

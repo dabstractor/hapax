@@ -309,3 +309,91 @@ describe("successor index (PRD 002 §06 h2.38/h3.7) — eviction cleanup (store-
     expect(s.topSuccessors("yyy")).toEqual([{ next: "overflow", count: 1 }]);
   });
 });
+// ── series-first retention (spec 07 h2.53, plan 006 P1.M1.T2.S2) ───────────
+// Store-direct (mechanics, like the cap/byte-lex cases above): the pair
+// payloads are structurally ingest's RunMember — the store stays
+// core-pure, no pi import.
+
+describe("successor index — series-first top-3 (plan 006)", () => {
+  const seriesPair = (
+    w1: string,
+    c1: string,
+    w2: string,
+    c2: string,
+  ): [[{ key: string; rawCasing: string; series: true }, { key: string; rawCasing: string; series: true }]] => [
+    [{ key: w1, rawCasing: c1, series: true }, { key: w2, rawCasing: c2, series: true }],
+  ];
+
+  it("a count-1 series successor outranks a count-40 ordinary successor (series first, regardless of counts)", () => {
+    const s = new CandidateStore();
+    for (let r = 0; r < 40; r++) s.recordBigramRuns([["hub", "aaaordinary"]]);
+    s.recordBigramRuns(seriesPair("hub", "Hub", "zetseries", "Zetseries"));
+    expect(s.topSuccessors("hub")).toEqual([
+      { next: "zetseries", count: 1, series: true, nextDisplay: "Zetseries" },
+      { next: "aaaordinary", count: 40 },
+    ]);
+  });
+
+  it("series-vs-series keeps count desc then byte-lex (the series tier orders among itself)", () => {
+    const s = new CandidateStore();
+    s.recordBigramRuns(seriesPair("hub", "Hub", "aaaseries", "Aaaseries"));
+    s.recordBigramRuns(seriesPair("hub", "Hub", "zzseries", "Zzseries"));
+    s.recordBigramRuns(seriesPair("hub", "Hub", "zzseries", "Zzseries")); // count 2
+    expect(s.topSuccessors("hub")).toEqual([
+      { next: "zzseries", count: 2, series: true, nextDisplay: "Zzseries" },
+      { next: "aaaseries", count: 1, series: true, nextDisplay: "Aaaseries" },
+    ]);
+  });
+
+  it("overflow (precise): 3 ordinary incumbents + a series newcomer → the worst ordinary dies; an ordinary newcomer never displaces series incumbents", () => {
+    const s = new CandidateStore();
+    s.recordBigramRuns([["w", "aaatop"], ["w", "aaatop"], ["w", "aaatop"]]); // 3
+    s.recordBigramRuns([["w", "bbmid"], ["w", "bbmid"]]); // 2
+    s.recordBigramRuns([["w", "cclow"]]); // 1
+    s.recordBigramRuns(seriesPair("w", "W", "sseries", "Sseries")); // series, count 1
+
+    // Series-first: the newcomer takes the head; the extended-order tail
+    // (cclow — lowest count, byte-lex largest among ordinaries) drops.
+    expect(s.topSuccessors("w")).toEqual([
+      { next: "sseries", count: 1, series: true, nextDisplay: "Sseries" },
+      { next: "aaatop", count: 3 },
+      { next: "bbmid", count: 2 },
+    ]);
+
+    // An ordinary newcomer at ANY count can never cross the series tier:
+    for (let r = 0; r < 9; r++) s.recordBigramRuns([["w", "ddnew"]]); // count 9
+    const top = s.topSuccessors("w");
+    expect(top.some((m) => m.next === "ddnew")).toBe(false);
+    expect(top.filter((m) => m.series === true)).toHaveLength(1);
+  });
+
+  it("upgrade-in-place: an ordinary pair later seen in a capitalized run gains series and moves past higher-count ordinary peers", () => {
+    const s = new CandidateStore();
+    for (let r = 0; r < 5; r++) s.recordBigramRuns([["hub", "abxy"]]); // count 5
+    s.recordBigramRuns([["hub", "zeta"], ["hub", "zeta"]]); // ordinary, count 2
+    expect(s.topSuccessors("hub")).toEqual([
+      { next: "abxy", count: 5 },
+      { next: "zeta", count: 2 },
+    ]);
+
+    // The SAME pair arrives series-marked (a capitalized run sighting):
+    s.recordBigramRuns(seriesPair("hub", "Hub", "zeta", "Zeta"));
+    // series:true set BEFORE the re-sort walk → zeta jumps the count-5
+    // ordinary peer (one-directional upgrade; "bump only moves toward the
+    // head" preserved).
+    expect(s.topSuccessors("hub")).toEqual([
+      { next: "zeta", count: 3, series: true, nextDisplay: "Zeta" },
+      { next: "abxy", count: 5 },
+    ]);
+  });
+
+  it("the reverse never downgrades, and nextDisplay keeps the FIRST series casing (??=)", () => {
+    const s = new CandidateStore();
+    s.recordBigramRuns(seriesPair("hub", "Hub", "zeta", "Zeta"));
+    s.recordBigramRuns(seriesPair("hub", "Hub", "zeta", "ZETA")); // re-sighting, new casing
+    s.recordBigramRuns([["hub", "zeta"]]); // ordinary sighting — no downgrade
+    expect(s.topSuccessors("hub")).toEqual([
+      { next: "zeta", count: 3, series: true, nextDisplay: "Zeta" },
+    ]);
+  });
+});

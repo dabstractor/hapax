@@ -123,6 +123,31 @@ interface BigramEntry {
   count: number;
   /** message ordinal at last occurrence */
   lastSeenOrdinal: number;
+  /** True when this pair came from a capitalized run (spec 06 h3.6): a
+   *  proper-noun series pair. Series successors rank above ordinary ones
+   *  in the per-word top-3 regardless of counts (07 h2.53). One-
+   *  directional: a later ordinary sighting of the same pair never
+   *  downgrades the mark. Field set mirrors types.ts's Successor. */
+  series?: boolean;
+  /** Run casing of the SECOND word of a series pair (e.g. "Renewable") —
+   *  the offer's display form. Undefined for ordinary pairs. */
+  nextDisplay?: string;
+}
+
+/** Structural view of the enriched run-member payload (src/pi/ingest.ts's
+ *  RunMember, plan 006 T1.S2) — declared LOCALLY and structurally so
+ *  src/core never imports from src/pi (the architecture invariant;
+ *  RunMember is plain serializable data and assignable to this shape).
+ *  `series` is T1.S2's cap-run mark (the authoritative walk definition);
+ *  `chainOnly` members need no store-side knowledge — recordBigramRuns
+ *  is admission-agnostic and records their pairs like any member's. */
+interface RunMemberInput {
+  /** lowercase store key (as today) */
+  key: string;
+  /** the token's casing as seen in the raw text this occurrence */
+  rawCasing: string;
+  /** T1.S2's cap-run mark (see the interface doc above) */
+  series?: boolean;
 }
 
 /** Bigram eviction key — the log domain of the phrase-era eviction score
@@ -149,6 +174,12 @@ function bigramSortKey(e: BigramEntry): number {
  *  `a < b ? -1 : …` style as a strict "a sorts before b" predicate, used
  *  by #bumpSuccessor's bounded in-place shifts. */
 function successorBefore(a: Successor, b: Successor): boolean {
+  // SERIES FIRST (07 h2.53, plan 006): a proper-noun series entry (spec
+  // 06 h3.6) outranks ANY ordinary one regardless of counts, so the
+  // top-3 can never be crowded out by high-count ordinary bigrams. Among
+  // series entries — and among ordinary entries — the existing ladder
+  // (count desc → byte-lex asc) applies unchanged.
+  if (!!a.series !== !!b.series) return !!a.series;
   if (a.count !== b.count) return a.count > b.count;
   return a.next < b.next;
 }
@@ -678,6 +709,19 @@ export class CandidateStore {
    *  Windows overlap by design: "a b c" yields "a b" and "b c" — and NO
    *  trigram (the n ≥ 3 layer is a removed design, PRD 002 delta R1).
    *
+   *  PAYLOAD (plan 006, spec 06 h3.6/h3.7): each member is a plain
+   *  lowercase key (legacy feeders — ordinary pair, no series fields) OR
+   *  an enriched RunMember ({key, rawCasing, series?} — structurally
+   *  RunMemberInput, T1.S2's payload). A pair whose BOTH members carry
+   *  the cap-run mark is a SERIES pair: recorded with series:true and
+   *  nextDisplay (the second word's run casing — the offer's display
+   *  form), counted and merged like any pair, and bumped into the
+   *  successor index series-first (07 h2.53 — see #bumpSuccessor).
+   *  Series marking is one-directional: ordinary re-sightings never
+   *  downgrade it. Chain-only members (upstream's top-band ceiling —
+   *  never upserted as words) still appear in runs; the store is
+   *  admission-agnostic and records their pairs like any member's.
+   *
    *  Upsert semantics: absent → create { count: 1, lastSeenOrdinal };
    *  present → count++ and lastSeenOrdinal refresh. The ordinal is read
    *  from currentOrdinal() INSIDE (the pipeline issues one per message
@@ -688,19 +732,50 @@ export class CandidateStore {
    *  this call via #evictBigramsIfOverCap — once per call, at the tail,
    *  never per upsert (BUG-006: the cap holds even for a single huge
    *  message). Bigram writes never touch the word map or the prefix index. */
-  recordBigramRuns(runs: readonly string[][]): void {
+  recordBigramRuns(
+    runs: readonly (readonly (RunMemberInput | string)[])[],
+  ): void {
     const ordinal = this.currentOrdinal();
     for (const run of runs) {
       for (let i = 0; i + 1 < run.length; i++) {
-        const w1 = run[i];
-        const w2 = run[i + 1];
+        const m1 = run[i];
+        const m2 = run[i + 1];
+        const w1 = typeof m1 === "string" ? m1 : m1.key;
+        const w2 = typeof m2 === "string" ? m2 : m2.key;
+        // SERIES PAIR (spec 06 h3.6): BOTH members are enriched RunMembers
+        // carrying T1.S2's cap-run mark (its detection IS the walk's
+        // definition — a maximal ≥2-member uppercase-initial run — so the
+        // flag is authoritative; no casing re-derivation here). Plain
+        // string members (legacy feeders) and unmarked members are
+        // ordinary adjacency pairs. Chain-only members (the top-band
+        // ceiling — never upserted as words upstream) STAY in the runs
+        // payload, so their pairs still form here: the store is
+        // admission-agnostic and records every adjacent pair it receives.
+        const isSeries =
+          typeof m1 !== "string" &&
+          typeof m2 !== "string" &&
+          m1.series === true &&
+          m2.series === true;
+        const nextDisplay =
+          isSeries && typeof m2 !== "string" ? m2.rawCasing : undefined;
         const key = `${w1} ${w2}`;
         const existing = this.#bigrams.get(key);
         if (existing) {
           existing.count++;
           existing.lastSeenOrdinal = ordinal;
+          // Series marking is ONE-DIRECTIONAL (plan 006): a later ordinary
+          // sighting of the same pair never downgrades it; a series
+          // re-sighting refreshes nextDisplay (occurrence casing).
+          if (isSeries) {
+            existing.series = true;
+            existing.nextDisplay = nextDisplay;
+          }
         } else {
-          const entry: BigramEntry = { count: 1, lastSeenOrdinal: ordinal };
+          const entry: BigramEntry = {
+            count: 1,
+            lastSeenOrdinal: ordinal,
+            ...(isSeries ? { series: true, nextDisplay } : {}),
+          };
           this.#bigrams.set(key, entry);
           // Index the newcomer for eviction (no-op until the heap exists —
           // the first overflow pass builds it wholesale from the live map).
@@ -708,28 +783,46 @@ export class CandidateStore {
             heapPush(this.#bigramEvictHeap, { k: bigramSortKey(entry), key });
           }
         }
-        this.#bumpSuccessor(w1, w2); // successor tail (PRD §06 h3.9)
+        this.#bumpSuccessor(w1, w2, isSeries ? nextDisplay : undefined); // successor tail (PRD §06 h3.9)
       }
     }
     this.#evictBigramsIfOverCap(); // drains to BIGRAM_CAP within this call (§06 h2.38)
   }
 
   /** Bump-or-insert w2 in w1's successor array, keeping the array sorted
-   *  count-descending with byte-lex ascending `next` on equal counts at
-   *  ALL times (so topSuccessors() stays a pure O(1) read for the chain
-   *  machine, P2.M2.T2.S1). A bump can only move its entry toward the
-   *  head — counts never shrink; a fresh successor inserts at its sorted
-   *  position. Arrays hold ≤ 3 entries before insertion, so both shifts
-   *  are bounded constant work. On overflow (length 4) the sorted TAIL
-   *  drops: the lowest count and, on a count tie, the byte-lex LARGER
-   *  word. A newcomer therefore needs a strictly better sort key than the
-   *  incumbent worst to displace it — the PRD §06 h3.9 contract case
-   *  (three incumbents, then a 4th distinct successor at count 1) never
-   *  surfaces the newcomer, deterministically. */
-  #bumpSuccessor(w1: string, w2: string): void {
+   *  SERIES-FIRST with the count/byte-lex ladder at ALL times (so
+   *  topSuccessors() stays a pure O(1) read for the chain machine, P2.M2
+   *  chaining, and the series offers — 07 h2.53, plan 006): a proper-noun
+   *  series entry (spec 06 h3.6) outranks ANY ordinary entry regardless
+   *  of counts; among series entries — and among ordinary entries — the
+   *  order is count-descending with byte-lex ascending `next` on equal
+   *  counts. A bump can only move its entry toward the head — counts
+   *  never shrink; a fresh successor inserts at its sorted position.
+   *  Arrays hold ≤ 3 entries before insertion, so both shifts are
+   *  bounded constant work. On overflow (length 4) the sorted TAIL drops:
+   *  the worst entry under the EXTENDED order — an ordinary low-count
+   *  entry dies before any series entry, and among equals the byte-lex
+   *  LARGER word goes. A series newcomer therefore displaces the worst
+   *  ordinary incumbent, while an ordinary newcomer (however frequent)
+   *  never surfaces past series incumbents.
+   *
+   *  `nextDisplay` carries the SECOND word's run casing for series
+   *  bumps (undefined = ordinary): it marks the entry series BEFORE the
+   *  re-sort walk — an upgraded entry must be able to move toward the
+   *  head past ordinary entries — and keeps the FIRST series casing
+   *  (??=) so the offer's display is stable across re-sightings. */
+  #bumpSuccessor(w1: string, w2: string, nextDisplay?: string): void {
     const arr = this.#successorIndex.get(w1);
     if (arr === undefined) {
-      this.#successorIndex.set(w1, [{ next: w2, count: 1 }]);
+      this.#successorIndex.set(w1, [
+        {
+          next: w2,
+          count: 1,
+          ...(nextDisplay !== undefined
+            ? { series: true, nextDisplay }
+            : {}),
+        },
+      ]);
       return;
     }
     // One scan finds the successor AND its index (a second indexOf here
@@ -743,6 +836,13 @@ export class CandidateStore {
     }
     if (idx !== -1) {
       const existing = arr[idx];
+      // Series marking rides BEFORE the re-sort walk (plan 006): an
+      // upgraded entry must be able to move toward the head past ordinary
+      // entries. ??= keeps the FIRST series casing; never downgrade.
+      if (nextDisplay !== undefined) {
+        existing.series = true;
+        existing.nextDisplay ??= nextDisplay;
+      }
       existing.count++;
       while (idx > 0 && successorBefore(existing, arr[idx - 1])) {
         arr[idx] = arr[idx - 1];
@@ -751,7 +851,11 @@ export class CandidateStore {
       arr[idx] = existing;
       return;
     }
-    const entry: Successor = { next: w2, count: 1 };
+    const entry: Successor = {
+      next: w2,
+      count: 1,
+      ...(nextDisplay !== undefined ? { series: true, nextDisplay } : {}),
+    };
     let pos = arr.length;
     while (pos > 0 && successorBefore(entry, arr[pos - 1])) pos--;
     arr.splice(pos, 0, entry);
