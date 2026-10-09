@@ -655,8 +655,18 @@ export function createVisibilityMachine(
    *  - key = s.next PLAIN (no prefix — the widget has no liveKeyByValue;
    *    the plain key IS the store key, so T1.S2's tab-insert arming
    *    (which reads painted()) re-arms at s.next for free).
-   *  - display from the word's own store entry (most-recent-casing-wins,
-   *    same as word completions); evicted successor → lowercase key.
+   *  - SERIES DISPLAY (spec 07 h2.53, P1.M2.T2.S2 — provider
+   *    successorDisplay parity): a series successor displays AND
+   *    inserts its RUN CASING — Successor.nextDisplay, the capitalized
+   *    second word of the run as recorded at ingest ("The " offers and
+   *    inserts "Fed"). Ordinary successors keep the casing-resolver
+   *    interim: capDisplay (most-frequent capitalized form, spec 06
+   *    h2.43) when one exists, the bare key otherwise (the `||` also
+   *    covers the empty sentinel + evicted entry — never render "").
+   *    Candidate.display is GONE (P1.M2.T1.S2) — nextDisplay and
+   *    capDisplay are the only casing sources here. Typed-context
+   *    capitalization preservation stays the span-replace logic's job;
+   *    this seam only distinguishes series run casing from that form.
    *  - tier deliberately OMITTED: the arming gate is `rec.tier !== 0`,
    *    so undefined arms (chain members passed an anchored membership
    *    gate) — setting tier: 0 would silently break successor re-arm.
@@ -664,10 +674,9 @@ export function createVisibilityMachine(
    *    order is preserved by topSuccessors — no re-sort anywhere. */
   const chainShim = (s: Successor): RankedMatch => ({
     key: s.next,
-    // TODO(P1.M2.T2): Successor.nextDisplay replaces this interim —
-    // completion-time casing resolution (spec 04 h2.32); capDisplay or
-    // the bare key (the `||` covers the empty sentinel + evicted entry).
-    display: deps.store.get(s.next)?.capDisplay || s.next,
+    display: s.series && s.nextDisplay
+      ? s.nextDisplay
+      : (deps.store.get(s.next)?.capDisplay || s.next),
     description: "chain", // provenance marker (provider publishChain parity)
     salience: -s.count,
     sessionCount: s.count,
@@ -873,6 +882,17 @@ export function createVisibilityMachine(
         const succ: Successor[] = [];
         if (before === "" || /[ \t]$/.test(before)) {
           // (a) Zero-typed-char offer: cursor at an EMPTY word start.
+          // SERIES FIRST (spec 07 h2.53, P1.M2.T2.S2 — provider parity):
+          // topSuccessors already orders series entries ahead of
+          // ordinary ones (store.ts successorBefore — the series flag
+          // outranks ANY count; count desc → byte-lex asc within each
+          // group), and the slice preserves that order — the combined
+          // set IS the rank order (series items in run casing via
+          // chainShim), never re-sorted here. The cap applies to the
+          // COMBINED series+ordinary list, so a full cap never pushes
+          // series entries out of the offered top-N. One chain items
+          // set at the composition site below — never mixed with the
+          // ambient query.
           succ.push(
             ...deps.store
               .topSuccessors(armed.word)
@@ -954,6 +974,50 @@ export function createVisibilityMachine(
       // suppresses): a trailing space/tab with no @// anywhere before the
       // cursor is the close-on-space rule; any other no-fragment position
       // is the plain "nothing to offer" close.
+      const before = (lines[line] ?? "").slice(0, col);
+      // TYPED-WORD ARMING (spec 07 h2.53 idle transition, P1.M2.T2.S2 —
+      // provider.ts close-on-space twin, mirrored not forked): the chain
+      // is "armed by acceptance or by typing of a series member." Inside
+      // the close-on-space flavor ONLY (trailing space/tab, no '@'/'/'
+      // anywhere — the plain no-fragment close and cursor-move closes
+      // never arm), a space that just closed a TYPED word whose first
+      // letter is UPPERCASE and whose lowercase key carries SERIES
+      // successors arms the chain (typing "The " offers "Fed" at the
+      // next word start). Three gates mirror the provider exactly:
+      //   - UPPERCASE on the TYPED form (ASCII A–Z) — a lowercase typing
+      //     of a top-band word must never arm, or every prose "the "
+      //     would offer its run successor;
+      //   - the SERIES flag on a DIRECT topSuccessors(lowercased key)
+      //     consult (never store.get): a chain-only member — known only
+      //     to the successor index, never admitted as a candidate — arms
+      //     too, but a word with only ordinary successors is not a
+      //     series member and never arms;
+      //   - enableChaining + chain idle — the whole chain layer is inert
+      //     under the flag, and an already-armed chain never re-arms
+      //     (the armed branch runs before this site anyway; this guard
+      //     is cheap safety).
+      // Arm + STILL closeWith(now): the space closes the line (this
+      // branch's contract); the armed branch's zero-char offer answers
+      // the NEXT word-start tick — never paint from the arming site.
+      // grant.reset() beside the arm (an arm is an arm — identical to
+      // the Tab-insert arm site's fresh-grant discipline). No
+      // Tab-accept suppression exists anywhere on this path (spec 07
+      // h3.11 retired it); Tab deferral (h3.10) lives upstream of
+      // evaluate and is untouched.
+      if (/[ \t]$/.test(before) && !before.includes("@") && !before.includes("/")) {
+        const typed = before.match(/([A-Za-z][A-Za-z0-9_-]*)[ \t]$/)?.[1];
+        if (
+          typed !== undefined &&
+          deps.config.enableChaining &&
+          (deps.chain?.state?.() ?? null) === null &&
+          typed.charAt(0) >= "A" &&
+          typed.charAt(0) <= "Z" &&
+          deps.store.topSuccessors(typed.toLowerCase()).some((s) => s.series)
+        ) {
+          deps.chain?.arm?.(typed.toLowerCase());
+          grant.reset(); // fresh one-shot grant — an arm is an arm
+        }
+      }
       closeWith(now);
       return state();
     }

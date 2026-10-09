@@ -2145,3 +2145,155 @@ describe("line claim — the row is owned for the prompt's duration (spec §07, 
     expect(h.render()).toEqual(["hello", ""]); // blank again — owned
   });
 });
+
+// ── Typed-word arming + series-first offers (spec 07 h2.53, P1.M2.T2.S2) ────
+
+/** The the→Fed fixture, recorded the T1.S2 way: BOTH run members carry
+ *  the cap-run mark (store.recordBigramRuns: both-enriched ⇒ series:true,
+ *  nextDisplay = the second member's rawCasing). An ordinary the→market
+ *  pair rides the same key with a HIGHER count (×5) — series must still
+ *  lead (07 h2.53). "fed" is chain-only: never upserted as a word, the
+ *  successor index is its only existence. */
+const seedTheFedStore = (): CandidateStore => {
+  const store = seedStore([
+    ["the", "the"],
+    ["market", "Market"],
+  ]);
+  for (let i = 0; i < 5; i++) {
+    store.recordBigramRuns([["the", "market"]]);
+  }
+  store.recordBigramRuns([
+    [
+      { key: "the", rawCasing: "The", series: true },
+      { key: "fed", rawCasing: "Fed", series: true },
+    ],
+  ]);
+  return store;
+};
+
+describe("widget typed-word arming + series-first offers (spec 07 h2.53, P1.M2.T2.S2)", () => {
+  it("'The ' arms the chain and still closes; the NEXT word-start tick offers [Fed, Market] — series first in run casing", async () => {
+    const chain = statefulChain();
+    const grant: ChainGrantTracker = { tick: vi.fn(() => false), reset: vi.fn() };
+    const h = makeInsertHarness({ lines: ["The "], line: 0, col: 4 }, {
+      chain,
+      grant,
+      store: seedTheFedStore(),
+    });
+
+    h.press("x"); // forwarded text event → the machine evaluates "The "
+    await flushPaint();
+    expect(chain.arm).toHaveBeenCalledWith("the"); // armed by typing…
+    expect(grant.reset).toHaveBeenCalled(); // …with a fresh one-shot grant
+    // Series-first offer: the arming tick closes (arm-and-close — pinned
+    // deterministically at the machine level in widget-visibility.test.ts),
+    // and by the end of the flush the armed zero-char offer has painted —
+    // Fed (run casing) before Market, whether the offer landed on this
+    // tick or the settle-wake's re-evaluation (W1 ordering is not the
+    // contract here; the SET is).
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Fed",
+      "Market",
+    ]);
+  });
+
+  it("the combined-list cap applies after series-first ordering (series never pushed out)", async () => {
+    const chain = statefulChain();
+    const h = makeInsertHarness({ lines: ["The "], line: 0, col: 4 }, {
+      chain,
+      store: seedTheFedStore(),
+      config: cfg({ maxSuggestions: 1 }),
+    });
+    h.press("x"); // arm tick ("The ")
+    await flushPaint();
+    h.press("x"); // offer tick
+    await flushPaint();
+    expect(chain.state()).toEqual({ word: "the" });
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Fed", // the series entry survives the 1-slot cap; market (×5) is cut
+    ]);
+  });
+
+  it("lowercase 'the ' never arms (every prose 'the ' would otherwise offer)", async () => {
+    const chain = statefulChain();
+    const h = makeInsertHarness({ lines: ["the "], line: 0, col: 4 }, {
+      chain,
+      store: seedTheFedStore(),
+    });
+    h.press("x");
+    await flushPaint();
+    expect(chain.arm).not.toHaveBeenCalled();
+    expect(chain.state()).toBeNull();
+    expect(h.state.hidden).toBe(true); // the close still happened
+  });
+
+  it("uppercase with NO successors never arms", async () => {
+    const chain = statefulChain();
+    const h = makeInsertHarness({ lines: ["Zorp "], line: 0, col: 5 }, {
+      chain,
+      store: seedTheFedStore(), // no zorp successors
+    });
+    h.press("x");
+    await flushPaint();
+    expect(chain.arm).not.toHaveBeenCalled();
+    expect(chain.state()).toBeNull();
+  });
+
+  it("uppercase with only ORDINARY successors never arms (the series flag gates)", async () => {
+    const store = seedStore([["market", "Market"]]);
+    for (let i = 0; i < 3; i++) store.recordBigramRuns([["monday", "market"]]);
+    const chain = statefulChain();
+    const h = makeInsertHarness({ lines: ["Monday "], line: 0, col: 7 }, {
+      chain,
+      store,
+    });
+    h.press("x");
+    await flushPaint();
+    expect(chain.arm).not.toHaveBeenCalled(); // successors exist — none series
+    expect(chain.state()).toBeNull();
+  });
+
+  it("chain-only member arms via the direct consult: 'fed' was never a stored word", async () => {
+    const store = new CandidateStore();
+    store.recordBigramRuns([
+      [
+        { key: "the", rawCasing: "The", series: true },
+        { key: "fed", rawCasing: "Fed", series: true },
+      ],
+    ]);
+    const chain = statefulChain();
+    const h = makeInsertHarness({ lines: ["The "], line: 0, col: 4 }, {
+      chain,
+      store,
+    });
+    h.press("x");
+    await flushPaint();
+    expect(chain.arm).toHaveBeenCalledWith("the"); // consult, never store.get
+    expect(store.get("fed")).toBeUndefined(); // chain-only: no word entry
+    h.press("x"); // offer tick
+    await flushPaint();
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Fed", // nextDisplay run casing even with no word entry to consult
+    ]);
+  });
+
+  it("typed-through disarm: typing the offered word itself exact-equal-excludes and resets", async () => {
+    const chain = statefulChain();
+    const h = makeInsertHarness({ lines: ["The "], line: 0, col: 4 }, {
+      chain,
+      store: seedTheFedStore(),
+    });
+    h.press("x"); // arm tick
+    await flushPaint();
+    expect(chain.state()).toEqual({ word: "the" });
+    // The user types the offered word through: buffer "The Fed" — frag
+    // "Fed" IS the successor "fed" → exact-equal exclusion empties the
+    // set → (c) reset + fall through (typed-through disarm at the word).
+    h.buf.lines = ["The Fed"];
+    h.buf.col = 7;
+    h.press("x");
+    await flushPaint();
+    expect(chain.state()).toBeNull();
+    expect(h.state.hidden).toBe(true);
+  });
+});

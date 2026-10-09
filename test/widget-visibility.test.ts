@@ -1238,3 +1238,53 @@ describe("1-char ambient open (live-editor threshold clamp)", () => {
     expect(st.suppressUntilWordStart).toBe(true);
   });
 });
+
+// ── Typed-word arming × visibility interplay (spec 07 h2.53, P1.M2.T2.S2) ───
+
+describe("close-on-space typed-arming × visibility (P1.M2.T2.S2)", () => {
+  it("'The ' arms through an explicit-dismissal suppression, and the next tick's chain offer paints (intent bypass)", async () => {
+    // A stateful chain double: arm() through the REAL seam must flip
+    // state() — a fixed-null state() would make the armed branch dead.
+    let word: string | null = null;
+    const chain = {
+      state: vi.fn((): { word: string } | null => (word === null ? null : { word })),
+      arm: vi.fn((w: string) => {
+        word = w;
+      }),
+      reset: vi.fn(() => {
+        word = null;
+      }),
+    } as unknown as ChainMachine;
+    const store = new CandidateStore();
+    store.recordBigramRuns([
+      [
+        { key: "the", rawCasing: "The", series: true },
+        { key: "fed", rawCasing: "Fed", series: true },
+      ],
+    ]);
+    const { machine, editor } = await build({ store, chain });
+
+    // A prior word painted, then EXPLICITLY dismissed → suppression on.
+    editor.set("alpha", 5);
+    machine.onInput();
+    machine.onDismissed(true);
+    expect(machine.getState().suppressUntilWordStart).toBe(true);
+
+    // The space closes "The": match-null close flavor → TYPED-WORD
+    // ARMING under the suppression (arming is independent of it), and
+    // the line still closes.
+    editor.set("The ", 4);
+    machine.onInput();
+    expect(chain.arm).toHaveBeenCalledWith("the"); // armed while suppressed
+    expect(machine.getState().visible).toBe(false); // arm-and-close
+
+    // Next word-start tick: the chain offer paints THROUGH the
+    // suppression (chain offers are intent — the R4 bypass), series run
+    // casing via nextDisplay.
+    machine.onInput();
+    const st = machine.getState();
+    expect(st.visible).toBe(true);
+    expect(st.currentSet.map((i) => i.display)).toEqual(["Fed"]);
+    expect(machine.painted().map((m) => m.key)).toEqual(["fed"]);
+  });
+});
