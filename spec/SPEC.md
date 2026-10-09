@@ -49,8 +49,9 @@ behavior. Nothing else — JSDoc, README, plan artifacts — overrides it.
    debounced, but a single Tab keypress always resolves the current top or
    selected item immediately. Tab never opens, toggles, or summons the
    menu; the menu opens automatically on the 1st char of a matching word
-   (when candidates exist), on the 1st char after the trigger char, or at
-   the zero-char chain offer. Enter always submits — never accepts a
+   (when candidates exist), on the 1st char after the trigger char, at
+   the zero-char chain offer, and at the post-Tab extension offer (07).
+   Enter always submits — never accepts a
    completion (see 07).
 3. **The popup never flickers and never appears with zero candidates.**
    (Widget-path amendment, 2026-10: once the suggestion row is CLAIMED
@@ -90,6 +91,7 @@ behavior. Nothing else — JSDoc, README, plan artifacts — overrides it.
 | Trigger | Configurable trigger char (default `#`, 1st-char lookup); word matching effectively at 1 char (widget path: the line opens at word start by its own state machine; fallback path: pi-tui requests only at word starts) — the `threshold` config value is retained but inert (see 07) |
 | Popup | First appearance immediate by default; OPTIONAL hesitation gate (`menuDelayMs`, default 0 — 150/300 calibration attempts failed against real rhythm); subsequent set changes display-debounced ~100 ms; synchronous search every keystroke; hysteresis against flicker |
 | Phrases & chaining | v2 (M2): one word per completion, ALWAYS. There are no multi-word menu items. "Phrase support" = successor index + chained Tab completion: after a word is accepted, its most-likely successor is the top result with zero additional typed chars. Bigrams form between raw-text-adjacent admitted words (nothing but whitespace between, same line) and between all members of a capitalized run — series bigrams, including chain-only top-band members (04); series successors top the after-space offer, and the chain arms from Tab acceptance or a typed capitalized word boundary (07). Any other intervening character or word breaks the window |
+| Post-Tab extension offer (2026-10) | Tab-accept EXITS the suppression seam: after insertion the visibility machine runs normally, its first evaluation being the extension offer — a re-query with the fragment now equal to the completed word (exact-equal exclusion, 04, removes the completed word; ladder order shortest-first, so `implem` → Tab → `implement` → Tab → `implementation`, recursively). ≥1 candidate → fresh generation renders (Tab walks the ladder; typing narrows; Escape on it suppresses rest-of-word as ever); 0 candidates → disqualification close — NEVER suppresses, so the next qualifying edit, backspace included, reopens (sibling forks `implement`→`implements` dead-end recover by one backspace to `implement`, whose offer re-renders). Escape/boundary/Enter-submit keep rest-of-word suppression. Amends invariant 2's openings and 07 rule 0; retires 07's "immediate post-Tab re-offer guard" — exact-equal exclusion already defines what deserves to show post-Tab, so the seam no longer blinds the machine |
 | Language | English table v1; CJK runs skipped (known limitation); per-language tables possible later via format versioning |
 | Secrets | Shape/entropy gate rejects key-shaped strings (sk-, ghp_, long hex, high digit+symbol entropy). Default-on, no config |
 | Telemetry | None |

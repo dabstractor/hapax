@@ -192,14 +192,21 @@ inner editor sees them:
     keep working); the forwarded data is the verbatim input sequence.
     The fallback path performs no key handling — Escape behaves
     exactly as stock pi there.
-- **Explicit dismissal (Escape, boundary pass-through, Tab-accept,
-  Enter-submit — all through the same suppression seam) suppresses the
-  line for
+- **Explicit dismissal (Escape, boundary pass-through, Enter-submit —
+  all through the same suppression seam) suppresses the line for
   the REST OF THE WORD.** Re-open only at the next word start or
   trigger char. A disqualification close (candidates hit zero) does
   not suppress — the next qualifying keystroke reopens. Suppression
   hides CONTENT only: a claimed row renders blank through the
-  suppression window (Line claim above).
+  suppression window (Line claim above). **Tab-accept is NOT in the
+  seam (2026-10):** after a Tab insertion the visibility machine runs
+  normally — its first evaluation is the extension offer (below);
+  an empty offer is a disqualification close (never suppresses), so
+  the next qualifying edit — keystroke OR BACKSPACE — reopens. The
+  seam's retired Tab member existed to stop unearned re-pops of the
+  same menu after insertion; exact-equal exclusion (04) plus the
+  extension offer already define precisely what deserves to show
+  post-Tab, so the seam no longer needs to blind the machine.
   **Suppression lapse (2026-10 owner rule, live-observed wedge fix):
   suppression also ends the moment a tick OBSERVES the dismissed word
   occurrence GONE — the live buffer is a prefix of the dismissed
@@ -211,11 +218,15 @@ inner editor sees them:
   preceding space to delete) wedged forever: every retype was
   prefix-indistinguishable from same-word backspacing, and mid-prompt
   recovery demanded deleting the word AND the space before it. The
-  lapse only ever RELEASES (shows sooner): the completed word still on
-  screen never lapses (the buffer still reaches past its start — this
-  is exactly the immediate post-Tab re-offer guard), and EXTENDING the
-  dismissed word (the dismissed buffer a prefix of the live one) stays
-  suppressed for the rest of the word as before. The Enter-submit
+  lapse only ever RELEASES (shows sooner): the dismissed word
+  occurrence still on screen never lapses (the buffer still reaches
+  past its start), and EXTENDING the dismissed word (the dismissed
+  buffer a prefix of the live one) stays suppressed for the rest of
+  the word as before. (The former "immediate post-Tab re-offer
+  guard" is RETIRED 2026-10: Tab-accept no longer arms suppression
+  at all — Post-Tab extension offer below — so that wedge class is
+  gone; the lapse now serves only the Escape / boundary /
+  Enter-submit dismissals.) The Enter-submit
   variant's cleared buffer lapses on the next observed tick, so a
   single-word submitted prompt can no longer wedge the next prompt's
   prefix-sharing first word.
@@ -247,6 +258,68 @@ boundary arrows and Escape dismiss the line AND forward the press
 (the caret moves on the arrow; the forwarded Escape behaves exactly
 as stock pi). Outside those windows, zero key handling.
 
+### Post-Tab extension offer (2026-10 owner rule; status: adopted ahead of implementation — code lands with this spec)
+
+**Problem.** The 2026-10 progressive-completion ranking (04) is built
+for repeated-Tab ladders — shortest-first so proper-prefix siblings
+complete before their extensions, exact-equal exclusion so the
+completed word vanishes from the next offer ("the next Tab reaches
+the longer one") — but the suppression seam lumped Tab-accept into
+explicit dismissal (rest-of-word), and the lapse rule reaffirmed it
+("the immediate post-Tab re-offer guard"). The two collided: the
+first Tab wedged the word — no re-offer, and mid-word recovery
+demanded deleting the entire word (owner-reported live: `implem` →
+Tab → `implement`, then nothing until full backspace).
+
+**Rule.** Tab-accept EXITS the suppression seam. After a Tab
+insertion the visibility machine runs normally; its first evaluation
+is the **extension offer**: a re-query with the fragment now equal
+to the completed word.
+
+- Exact-equal exclusion (04) removes the completed word itself; the
+  offer is every live match of the completed word as a fragment —
+  in practice its proper-prefix extensions (tier 3), ranked by the
+  normal 04 rules (shortest key first).
+- **≥ 1 candidate → the offer renders as a FRESH generation** —
+  highlight on the first word, un-entered, boundary pass-through
+  available; the 100 ms swap debounce and hysteresis apply as to any
+  set change. Tab inserts the highlighted word and the rule applies
+  recursively — Tab-Tab-Tab walks the ladder monotonically. Typing
+  narrows the offer live; Space closes it (trailing-space rule) and
+  the chain offer fires at the next word start. Escape or boundary
+  pass-through on the offer is an explicit dismissal (rest-of-word
+  suppression, as ever).
+- **0 candidates (terminal word — the common case) → disqualification
+  close:** the line hides and NOTHING suppresses; the next qualifying
+  edit — keystroke OR BACKSPACE — reopens normally. Backspacing out
+  of a sibling fork (`implement` → `implements` dead-end) lands on
+  `implement`, whose offer re-renders (`implements | implementation`);
+  arrow or type-ahead (`a`) disambiguates. The anti-pop guard
+  survives only here, where nothing can extend.
+- Trigger-char completions (`#implem` → Tab) take the same rule: the
+  insertion consumes the trigger and the offer evaluates on the
+  inserted word.
+
+**Fork ruling (owner default, 2026-10): shortest-first stands.**
+When sibling extensions are stored (`implements` and
+`implementation`), the second Tab lands on the shorter and may
+dead-end; escape hatches are arrow→ + Tab, type-ahead narrowing, or
+the empty-offer backspace recovery above. Re-ranking extension
+offers longest-first was rejected — it would contradict 04 rule 2
+and break the monotone ladder.
+
+**Residual cost (owner-accepted):** a menu flash after Tab whenever
+an extension exists but is unwanted (`node` → brief `nodes`/
+`nodejs` offer before the space keystroke closes it). Informative
+and self-closing; Enter stays safe (always submits).
+
+**Fallback path:** the offer rides the same post-applyCompletion
+re-request the zero-char chain offer uses (M2 below); if pi-tui
+does not re-request after an apply, the fallback path degrades to
+no re-offer (suppression still never arms — the seam change is
+unconditional) — verify at implementation and PIN at the
+consumption site.
+
 ### Widget visibility state machine (auto-open, re-based)
 
 The widget path does not depend on pi-tui's request cadence (the
@@ -267,6 +340,11 @@ on each keystroke:
    hidden (flicker hysteresis carried over: narrowing must not
    close-and-reopen).
 5. The startup restore gate (below) applies identically.
+6. The post-Tab extension offer (above) is an intent-driven show: it
+   evaluates at Tab-insert and renders immediately (hesitation-gate
+   bypass — rule 2), handing control back to steps 1–5 for every
+   subsequent edit; an empty offer hides per steps 2–3 with NO
+   suppression.
 
 Throughout this machine, "hidden" is a CONTENT verdict: while the row
 is claimed (Line claim above), every hidden state renders the row
@@ -386,11 +464,12 @@ Four interacting rules, implemented in the provider:
    (Widget path: the proxy consumes Tab while the line is visible and
    inserts the highlighted word — exactly this rule. Fallback path:
    the forced single-item return below.)
-   Tab must never open, toggle, summon, or expand the menu. Menu visibility
-   is driven exclusively by typing: the menu opens automatically on the
+   Tab must never open, toggle, summon, or expand the menu. Menu
+   visibility is automatic: the menu opens on the
    1st char of any word matching a candidate, on the 1st char after the
-   trigger char, and at the zero-char chain offer (see chained
-   completion). There is no manual open gesture of any kind, and
+   trigger char, at the zero-char chain offer, and at the post-Tab
+   extension offer (see chained completion / Post-Tab extension
+   offer). There is no manual open gesture of any kind, and
    completion is always exactly one keypress.
 
 1. **Synchronous search, every keystroke.** `getSuggestions` runs the store
@@ -422,7 +501,8 @@ Four interacting rules, implemented in the provider:
      Keystroke times come from the editor
      proxy's input clock; without an editor factory the gate degrades
      to query-gap timing (rarely suppresses). Explicit intent —
-     trigger-char results and armed-chain successors — bypasses the
+     trigger-char results, armed-chain successors, and post-Tab
+     extension offers — bypasses the
      gate and shows immediately. Forced (Tab) requests are unaffected
      (rule 0/1.5). `menuDelayMs: 0` restores the pre-2026-09 immediate
      first paint.
@@ -549,8 +629,9 @@ path: the line hides at trailing space by its own state machine). pi's
   delegation; `@`/`/`-bearing text keeps stock behavior; the armed
   chain's zero-char offer (evaluated earlier) is untouched.
 - **Tab never opens the menu.** Menu opening is automatic (typing-driven)
-  only: 1st-char word match, 1st char after the trigger char, or the
-  zero-char chain offer. There is no manual open gesture; Tab completes,
+  only: 1st-char word match, 1st char after the trigger char, the
+  zero-char chain offer, or the post-Tab extension offer. There is no
+  manual open gesture; Tab completes,
   full stop.
 - Fallback path: Escape, arrows, backspace, space behave exactly as
   stock pi. Widget path: arrows and Escape are consumed only after
@@ -668,6 +749,10 @@ armed(W):
 - The chain state resets on every `before_agent_start` (new user turn).
 - Trigger-char completions also arm the chain (they're whole-word
   insertions).
+- Extension-offer acceptances arm the chain like any Tab acceptance —
+  the chain ends armed for the FINAL accepted word (`implem` → Tab →
+  `implement` → Tab leaves armed(`implementation`), not
+  armed(`implement`)).
 
 ## Result item shape
 

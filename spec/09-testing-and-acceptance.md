@@ -210,6 +210,16 @@
   after navigation never completes from abandoned-branch vocabulary
   (store purity is asserted at the core layer; here assert the widget
   reads the new pipeline instance).
+- Post-Tab extension offer (2026-10, spec 07): Tab-accept arms NO
+  suppression. Ladder: `implem` → Tab inserts `implement` → extension
+  offer renders (exact-equal excludes `implement`; shortest-first:
+  `implements | implementation`) → Tab inserts top → recursion until
+  the empty offer dismisses WITHOUT suppression; backspace after the
+  empty-offer dismiss re-queries (fragment `implement` → offer
+  re-renders); Escape/boundary on an offer suppresses rest-of-word
+  (seam retained); the offer is a fresh generation (highlight reset,
+  pass-through live); menuDelayMs bypass (intent show); extension
+  accepts arm the chain on the FINAL accepted word.
 
 ## Integration acceptance (manual or scripted via pi)
 
@@ -267,6 +277,11 @@
    bound. Item 4 (compaction survival) re-checked: unaffected absent a
    tree navigation; a post-compaction `/tree` rebuilds from the branch as
    replayable (accepted, 05).
+10. **Post-Tab extension offer (2026-10):** live: type `implem`, Tab
+    (→ `implement`) — the extension offer must appear without further
+    typing — Tab again (→ `implementation`, or `implements` per the
+    store), backspace recovery on a sibling fork, and Enter immediately
+    after a Tab completion still submits (never accepts the offer).
 
 ## Live verification technique (binding)
 

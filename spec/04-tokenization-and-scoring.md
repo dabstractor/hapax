@@ -641,7 +641,11 @@ tier-0 anchorless pass, and in the chain membership filter
 characters (pi's applyCompletion adds no trailing space — the accept
 is a byte-identical no-op), and under rule 2 it would hold the top
 slot and stall its own ladder. The fully-typed word's disappearance
-from the menu is the signal that an extension remains.
+from the menu is the signal that an extension remains. The post-Tab
+extension offer (07) renders exactly this set: after a Tab insertion
+the fragment equals the completed word, and its proper-prefix
+extensions are the ladder's next rung — repeated Tab walks it
+(`implem` → `implement` → `implementation`).
 
 **Zero-fragment listing** (`#` alone — no fragment, no tiers):
 sessionCount descending, then rules 3–4. The listing keeps its own
