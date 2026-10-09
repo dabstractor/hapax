@@ -400,3 +400,64 @@ describe("chain arming × match tier (plan 004: tier-0 never arms)", () => {
     expect(chain.state()).toBeNull(); // tier-0: NEVER arms (spec §04)
   });
 });
+
+describe("typed-word arming — grant interplay (spec 07 h2.53, plan 006)", () => {
+  /** Series fixture: the→Fed series pair ×4 (run casing "Fed"), plus the
+   *  ordinary the→file ×2 — the h2.53 battery store from
+   *  test/provider.test.ts, rebuilt here for the flag-gate interplay. */
+  const seedThe = (): CandidateStore => {
+    const s = new CandidateStore();
+    for (let i = 0; i < 4; i++) {
+      s.recordBigramRuns([
+        [
+          { key: "the", rawCasing: "The", series: true },
+          { key: "fed", rawCasing: "Fed", series: true },
+        ],
+      ]);
+    }
+    for (let i = 0; i < 2; i++) s.recordBigramRuns([["the", "file"]]);
+    return s;
+  };
+
+  it("enableChaining:false → typing 'The ' never arms (flag gates typed arming like every arm site)", async () => {
+    const store = seedThe(); // successor index IS present — the flag is the only gate
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(
+      store,
+      cfg({ enableChaining: false }),
+      editingCurrent(),
+      chain,
+    );
+
+    expect(await suggest(provider, ["The "], 0, 4)).toBeNull(); // close-on-space unchanged
+    expect(chain.state()).toBeNull(); // typed arming is part of the gated layer
+  });
+
+  it("gated-true control: typed 'The ' arms and the granted offer paints; typing through spends it", async () => {
+    const store = seedThe();
+    const chain = createChainMachine();
+    const provider = createHapaxProvider(
+      store,
+      cfg({ enableChaining: true }),
+      editingCurrent(),
+      chain,
+    );
+
+    // The space arms (idle→armed transition) and closes — the zero-char
+    // offer comes from the next word-start query, freshly granted.
+    expect(await suggest(provider, ["The "], 0, 4)).toBeNull();
+    expect(chain.state()).toEqual({ word: "the" });
+    const offer = await suggest(provider, ["The "], 0, 4);
+    expect(offer?.items.map((i) => i.value)).toEqual(["Fed", "file"]); // series-first
+
+    // Typing into the granted offer narrows it (a query per char while
+    // the menu is open — same word, no spend), and the space that ends
+    // the typed-through word then spends the one-shot grant and disarms
+    // — identical to the acceptance-arming grant semantics.
+    expect(
+      (await suggest(provider, ["The f"], 0, 5))?.items.map((i) => i.value),
+    ).toEqual(["Fed", "file"]);
+    expect(await suggest(provider, ["The fed "], 0, 8)).toBeNull();
+    expect(chain.state()).toBeNull();
+  });
+});

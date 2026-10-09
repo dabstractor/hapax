@@ -432,14 +432,20 @@ export function createHapaxProvider(
         // behavior, reachable only past a 20k-store eviction of a
         // recently-seen word. Arming stays lowercase: liveKeyByValue maps
         // the display value to CHAIN_KEY_PREFIX + s.next (the key).
-        // TODO(P1.M2.T2): Successor.nextDisplay logic replaces this
-        // interim fallback — completion-time casing resolution (spec 04
-        // h2.32) collapsed Candidate casing to the tallies; capDisplay
-        // (when a capitalized sighting exists) is the best interim label,
-        // the bare key otherwise (the `||` also covers the empty-
-        // sentinel and evicted-entry cases — never render "").
+        // SERIES DISPLAY (spec 07 h2.53): a series successor displays its
+        // RUN CASING — Successor.nextDisplay, the capitalized second word
+        // of the run as recorded at ingest — at the zero-char offer and
+        // on acceptance ("The " offers "Fed"). Ordinary successors keep
+        // the casing-resolver form: capDisplay (most-frequent capitalized
+        // form, spec 06 h2.43) when one exists, the bare key otherwise
+        // (the `||` also covers the empty-sentinel and evicted-entry
+        // cases — never render ""). Typed-context capitalization
+        // preservation is the resolver's job (P1.M2.T1.S2); this seam
+        // only distinguishes series run casing from that form.
         const successorDisplay = (s: Successor): string =>
-          store.get(s.next)?.capDisplay || s.next;
+          s.series && s.nextDisplay
+            ? s.nextDisplay
+            : store.get(s.next)?.capDisplay || s.next;
         const publishChain = (succ: readonly Successor[], prefix: string) => {
           const items = succ.map((s) => ({
             value: successorDisplay(s), // BARE — pi-tui splices verbatim at prefix ""
@@ -469,6 +475,12 @@ export function createHapaxProvider(
         // chars, so the fragment regex below cannot match here; the
         // word-start check runs first to make the intent explicit.
         if (before === "" || /[ \t]$/.test(before)) {
+          // SERIES FIRST (spec 07 h2.53): topSuccessors already orders
+          // series entries ahead of ordinary ones (store.ts successorBefore:
+          // the series flag outranks ANY count; count desc → byte-lex asc
+          // within each group), and publishChain preserves that order —
+          // the combined published set IS the rank order (series items in
+          // run casing via successorDisplay), never re-sorted here.
           const succ = store
             .topSuccessors(armed.word)
             .slice(0, config.maxSuggestions); // ≤3 stored; cap for symmetry
@@ -557,6 +569,43 @@ export function createHapaxProvider(
         !beforeText.includes("@") &&
         !beforeText.includes("/")
       ) {
+        // TYPED-WORD ARMING (spec 07 h2.53 idle transition, plan 006):
+        // "State machine, armed by acceptance or by typing of a series
+        // member." A space that just closed a TYPED word whose first
+        // letter is UPPERCASE and whose lowercase key carries SERIES
+        // successors arms the chain (typing "The " offers "Fed" at the
+        // next word start). Three gates are load-bearing:
+        //   - UPPERCASE on the TYPED form — a lowercase typing of a
+        //     top-band word must never arm, or every prose "the " would
+        //     offer its run successor;
+        //   - the SERIES flag on the successor consult — a direct
+        //     topSuccessors(lowercased key) read (never store.get): a
+        //     CHAIN-ONLY member — known only to the successor index,
+        //     never admitted as a candidate — must arm too, but a word
+        //     with only ordinary successors is not a series member and
+        //     never arms;
+        //   - enableChaining + chain.state() === null — the whole chain
+        //     layer is inert under the flag, and an already-armed chain
+        //     never re-arms (the armed branch runs before this site
+        //     anyway; this guard is cheap safety).
+        // Arm + STILL return null: the space closes the menu (the h2.51
+        // close-on-space contract below is untouched); the armed branch's
+        // zero-char offer answers the NEXT word-start query. grant.reset()
+        // beside chain.arm — an arm is an arm, so typed arming gets
+        // exactly one granted offer, identical to the applyCompletion
+        // arm sites.
+        const typed = beforeText.match(/([A-Za-z][A-Za-z0-9_-]*)\s$/)?.[1];
+        if (
+          typed !== undefined &&
+          config.enableChaining &&
+          chain.state() === null &&
+          typed.charAt(0) >= "A" &&
+          typed.charAt(0) <= "Z" &&
+          store.topSuccessors(typed.toLowerCase()).some((s) => s.series)
+        ) {
+          chain.arm(typed.toLowerCase());
+          grant.reset(); // fresh one-shot grant (spec/07:450–457) — an arm is an arm
+        }
         lastLive = null;
         liveKeyByValue.clear();
         return null;

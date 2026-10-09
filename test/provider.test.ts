@@ -42,6 +42,7 @@ import type { Dictionary, Sighting } from "../src/core/types.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
 import {
+  createChainMachine,
   createDisplayProvider,
   createHapaxProvider,
   extractMatchState,
@@ -713,5 +714,143 @@ describe("path-candidate interaction (rule 4d: first segment surfaces, then stoc
     expect(result).toBe(STOCK_SENTINEL);
     expectUntouchedArgs(current, lines, 0, 12, options);
     expect(inner.__hapaxLive()).toBeNull();
+  });
+});
+
+describe("series-first offers + typed arming (spec 07 h2.53)", () => {
+  /** Series fixture (spec 06 h3.6/h3.7): the→Fed series pair ×4 (run
+   *  casing "Fed" — the h2.53 battery's headline), the→file ordinary ×2,
+   *  dog→bone ordinary (an uppercase-typed word with NO series
+   *  successors must never arm), and the CHAIN-ONLY member Zephyrion —
+   *  never admitted as a word candidate, known only to the successor
+   *  index — whose successor is the series Fed. */
+  const seriesStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    for (let i = 0; i < 4; i++) {
+      s.recordBigramRuns([
+        [
+          { key: "the", rawCasing: "The", series: true },
+          { key: "fed", rawCasing: "Fed", series: true },
+        ],
+      ]);
+    }
+    for (let i = 0; i < 2; i++) s.recordBigramRuns([["the", "file"]]);
+    s.recordBigramRuns([["dog", "bone"]]);
+    s.recordBigramRuns([
+      [
+        { key: "zephyrion", rawCasing: "Zephyrion", series: true },
+        { key: "fed", rawCasing: "Fed", series: true },
+      ],
+    ]);
+    put(s, "zendesk", 3, 9, { display: "Zendesk" }); // re-arm vehicle
+    return s;
+  };
+
+  it("'The ' (space) arms by typing; the next word start offers Fed first (series-first, run casing)", async () => {
+    const store = seriesStore();
+    const chain = createChainMachine();
+    const inner = createHapaxProvider(store, cfg(), makeCurrent(), chain);
+
+    // The space query closes (null) AND arms — the h2.53 idle transition:
+    // uppercase typed first letter + series successors on the lowercase
+    // key. The offer itself comes from the NEXT word-start query.
+    expect(await suggest(inner, ["The "], 0, 4)).toBeNull();
+    expect(chain.state()).toEqual({ word: "the" }); // lowercase key arms
+
+    const offer = await suggest(inner, ["The "], 0, 4);
+    expect(offer?.prefix).toBe(""); // zero-char offer
+    expect(offer?.items.map((i) => i.value)).toEqual([
+      "Fed", // series first — nextDisplay RUN CASING, count 4
+      "file", // ordinary, count 2
+    ]);
+    // Published order IS rank order (topSuccessors series-first; never
+    // re-sorted): the lastLive seam mirrors the rendered items.
+    expect(inner.__hapaxLive()!.matches.map((m) => m.display)).toEqual([
+      "Fed",
+      "file",
+    ]);
+  });
+
+  it("lowercase 'the ' never arms — even with successors", async () => {
+    const store = seriesStore();
+    const chain = createChainMachine();
+    const inner = createHapaxProvider(store, cfg(), makeCurrent(), chain);
+
+    expect(await suggest(inner, ["the "], 0, 4)).toBeNull(); // space still closes
+    expect(chain.state()).toBeNull(); // lowercase typing never arms
+    // And the next word-start query stays chain-free (no offer to
+    // displace the normal path).
+    expect(await suggest(inner, ["the "], 0, 4)).toBeNull();
+  });
+
+  it("uppercase word with NO series successors never arms (dog→bone is ordinary)", async () => {
+    const store = seriesStore();
+    const chain = createChainMachine();
+    const inner = createHapaxProvider(store, cfg(), makeCurrent(), chain);
+
+    expect(await suggest(inner, ["Dog "], 0, 4)).toBeNull();
+    expect(chain.state()).toBeNull();
+  });
+
+  it("chain-only member: a typed uppercase word present only in the successor index arms", async () => {
+    const store = seriesStore();
+    expect(store.get("zephyrion")).toBeUndefined(); // never a word candidate
+    const chain = createChainMachine();
+    const inner = createHapaxProvider(store, cfg(), makeCurrent(), chain);
+
+    expect(await suggest(inner, ["Zephyrion "], 0, 10)).toBeNull();
+    expect(chain.state()).toEqual({ word: "zephyrion" }); // direct topSuccessors consult
+    const offer = await suggest(inner, ["Zephyrion "], 0, 10);
+    expect(offer?.items.map((i) => i.value)).toEqual(["Fed"]); // its series successor
+  });
+
+  it("typed-through disarm + acceptance re-arm: the grant interplay is identical for typed arming", async () => {
+    const store = seriesStore();
+    const chain = createChainMachine();
+    const inner = createHapaxProvider(store, cfg(), makeCurrent(), chain);
+
+    await suggest(inner, ["The "], 0, 4); // arms; grant fresh
+    // The granted zero-char offer paints…
+    expect(
+      (await suggest(inner, ["The "], 0, 4))?.items.map((i) => i.value),
+    ).toEqual(["Fed", "file"]);
+
+    // …typing INTO the offer narrows it (same word — no grant spend).
+    const narrowed = await suggest(inner, ["The f"], 0, 5);
+    expect(narrowed?.items.map((i) => i.value)).toEqual(["Fed", "file"]);
+    expect(chain.state()).toEqual({ word: "the" });
+
+    // Moving past the typed-through word (a space) spends the one-shot
+    // grant: the chain DISARMS and the space closes (null) on the SAME
+    // keystroke — the normal path answers from here.
+    expect(await suggest(inner, ["The f "], 0, 6)).toBeNull();
+    expect(chain.state()).toBeNull();
+
+    // Acceptance re-arms (an arm is an arm): a live word item accepted
+    // through applyCompletion arms with a fresh grant.
+    const menu = await suggest(inner, ["Zen"], 0, 3);
+    expect(menu?.items.map((i) => i.value)).toContain("Zendesk");
+    inner.applyCompletion(
+      ["Zen"],
+      0,
+      3,
+      { value: "Zendesk", label: "Zendesk" },
+      "Zen",
+    );
+    expect(chain.state()).toEqual({ word: "zendesk" });
+  });
+
+  it("enableChaining:false gates typed arming (the whole chain layer stays inert)", async () => {
+    const store = seriesStore();
+    const chain = createChainMachine();
+    const inner = createHapaxProvider(
+      store,
+      cfg({ enableChaining: false }),
+      makeCurrent(),
+      chain,
+    );
+
+    expect(await suggest(inner, ["The "], 0, 4)).toBeNull(); // close-on-space unchanged
+    expect(chain.state()).toBeNull(); // never arms under the flag
   });
 });
