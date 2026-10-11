@@ -1782,6 +1782,9 @@ describe("widget post-Tab extension offer (spec 07 h3.11, P4.M1.T1.S1)", () => {
     ]); // threshold fragment "implement" — exact-equal excluded
     expect(st.suppressUntilWordStart).toBe(false);
     expect(h.state.highlightIndex).toBe(0);
+    // Trigger completions ARM (spec 07 h2.53; spec 09 h2.59 battery
+    // merge) — the accepted record is tier 3 → armed at the key.
+    expect((chain.arm as Mock).mock.calls[0]?.[0]).toBe("implement");
   });
 
   it("chain arming preserved: after the offer evaluation the chain ends ARMED at the final accepted word with a fresh grant — including the mid-ladder (c)-reset case", async () => {
@@ -1824,7 +1827,7 @@ describe("widget post-Tab extension offer (spec 07 h3.11, P4.M1.T1.S1)", () => {
     expect(grantResets).toHaveBeenCalledTimes(2); // fresh grant at EVERY arm site
   });
 
-  it("Escape on the offer still suppresses (the seam's remaining members unchanged) — the Tab-vs-Escape contrast", async () => {
+  it("Escape on the offer still suppresses (the seam's remaining members unchanged) — the Tab-vs-Escape contrast; the suppression HOLDS for the rest of the word", async () => {
     const chain = spiedChain();
     const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
       chain,
@@ -1839,6 +1842,16 @@ describe("widget post-Tab extension offer (spec 07 h3.11, P4.M1.T1.S1)", () => {
 
     expect(h.state.hidden).toBe(true);
     expect(h.machine.getState().suppressUntilWordStart).toBe(true); // suppressed for the rest of the word
+
+    // Rest-of-word proof (spec 09 h2.59 battery merge): with the word
+    // still in progress, the next keystroke STAYS suppressed — only a
+    // word start lifts the seam (S2's battery extends this pin).
+    h.buf.lines = ["implementation"];
+    h.buf.col = 14;
+    h.press("x");
+    await flushPaint();
+    expect(h.state.hidden).toBe(true);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(true);
   });
 });
 
@@ -2516,5 +2529,300 @@ describe("widget typed-word arming + series-first offers (spec 07 h2.53, P1.M2.T
     await flushPaint();
     expect(chain.state()).toBeNull();
     expect(h.state.hidden).toBe(true);
+  });
+});
+
+// ─── Post-Tab extension offer battery (spec 09 h2.59 / 07 h3.11, P4.M1.T1.S2) ───
+// The normative battery for S1's seam change: Tab-accept EXITS the
+// suppression seam, the ladder recurses through fresh-generation offers,
+// the empty offer DISMISSES (never suppresses), and recovery is ONE
+// backspace. Machine-painted throughout (forwarded keystroke + flushPaint)
+// wherever painted()/arming matters — never show()-driven. S1's
+// provisional battery above pins the fresh-generation / menuDelayMs /
+// trigger / real-machine-machine faces; the UNION of the two describes is
+// the complete h2.59 bullet.
+describe("widget key handling — Post-Tab extension offer battery (spec 09 h2.59 / 07 h3.11)", () => {
+  /** The fork store: 'implements' DEAD-ENDS ("implementation" is not a
+   *  prefix extension of it — 'a' ≠ 's' at index 8), which is exactly the
+   *  h3.11 fork the battery must pin. Ranked shortest-key-first. */
+  const forkStore = (): CandidateStore =>
+    seedStore([
+      ["implement", "implement"],
+      ["implements", "implements"],
+      ["implementation", "implementation"],
+    ]);
+
+  /** Run to the shared mid-ladder state: the offer [implements |
+   *  implementation] is live over buffer "implement" — machine-painted
+   *  (forwarded keystroke + Tab), never show()-driven (painted() must be
+   *  real for the insert's rec capture). */
+  const rung1 = async () => {
+    const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
+      chain: spiedChain(),
+      store: forkStore(),
+    });
+    h.press("x"); // forwarded char — the W1 tick reads the live buffer "implem"
+    await flushPaint(); // paints query("implem"): top "implement" (tier 3, shortest)
+    expect(h.machine.painted()[0]?.key).toBe("implement"); // fixture sanity
+    h.press("\t"); // RUNG 1 — consumed, synchronous insert + offer evaluation
+    expect(h.buf.lines).toEqual(["implement"]);
+    expect(h.machine.getState().visible).toBe(true); // the offer is live
+    return h;
+  };
+
+  it("the ladder recurses: implem → Tab → implement + offer [implements | implementation] → Tab → the EMPTY offer dismisses WITHOUT suppression, chain armed at the FINAL accepted word (spec 09 h2.59 / 07 h3.11 fork ruling)", async () => {
+    const chain = spiedChain();
+    const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
+      chain,
+      store: forkStore(),
+    });
+    h.press("x"); // forwarded char ticks the machine (W1) — reads "implem"
+    await flushPaint();
+    expect(h.machine.painted()[0]?.key).toBe("implement"); // fixture sanity
+    // PLURAL PRUNING (spec 04, 2026-09 owner rule): the PRE-Tab set is
+    // [implement, implementation] — "implements" (="implement"+"s") is
+    // pruned while the singular is offered. It ENTERS the offer only
+    // after the Tab's exact-equal exclusion removes "implement".
+    expect(h.machine.painted().map((r) => r.display)).toEqual([
+      "implement",
+      "implementation",
+    ]);
+
+    h.innerCalls.length = 0; // drop the fixture keystroke — the Tab's consumption is asserted below
+    h.press("\t"); // RUNG 1 — synchronous insert + offer evaluation
+    expect(h.buf.lines).toEqual(["implement"]); // the insert is real (setText)
+    expect(h.innerCalls).toEqual([]); // fully consumed — never hijacks
+    expect(h.machine.getState().visible).toBe(true); // the extension offer
+    // Exact-equal exclusion dropped "implement" (query.ts `if (k ===
+    // lower) continue`); shortest-first ranks the fork:
+    // implements(10) before implementation(14).
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "implements",
+      "implementation",
+    ]);
+    // Tab-accept EXITS the seam — the offer arms NO suppression:
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+    expect(h.state.highlightIndex).toBe(0); // fresh generation…
+    expect(h.state.interacted).toBe(false); // …reset + un-entered
+    expect(h.requestRender).toHaveBeenCalled(); // the offer asked for its repaint
+
+    h.press("\t"); // RUNG 2 — accepts the offer top
+    expect(h.buf.lines).toEqual(["implements"]);
+    // query("implements") = []: "implementation".startsWith("implements")
+    // is FALSE ('a' ≠ 's' at index 8) — the empty offer DISMISSES…
+    expect(h.machine.getState().visible).toBe(false);
+    // …WITHOUT suppression (an R4 disqualification close, never the seam):
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+    // Armed at the FINAL accepted word — the sequence is exact and never
+    // goes stale (h2.53 amendment + h3.11 fork ruling):
+    expect((chain.arm as Mock).mock.calls.map((c) => c[0])).toEqual([
+      "implement",
+      "implements",
+    ]);
+  });
+
+  it("sibling-fork recovery: ONE backspace after the empty-offer dismiss re-queries 'implement' and the offer re-renders; typing 'a' disambiguates (spec 09 h2.59 / 07 h3.11)", async () => {
+    // Fake timers (the widget-visibility idiom): frozen Date makes every
+    // reopen fresh (closeAt === now), and the narrowing keystroke below
+    // lands INSIDE the 100 ms R6 swap-debounce window — its promotion is
+    // driven by advanceTimersByTime, deterministic. (The hysteresis
+    // itself is machine-pinned in widget-visibility.test.ts R2/R6.)
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const h = await rung1();
+      h.press("\t"); // RUNG 2 → "implements"; empty offer dismissed
+      expect(h.machine.getState().visible).toBe(false);
+      expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+
+      // ONE backspace — the fake inner applies no keys; hand-set the
+      // buffer the real editor would hold ("implements" minus its last
+      // char):
+      h.buf.lines = ["implement"];
+      h.buf.col = 9;
+      h.innerCalls.length = 0; // drop the fixture keystroke — the backspace is asserted below
+      h.press("\x7f"); // line hidden → forwards verbatim
+      expect(h.innerCalls).toEqual(["\x7f"]);
+      await flushPaint(); // W1 tick reads "implement" → the offer re-renders
+      expect(h.machine.getState().visible).toBe(true);
+      expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+        "implements",
+        "implementation",
+      ]); // exact-equal removed "implement" — no plural pair, pruning silent
+      expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+
+      // Type-ahead disambiguates toward the wanted sibling (h3.11): the
+      // narrowed set arrives INSIDE the swap-debounce window, so it is
+      // PARKED first (flicker hysteresis) and promotes at +100 ms:
+      h.buf.lines = ["implementa"];
+      h.buf.col = 10;
+      h.press("a");
+      expect(h.innerCalls).toEqual(["\x7f", "a"]);
+      await flushPaint(); // the W1 evaluation runs — the swap parks
+      vi.advanceTimersByTime(100); // the parked swap promotes
+      expect(h.machine.getState().visible).toBe(true);
+      expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+        "implementation",
+      ]); // "implements".startsWith("implementa") is false
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("boundary pass-through is live on the fresh offer: un-entered ↑/← forwards verbatim AND dismisses+suppresses on the SAME press (spec 09 h2.59 / 07 h3.9 v2)", async () => {
+    for (const key of [UP, LEFT]) {
+      const h = await rung1();
+      expect(h.state.interacted, `key ${JSON.stringify(key)}`).toBe(false); // un-entered offer
+      const before = h.onKeystroke.mock.calls.length;
+      h.innerCalls.length = 0; // drop the fixture keystroke
+      h.press(key);
+      expect(h.innerCalls, `key ${JSON.stringify(key)}`).toEqual([key]); // forwarded verbatim
+      expect(
+        h.machine.getState().visible,
+        `key ${JSON.stringify(key)}`,
+      ).toBe(false); // dismissed…
+      expect(
+        h.machine.getState().suppressUntilWordStart,
+        `key ${JSON.stringify(key)}`,
+      ).toBe(true); // …+ suppressed on the SAME press
+      expect(h.state.interacted, `key ${JSON.stringify(key)}`).toBe(false); // pass-through never enters the generation
+      expect(h.onKeystroke, `key ${JSON.stringify(key)}`).toHaveBeenCalledTimes(
+        before + 1,
+      ); // exactly one tick for the pass-through press
+    }
+  });
+
+  it("fresh generation: → then Tab-inserting items[1] resets the NEXT offer to highlight 0 / un-interacted (spec 09 h2.59 / 07 h3.11)", async () => {
+    // Derived fixture: the post-Tab offer must be NON-empty for the
+    // reset to be observable, so items[1] needs its own extensions —
+    // "implemen"(8) slots above "implement" in the ranking so items[1]
+    // IS "implement". (Inserting "implements" itself could only ever
+    // yield an empty offer — nothing stored extends it.)
+    const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
+      chain: spiedChain(),
+      store: seedStore([
+        ["implemen", "implemen"],
+        ["implement", "implement"],
+        ["implements", "implements"],
+        ["implementation", "implementation"],
+      ]),
+    });
+    h.press("x");
+    await flushPaint();
+    // PLURAL PRUNING (spec 04): "implements" is pruned while the
+    // singular "implement" is in the set — the paint is the pruned set:
+    expect(h.machine.painted().map((r) => r.display)).toEqual([
+      "implemen",
+      "implement",
+      "implementation",
+    ]);
+
+    h.innerCalls.length = 0; // drop the fixture keystroke
+    h.press(RIGHT); // enter the generation: 0 → 1 (consumed navigate)
+    expect(h.state.highlightIndex).toBe(1);
+    expect(h.state.interacted).toBe(true);
+    expect(h.innerCalls).toEqual([]);
+
+    h.press("\t"); // inserts items[1] = "implement"; the offer evaluates FRESH
+    expect(h.buf.lines).toEqual(["implement"]);
+    expect(h.machine.getState().visible).toBe(true);
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "implements",
+      "implementation",
+    ]);
+    expect(h.state.highlightIndex).toBe(0); // set() reset the generation
+    expect(h.state.interacted).toBe(false); // …and the entry flag with it
+  });
+
+  it("the residual menu flash self-closes on Space: R3 trailing-space close, never suppression (spec 09 h2.59 / 07 h3.11 residual cost)", async () => {
+    const h = await rung1();
+    h.buf.lines = ["implement "]; // the space lands in the buffer…
+    h.buf.col = 10;
+    h.innerCalls.length = 0; // drop the fixture keystroke
+    h.press(" "); // …forwards verbatim; its W1 evaluation is the R3 close
+    expect(h.innerCalls).toEqual([" "]);
+    await flushPaint();
+    expect(h.machine.getState().visible).toBe(false);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+  });
+
+  it("Enter immediately after a Tab completion still SUBMITS — the offer is never accepted (spec 09 h2.59 / 07 h2.48)", async () => {
+    const h = await rung1();
+    // Ordering proof (mirrors the Enter describe): the machine's
+    // dismissal seam must precede the single inner delegation.
+    h.calls.length = 0; // drop the Tab insert's setText/caret entries
+    const realDismissed = h.machine.onDismissed.bind(h.machine);
+    h.machine.onDismissed = (explicit: boolean): void => {
+      h.calls.push(`dismissed:${explicit}`);
+      realDismissed(explicit);
+    };
+
+    const out = h.press("\r");
+
+    expect(out).toBe("inner:\r"); // the submit flow's return value passes through
+    expect(h.calls[0]).toBe("dismissed:true"); // dismissal PRECEDES the inner call
+    expect(h.calls[1]).toBe('inner:"\\r"');
+    expect(h.calls).toHaveLength(2); // exactly one delegation, nothing else
+    // The buffer STILL reads "implement" — never "implements" /
+    // "implementation": the live offer was NOT accepted by Enter.
+    expect(h.buf.lines).toEqual(["implement"]);
+    expect(h.state.hidden).toBe(true);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(true); // Enter-submit IS a seam member
+  });
+
+  it("h2.53 literal variant: {implement, implementation} ladder ends armed at the FINAL accepted word (spec 09 h2.59 / 07 h2.53)", async () => {
+    const chain = spiedChain();
+    const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
+      chain,
+      store: seedStore([
+        ["implement", "implement"],
+        ["implementation", "implementation"],
+      ]),
+    });
+    h.press("x");
+    await flushPaint();
+    h.press("\t"); // rung 1 → "implement", offer [implementation]
+    expect(h.buf.lines).toEqual(["implement"]);
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "implementation",
+    ]);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+    h.press("\t"); // rung 2 → "implementation"; empty offer dismisses
+    expect(h.buf.lines).toEqual(["implementation"]);
+    expect(h.machine.getState().visible).toBe(false);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+    // The spec's parenthetical, pinned: arm("implement") then
+    // arm("implementation") — armed at the FINAL accepted word.
+    expect((chain.arm as Mock).mock.calls.map((c) => c[0])).toEqual([
+      "implement",
+      "implementation",
+    ]);
+  });
+
+  it("invariants across the ladder: never-mutate holds and every keypress ticks the clock EXACTLY once (spec 09 h2.59)", async () => {
+    const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
+      chain: spiedChain(),
+      store: forkStore(),
+    });
+    const ticksAfter = (n: number): void =>
+      expect(h.onKeystroke).toHaveBeenCalledTimes(n);
+
+    h.press("x"); // forwarded fixture keystroke → the guard-seam tick
+    ticksAfter(1);
+    await flushPaint();
+    h.press("\t"); // consumed → the widget-layer tick
+    ticksAfter(2);
+    h.press("\t"); // consumed → the widget-layer tick
+    ticksAfter(3);
+    h.buf.lines = ["implement"]; // the backspace lands…
+    h.buf.col = 9;
+    h.press("\x7f"); // forwarded → the guard-seam tick
+    ticksAfter(4);
+    h.buf.lines = ["implement "]; // the space lands…
+    h.buf.col = 10;
+    h.press(" "); // forwarded → the guard-seam tick
+    // 5 keypresses (the paint keystroke + the 2-Tab ladder + backspace +
+    // space), 5 ticks — one seam or the other, NEVER both for one key:
+    ticksAfter(5);
+    expect(h.setHits()).toBe(0); // the inner instance was NEVER written to
   });
 });

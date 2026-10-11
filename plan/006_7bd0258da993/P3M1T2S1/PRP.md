@@ -1,524 +1,632 @@
-# PRP — P3.M1.T2.S1: README sweep — relief blurb rewrite, feature blurbs, config-table defaults, verification wording
+# PRP — P4.M1.T2.S1: Provider seam change + re-request verification + PIN + battery (spec 07 h3.11, fallback path)
 
 ---
 
 ## Goal
 
-**Feature Goal**: Bring `README.md` back into agreement with the landed code and
-the spec after the P1 (capitalized-series), P2 (branch-hygiene rebuild), and
-P3.M1.T1 (widget Tab deferral) changesets. Four defect classes: (1) the
-relief-retirement blurb (:108-114) is half-obsolete — casing evidence is BACK
-via capitalized runs + the 95-band; (2) the feature blurbs don't cover
-capitalized-series completion, branch hygiene, or Tab deferral, and two casing
-sentences describe the retired most-recent-casing-wins behavior; (3) the config
-table (:467-474) shows stale defaults — `maxSuggestions` 8 (code: 20) and
-`rejectCommonness` 12 (code: 30) — and the Calibration-guarantee section
-(:424-437) repeats the stale `12` with a stale population count; (4) the
-Development/Checks verification wording (:531, :606) doesn't mention the new
-regression batteries.
+**Feature Goal**: Implement spec 07 h3.11's fallback-path paragraph: a Tab-accept
+(`applyCompletion` accept) NEVER arms suppression on the provider path —
+unconditionally, independent of whether any offer ever renders — and the post-Tab
+extension offer rides the same post-applyCompletion re-request the zero-char chain
+offer depends on, which must be VERIFIED against real pi-tui and PINNED (verified
+state: pi-tui 0.84.4 does NOT re-request → the path degrades to no re-offer;
+document the degradation at the consumption site).
 
-**Deliverable**: Edited `README.md` ONLY (Mode B documentation task — this file
-is the deliverable; no source, no spec, no test edits). Input to
-P3.M1.T2.S4's DoD entry.
+**Deliverable**: (1) Mode A JSDoc on the acceptance-handling sites in
+`src/pi/provider.ts` (base `applyCompletion`'s arming side-effect block + the
+display machine's 4c-exception / `completionSincePaint` site) stating the h3.11
+rule; (2) the new PIN comment at the would-be consumption site (the armed branch's
+fragment arm) citing spec 07 h3.11 + h3.15 with the verified 0.84.4 evidence and
+the degradation note; (3) a fifth bullet in spec 07 h3.15's re-verify list (spec
+edit lands with the code — AGENTS.md maintenance policy); (4) a provider battery in
+`test/provider.test.ts` (post-accept no-suppression for forced AND unforced
+requests, offer content when the re-request is simulated, zero-candidate
+delegation, preservation pins); (5) a NEW real-Editor contract test
+`test/fallback-post-tab.contract.test.ts` (harness pattern of
+`test/defer-pi-menu.repro.test.ts`) that verifies and pins the re-request
+contract's verified ABSENCE. NO behavioral production-code change is expected —
+see "What" for why this is a guarantee-and-pin item, not a mechanism change.
 
-**Success Definition**: Every number, default, and behavioral claim in README
-matches the shipped code (`src/pi/config.ts` `DEFAULT_CONFIG`,
-`src/core/score.ts` constants) and the spec's rules; the three new behaviors
-(series completion, branch hygiene, Tab deferral) have feature-blurb coverage;
-`git diff --stat` shows exactly one file (`README.md`); `npm run check` +
-`npm test` still green vs baseline (README edits cannot break them, but the run
-proves nothing else was touched).
+**Success Definition**: After a Tab-accept on the provider path, every subsequent
+query — forced (Tab-Tab) or unforced — is answered FRESH (never a re-served
+pre-acceptance set, never hesitation-gated); a simulated re-request at the
+completed word yields the extension offer (armed-branch successor filtering with
+exact-equal exclusion when chained; the normal 04 query offer when chaining is
+disabled); a terminal word's empty offer delegates as ever; the real-Editor test
+pins that pi-tui 0.84.4 fires NO getSuggestions after applyCompletion (degradation
+documented at the PIN); the chain still arms at every accept; the forced
+single-item return, close-on-space, series-first offers, and typed-word arming
+(P1.M2.T2.S1) are untouched and their existing tests stay green; `npm run check` +
+`npm test` green.
 
 ## User Persona (if applicable)
 
-**Target User**: pi users evaluating hapax from its README, and future
-implementers using it as the entry map to the codebase.
+**Target User**: the pi coding-agent user typing prompts with hapax installed in a
+configuration with NO editor factory (fallback display path — pi-tui's vertical
+menu).
 
-**Use Case**: A reader decides whether `rejectCommonness` needs tuning, or
-whether hapax will hijack Tab over pi's own menu — and gets answers that match
-the shipped binary.
+**Use Case**: Repeated-Tab ladders (`implem` → Tab → `implement` → Tab → …) and
+ordinary single-word completion where the accepted word is terminal.
 
-**User Journey**: read Features → try the Quick start → consult the config
-table → run the Checks. Every step's claims must be true of the build.
+**User Journey**: Type a fragment; the menu offers ranked candidates; Tab accepts
+the highlighted item; if extensions exist, the next keystroke's query (or a second
+Tab's forced query) offers them — never a wedged word, never a stale set, never a
+suppressed re-query; if no extension exists, the menu simply closes and the next
+qualifying edit reopens normally.
 
-**Pain Points Addressed**: config docs that lie about defaults (12/8 vs 30/20)
-cause mis-tuned installs; a relief blurb saying proper-nouns are gone hides the
-new headline feature; verification docs omitting the new batteries hide the
-regression pins.
+**Pain Points Addressed**: The h3.11 "Problem" — Tab-accept lumped into
+explicit-dismissal suppression wedged the word mid-message. On the fallback path
+the wedge class is structurally milder (pi owns the menu and re-asks per
+keystroke), but the same rule must hold unconditionally: acceptance never
+suppresses, and the (potential) re-offer must never be blocked by hapax machinery.
 
 ## Why
 
-- AGENTS.md / spec h2.1: spec is the single source of truth; README is a
-  summary that must never contradict it or the code. The floor/width retunes
-  (commit 5855f83) and the casing rework landed with no README follow-up.
-- Sibling items are gated on this: S2 (full gauntlet), S3 (live smoke), S4
-  (M1-DoD append + drift report) — S4's DoD entry consumes a coherent README.
-- The relief blurb actively misleads: it says named-entity completion is
-  retired and would need an allowlist redesign, while capitalized runs now
-  deliver exactly that class of completion (spec 04 h2.26).
+- Spec 07 h3.11 is adopted ahead of implementation ("code lands with this spec");
+  the widget-path half is P4.M1.T1.S1/S2 (in flight, parallel). This item ships
+  the fallback-path half so BOTH display paths sit under the one rule
+  ("fallback-path parity" — the item's OUTPUT).
+- The fallback path leans on untyped pi-tui runtime contracts marked as PINs at
+  their consumption sites (spec 07 h3.15). The post-applyCompletion re-request is
+  a NEW dependency of the zero-char chain offer AND the extension offer; this item
+  verifies it against real pi-tui and pins the verified state — the research pass
+  already established the answer for 0.84.4 (ABSENT — see Context), so the pin
+  lands as an absence-pin with the degradation documented.
+- Downstream: P3.M1.T2.S2 (full gauntlet) counts this battery green; P3.M1.T2.S3
+  live-smokes the post-Tab offer scenarios.
 
 ## What
 
-All edits are to `README.md`. Four work packages (anchors measured at HEAD
-50a7801; RE-ANCHOR before editing — see Level 0):
+Research established (see `research/findings.md`, verified against
+`node_modules/@earendil-works/pi-tui/dist/components/editor.js` @ 0.84.4):
 
-### WP1 — Relief blurb rewrite (:108-114)
-
-Replace the "Proper-noun relief — retired (2026-09)" bullet with a blurb whose
-shape is: **proper nouns are back — via runs and the relaxed band, not relief.**
-
-Must state (concise, README voice, file refs per house style):
-
-- The 2026-09 relief branch stays **retired-in-place**: its ceiling
-  (`PROPER_NOUN_ADMIT_CEILING` in `src/core/score.ts`) equals the reject floor
-  and scales with retunes, so it admits nothing beyond the floor.
-- Casing evidence re-entered through two 2026-10 doors: **capitalized runs**
-  (spec 04 h2.26 — full coverage in the new series blurb, WP2) and **single
-  mid-sentence capitals** admitting under the relaxed band
-  `max(R_eff, 95)` (`MID_CAP_RELAXED_BAND`, `src/core/score.ts`).
-- The **noise guard** that makes the doors safe: run members whose dictionary
-  commonness sits in the table's top band
-  (`PROPER_SERIES_TOP_BAND_CEILING = 135`) are **chain-only** — never standalone
-  suggestions, but their series bigrams still form and offer neighbors
-  (`The ` → `Fed`). This replaces the retired relief's job without re-admitting
-  the ~483 capitalized common words the 2026-09 audit caught (`echo`,
-  `windows`, `failed`) — that audit sentence may be kept as history.
-- Keep the pointer that mechanism/calibration history live in
-  `src/core/score.ts`.
-
-### WP2 — Feature-blurb additions + casing fixes (under `## Features`, :32+)
-
-1. **ADD a "Capitalized-series completion" bullet** placed immediately AFTER
-   the existing "Chained Tab completion" bullet (they share the successor
-   index). Content (spec 01 h2.9 goals 11-13 + 04 h2.26 + 07 h2.53, per the
-   landed P1.M1/P1.M2 contracts):
-   - Runs of ≥ 2 consecutive capitalized whole words are recognized as
-     proper-noun series wherever they sit (line-initial/after punctuation
-     included); every member becomes completable vocabulary — a run member
-     admits regardless of the commonness band (attested members land in
-     admission group 1, dictionary-absent members in group 0), outranking both
-     dictionary attestation and lowercase sightings.
-   - The words chain: series bigrams are recorded at ingest
-     (`recordBigramRuns`, `src/core/store.ts`), and completing or typing a
-     member (a space closing an UPPERCASE-initial typed word — lowercase
-     typings never arm) arms the next member as the top zero-typed-character
-     offer, series successors first, on BOTH display paths
-     (`src/pi/provider.ts`, `src/pi/widget.ts`).
-   - Dictionary top-band members are chain-only (WP1's noise guard) —
-     `The ` still offers `Fed`.
-   - Casing admits, never ranks: result ordering stays
-     tier → sessionCount → length → lex.
-2. **ADD a "Branch hygiene" bullet** placed near "Session salience retention"
-   (or after "Zero persistence…"). Content (spec 05 h2.37; P2 landed —
-   commit 50a7801):
-   - The store is a pure function of the ACTIVE branch's replayable history:
-     on `/tree` navigation (`session_tree`), hapax discards pending ingest,
-     snapshots `ctx.sessionManager.getBranch()`, and replays it through the
-     identical restore pipeline into a fresh store — words typed on an
-     abandoned branch (e.g. a misspelling submitted, then `/tree` back to fix
-     it) never surface on other branches.
-   - Queries are gated at the same seam as startup restore; the first
-     post-navigation query resolves at replay settle (tens of ms, background).
-     Compaction never triggers a rebuild — the store survives compaction.
-   - File refs: `src/pi/index.ts` (handler), `src/core/store.ts` (`reset()`),
-     `src/pi/ingest.ts` (`discardPending()`); pinned by
-     `test/branch-purity.test.ts`.
-3. **EXTEND the "Stock contexts are never preempted" bullet** (widget-path
-   paragraph) with the Tab-deferral clause (P3.M1.T1.S1 contract): when pi's
-   OWN autocomplete menu is open (forced file menu, slash-argument menu, any
-   stock surface), the widget Tab forwards verbatim — pi's menu accepts its
-   highlighted item; hapax never inserts over it. Deferral keys on the menu's
-   actual open state (`isShowingAutocomplete()`), not context classification,
-   because the menuDelayMs race can re-arm the hapax line while pi's menu is
-   open. Ref: `src/pi/widget.ts`, `src/pi/editor.ts`,
-   `test/defer-pi-menu.repro.test.ts`.
-4. **FIX the two stale casing sentences** (casing resolution moved from
-   stored-display (most-recent-wins) to completion-time resolution from casing
-   tallies — P1.M2.T1.S1/S2, landed):
-   - "Case-preserving insertion" bullet (:~120): "insertion uses the casing
-     last seen in-session" → insertion casing is resolved at completion time
-     from the candidate's casing tallies: a typed capital first letter is
-     never uncased; an all-lowercase fragment gets the form that occurred more
-     often in the conversation (ties → lowercase; a word seen only
-     capitalized completes capitalized). (spec 04 "Case handling".)
-   - Chained bullet (:~184): "Inserted chain words use the candidate's display
-     casing (most-recent-casing-wins)" → chain words insert with the same
-     completion-time resolution as word completions (series successors insert
-     in their run casing).
-
-### WP3 — Config table + Calibration guarantee (:467-474, :424-437)
-
-- `maxSuggestions` row: Default `8` → `20`; rewrite the Meaning cell to the
-  width-bound rationale (matches `src/pi/config.ts` comment + spec 08 h2.56):
-  the widget line's real cap is the TERMINAL WIDTH (rightmost items drop
-  first); the count is a sanity ceiling, so the default sits at the schema max
-  (2026-10 retune) — tune down for fewer words per line.
-- `rejectCommonness` row: Default `12` → `30` (the baked
-  `REJECT_COMMON_THRESHOLD` in `src/core/score.ts`, width-bound retune
-  2026-10). The row's Meaning cell is otherwise accurate — keep it.
-- Verify every OTHER row against `DEFAULT_CONFIG` (verified correct at HEAD:
-  `triggerChar "…"`, `threshold 2`, `fuzzThreshold 60`, `menuDelayMs 0`,
-  `enableChaining true`, `debug false`) — change nothing there unless a re-read
-  of `src/pi/config.ts` contradicts this PRP.
-- Calibration guarantee (:426-429): `REJECT_COMMON_THRESHOLD = 12` → `= 30`;
-  recompute the population claim "45,118 of the 48,802 entries score q ≥ 12"
-  at floor 30 (see Level 4 — the calibrate tool computes `popReject` counts
-  internally, `tools/calibrate-bands.mjs:141`); keep or trim the named
-  examples — all still reject at floor 30 (`the` 240, `context` 51, `data` 82,
-  `code` 91, `lazy` 67, `ordinary` 79, `provider` 34), and `handoff` (q = 10)
-  still admits. Do NOT hand-wave a number — recompute or drop the sentence.
-- The "English words barely admit" feature bullet never states `12` — leave it
-  (verified).
-
-### WP4 — Development/Checks verification wording (:531, :606)
-
-- In `#### Checks` (:606), extend the "npm test gate also runs the adversarial
-  suites" sentence to name the two new batteries:
-  `test/defer-pi-menu.repro.test.ts` (widget Tab defers to pi's open menu)
-  and `test/branch-purity.test.ts` (branch-hygiene rebuild + gated replay).
-- Do NOT add live-verification claims for the new behaviors: the live smoke is
-  S3's deliverable (spec 09 binding) and lands after this item. Existing
-  live-verified claims (Status paragraph, Dev-loop paragraph) stay as-is.
-- Re-read the Dev-loop (:~545-556) and Status (:13) paragraphs once against
-  the new behaviors; they remain accurate (they describe M3-era
-  verifications). Only adjust wording if a sentence becomes false — not to
-  add new claims.
+1. **No rest-of-word suppression exists on the provider path.** The fallback path
+   has no `suppressUntilWordStart` analog (that is widget machinery; its
+   retirement is T1.S1's). The display machine's only suppression is the transient
+   100 ms swap window (rule 4d — same-prefix set re-serve) and the first-paint
+   hesitation gate (3.5). Post-accept, 4d is pre-empted by the 4c-exception
+   (`completionSincePaint` → paint fresh), and 3.5 cannot apply (acceptance does
+   not reset `displayedSig`). **The seam change therefore lands as a GUARANTEE +
+   documentation + battery, not a mechanism removal.** Production code: comments
+   only (plus the spec edit), unless the battery exposes a defect.
+2. **pi-tui 0.84.4 does NOT re-request after applyCompletion.** Menu-Tab accept
+   (editor.js :540-552) → `cancelAutocomplete()`, no request; forced single-item
+   fast path (:1902-1917) → return, no request. Re-requests come only from
+   `updateAutocomplete` (menu OPEN only) and per-keystroke triggers (whitespace is
+   excluded from triggerCharacters — editor.js :1869-1880). **Consequence
+   (spec-anticipated degradation): the extension offer does not render immediately
+   post-Tab on the fallback path.** The ladder remains walkable via forced Tab
+   (Tab-Tab) and type-ahead (the next letter's query goes through the armed
+   branch's fragment arm).
+3. **Offer content when a re-request IS simulated**: with chaining ON, the
+   completed-word query is answered by the armed branch (b) fragment arm —
+   `topSuccessors(armed.word)` filtered by the anchored matcher INCLUDING
+   exact-equal exclusion (`s.next !== frag.toLowerCase()`), successor-count order,
+   `description: "chain"` (→ intent classification → hesitation bypass). With
+   chaining OFF, the normal path answers — rankMatches at the completed word:
+   tier-3 proper-prefix extensions, exact-equal excluded, shortest key first (the
+   h3.11 query offer verbatim). Terminal word → zero candidates → delegate
+   (zero-candidate rule).
 
 ### Success Criteria
 
-- [ ] Relief blurb rewritten per WP1 (runs + 95-band in, relief
-      retired-in-place, top-band ceiling as noise guard).
-- [ ] Series-completion and branch-hygiene blurbs present; stock-contexts
-      bullet carries the Tab-deferral clause; both casing sentences fixed.
-- [ ] Config table defaults read 20 / 30; width-bound rationale on
-      `maxSuggestions`; Calibration guarantee says 30 with a recomputed (or
-      dropped) population count.
-- [ ] Checks section names both new batteries; no new live-verification
-      claims.
-- [ ] `git diff --stat` → exactly `README.md`; `npm run check` green;
-      `npm test` green vs baseline.
+- [ ] After `applyCompletion` (accept), an UNFORCED query inside the 100 ms window
+      at the completed word returns the FRESH set with prefix === the completed
+      word (4c-exception) — never the stale pre-acceptance set/prefix.
+- [ ] After an accept, a FORCED query (`force: true`) returns the base result
+      untouched (rule 1.5): single top extension item, never a re-served set.
+- [ ] Rule 4d narrowing suppression is INTACT for non-acceptance same-prefix set
+      changes (control test — the seam change is accept-specific).
+- [ ] Simulated re-request at the completed word (chaining ON): extension
+      successors offered, exact-equal excluded, prefix = completed word,
+      `description: "chain"`; the one-shot grant is NOT spent; accepting the offer
+      re-arms at the extension (ladder arming, armed(final word)).
+- [ ] Simulated re-request (chaining OFF): the normal 04 query offer (store-wide
+      extensions, shortest-first, exact-equal excluded).
+- [ ] Terminal word: empty offer → delegation to `current` (zero-candidate rule).
+- [ ] Real-Editor contract test: after a menu-Tab accept, NO getSuggestions fires
+      before the next keystroke (the verified absence PIN); the accept delegated
+      verbatim; pi's menu closed; the NEXT keystroke's query is answered fresh.
+- [ ] Real-Editor: Tab-Tab ladder — the second Tab (menu closed) takes the forced
+      single-item path and applies the top extension (options.force semantics
+      UNCHANGED — pinned, not modified).
+- [ ] Chain arming on accept unchanged; close-on-space, series-first offers,
+      typed-word arming untouched (existing describes green).
+- [ ] spec 07 h3.15 lists the fifth contract with the verified absence +
+      degradation note; `npm run check` + `npm test` green.
 
 ## All Needed Context
 
 ### Context Completeness Check
 
-"If someone knew nothing about this codebase, could they implement this
-successfully?" — Yes: every stale claim is quoted with its anchor and its
-replacement content is specified against verified code constants and spec
-sections; re-anchoring and verification commands are provided.
+"If someone knew nothing about this codebase, would they have everything needed to
+implement this successfully?" — Yes: the verified runtime contract is quoted with
+file:line evidence; every production edit site is pinned by quoted anchor text;
+the battery enumerates each test with fixtures, call sequences, and assertions;
+the harness idiom for the real-Editor test is spelled out (imports, fakes, flush,
+cast pattern). The one non-obvious judgment (why "reset on accept" would be WRONG)
+is analyzed under Known Gotchas.
 
 ### Documentation & References
 
 ```yaml
 # MUST READ - Include these in your context window
-- file: README.md
-  why: THE deliverable. 626 lines at HEAD. Re-anchor every target first:
-    grep -n -E "Proper-noun relief|^## Features|Case-preserving|display casing|REJECT_COMMON_THRESHOLD|45,118|^\| .(triggerChar|threshold|maxSuggestions|rejectCommonness|fuzzThreshold|menuDelayMs|enableChaining|debug)|^### Development|^#### Checks" README.md
-  gotcha: anchors in this PRP were measured at HEAD 50a7801 and drift by a few
-    lines is possible — always edit by matched text, never by raw line number.
+- file: spec/07-completion-ui.md
+  why: The binding contract. h3.11 "Post-Tab extension offer" (:261-321) — the
+    Rule, the 0-candidate disqualification close, and the fallback-path paragraph
+    (:316-321: "the offer rides the same post-applyCompletion re-request the
+    zero-char chain offer uses; if pi-tui does not re-request after an apply, the
+    fallback path degrades to no re-offer (suppression still never arms — the
+    seam change is unconditional) — verify at implementation and PIN at the
+    consumption site"). h3.15 "pi-tui contract dependencies" (:596-610) — the
+    four existing PINs; this item adds the fifth. h2.50 rule 2 (intent bypass
+    list already includes post-Tab extension offers), rule 0/1.5 (forced
+    requests undelayed). h2.53 (chain arming; extension-offer accepts arm at the
+    FINAL accepted word).
+  pattern: h3.11 fallback paragraph verbatim; h3.15 bullet style.
+  gotcha: The spec maintenance policy (AGENTS.md, binding) requires the h3.15
+    edit to land WITH the code — this item's (c) explicitly mandates it. Update
+    "Four runtime contracts" → "Five" in the h3.15 intro sentence.
 
-- file: src/pi/config.ts
-  why: DEFAULT_CONFIG is ground truth for every config-table Default cell
-    (maxSuggestions: 20, rejectCommonness: REJECT_COMMON_THRESHOLD import,
-    fuzzThreshold: DEFAULT_FUZZ_THRESHOLD import, menuDelayMs: 0,
-    triggerChar "#", threshold: 2, enableChaining true, debug false). Its
-    maxSuggestions comment holds the width-bound rationale to paraphrase.
+- file: plan/006_7bd0258da993/P4M1T2S1/research/findings.md
+  why: The verified evidence this PRP is built on — pi-tui 0.84.4 editor.js
+    line-by-line findings (no re-request after applyCompletion; the only
+    re-request seams), the provider-path suppression inventory (nothing
+    rest-of-word exists; 4c-exception pre-empts 4d post-accept; hesitation gate
+    cannot apply), and the offer-content derivation (armed branch vs
+    chaining-off query vs zero-candidate delegation).
+  pattern: section 1 (contract), section 2 (inventory), section 3 (offer paths).
+  gotcha: All editor.js line numbers are @earendil-works/pi-tui 0.84.4
+    (node_modules/@earendil-works/pi-tui/dist/components/editor.js) — re-verify
+    if package.json's ~0.84.4 range resolved a newer minor.
 
-- file: src/core/score.ts
-  why: the four constants the blurbs cite — :109 REJECT_COMMON_THRESHOLD = 30;
-    :152 PROPER_NOUN_ADMIT_CEILING = 30 ("retired-in-place; scales with
-    retunes"); :169 PROPER_SERIES_TOP_BAND_CEILING = 135; :192
-    MID_CAP_RELAXED_BAND = 95. Calibration history for the relief blurb lives
-    in this file's comments.
+- file: src/pi/provider.ts
+  why: The ONLY production file touched (comments). Key sites, verify by quoted
+    text: (1) the createHapaxProvider doc block — "applyCompletion arms through
+    it as a side-effect BEFORE delegating verbatim" (~:260); (2) the armed
+    branch (a) zero-char offer — `if (before === "" || /[ \t]$/.test(before))`
+    (~:462-474); (3) the armed branch (b) fragment arm with exact-equal
+    exclusion — `.filter((s) => s.next !== frag.toLowerCase() && matchFragment(
+    frag, s.next) !== null)` (~:501-529) — THE PIN SITE; (4) base applyCompletion
+    `applyCompletion(lines, cursorLine, cursorCol, item, prefix)` (~:678-736,
+    ends `return current.applyCompletion(...)`) — THE MODE A JSDoc SITE; (5)
+    display machine doc rule 4 acceptance EXCEPTION + code 4c-exception
+    (`if (completionSincePaint)` ~:1210-1222); (6) display applyCompletion —
+    `completionSincePaint = true; return base.applyCompletion(...)` (~:1262-1268).
+  pattern: The file's house style — dense JSDoc citing spec sections by number,
+    PIN-marked runtime contracts ("PIN: if pi-tui changes …").
+  gotcha: provider.ts is NOT touched by the parallel widget work (verified via
+    git status) — no merge friction.
 
-- docfile: plan/006_7bd0258da993/P3M1T2S1/research/notes.md
-  why: verified anchors, constant values, behavior contracts, and the
-    worked example list (which q values still reject/admit at floor 30).
+- file: src/pi/index.ts
+  why: The exact fallback wiring this item's battery mirrors —
+    createDisplayProvider(createStartupGate(createHapaxProvider(store, config,
+    current, sessionChain), restoreReady), { firstPaintDelayMs:
+    config.menuDelayMs, getPreviousKeystrokeAt, isIntentResult }) (~:359-380);
+    isIntentResult = trigger-char prefix OR `i.description === "chain"`
+    (~:375-378) — why armed-branch offers bypass the hesitation gate.
+  pattern: the addAutocompleteProvider registration block.
+  gotcha: Read-only — do NOT touch index.ts.
 
-- file: plan/006_7bd0258da993/P3M1T1S1/PRP.md
-  why: CONTRACT for the Tab-deferral behavior (item Implementing in
-    parallel): forward-verbatim when isShowingAutocomplete() === true, keyed
-    on actual open state, battery test/defer-pi-menu.repro.test.ts. Do not
-    restate its code details in README — one clause is enough.
+- file: test/provider.test.ts
+  why: Conventions the battery MUST follow (item contract: "provider tests with
+    store fixtures + fake current-provider per test/provider.test.ts
+    conventions"): `sighting`/`put` fixtures, `cfg()` (defaults: trigger "#",
+    threshold 2, max 8), `opts()` (real AbortController — no fake timers),
+    `makeCurrent()` (vi.fn mock with splice-semantics applyCompletion),
+    `makeStack(store, current)` (inner = createHapaxProvider; provider =
+    createDisplayProvider(inner)), `suggest(provider, lines, line, col)` (:129);
+    the series-first describe (:720+) shows the recordBigramRuns seeding idiom.
+  pattern: fresh store + stack per test; object-identity delegation proofs via
+    makeCurrent sentinels; forced queries call getSuggestions directly with
+    `{ signal, force: true }`.
+  gotcha: `suggest` passes no options — forced/flagged queries bypass it.
 
-- file: plan/006_7bd0258da993/P1M2T2S1/PRP.md
-  why: CONTRACT for series-first offers + typed-word arming (fallback path;
-    widget mirrors per spec 07 h2.53): uppercase-initial typed word + space
-    arms; lowercase never arms; series successors first, run casing. The
-    series blurb describes exactly this behavior.
+- file: test/defer-pi-menu.repro.test.ts
+  why: The REAL-Editor harness pattern the item contract names — imports
+    `{ Editor, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS }` from
+    "@earendil-works/pi-tui"; setKeybindings(new KeybindingsManager(
+    TUI_KEYBINDINGS)); `fakeTui()`; theme stub; `ed.setAutocompleteProvider(p)`
+    (auto-wires triggerCharacters); `editor.handleInput(ch)` per char;
+    `flush()` = 10× `await Promise.resolve()`; `isShowingAutocomplete()` /
+    `getText()` via `as unknown as` casts; the splice-semantics applyCompletion
+    double (:56-79) to copy for the fake `current`.
+  pattern: build() composes the stack once; real async timing (menu opens only
+    after the getSuggestions Promise resolves).
+  gotcha: Do NOT edit this file — it must stay green verbatim.
 
-- file: tools/calibrate-bands.mjs
-  why: recomputes the population reject count for the Calibration guarantee
-    (popReduce at :141; run `node tools/calibrate-bands.mjs the with context
-    handoff` for q values; no-args/word-args output includes population
-    stats vs floor R).
-
-- file: spec/SPEC.md (+ numbered spec files)
-  why: source of truth the README summarizes — spec 01 h2.9 (series goals),
-    04 "Capitalized runs"/"Case handling", 05 "Branch navigation rebuild",
-    07 h2.51-53 (never-hijack/chaining), 08 h2.56-57 (config schema).
-    READ-ONLY: this pipeline item must not edit spec/ (AGENTS.md policy).
-  gotcha: spec/PRD heading numbers (h2.x/h3.x) are PRD-index numbering; the
-    spec files use unnumbered headings. README house style cites bare
-    section names or "(spec 04)" — follow existing README citations.
+- file: src/core/query.ts
+  why: Read-only PROOF of offer content: exact-equal exclusion `if (k === lower)
+    continue;` (~:592 anchored, ~:646 tier-0 parity); tier-3 proper-prefix
+    matching; shortest-key-first ranking. The chaining-off battery's expected
+    sets derive from here.
+  gotcha: Do NOT touch query.ts.
 ```
 
 ### Current Codebase tree (relevant excerpt)
 
 ```bash
-README.md                        # THE deliverable (626 lines)
-src/core/score.ts                # constants: 30 / 30 / 135 / 95
-src/pi/config.ts                 # DEFAULT_CONFIG ground truth
-tools/calibrate-bands.mjs        # population/q recomputation
-test/defer-pi-menu.repro.test.ts # battery named by the new Checks wording
-test/branch-purity.test.ts       # battery named by the new Checks wording
-spec/                            # READ-ONLY reference
+src/pi/provider.ts            # 1278 lines — base provider + display machine (ONLY prod file, comments only)
+src/pi/index.ts               # fallback wiring (read-only)
+src/core/query.ts             # exact-equal exclusion (read-only)
+test/provider.test.ts         # 856 lines — battery appended here
+test/defer-pi-menu.repro.test.ts  # real-Editor harness pattern (read-only, must stay green)
+spec/07-completion-ui.md      # h3.11 (:261-321), h3.15 (:596-610) — ONE bullet-list edit
 ```
 
 ### Desired Codebase tree with files to be added and responsibility of file
 
 ```bash
-# NO new files. Modified (README.md only):
-README.md  # WP1 relief blurb; WP2 three coverage areas + 2 casing fixes;
-           # WP3 config-table defaults + calibration numbers;
-           # WP4 Checks wording
+src/pi/provider.ts            # Mode A JSDoc (accept sites) + the h3.15 PIN at the fragment arm — comments only
+spec/07-completion-ui.md      # h3.15: fifth PIN bullet + "Four"→"Five"
+test/provider.test.ts         # + 2 describe blocks (~10 tests): post-accept no-suppression + offer battery
+test/fallback-post-tab.contract.test.ts  # NEW: real-Editor re-request contract PIN (absence) + Tab-Tab ladder
 ```
 
 ### Known Gotchas of our codebase & Library Quirks
 
-```text
-# CRITICAL: spec/ is READ-ONLY for this item (pipeline agent; AGENTS.md +
-#   spec h2.1). README never overrides spec — when phrasing tightens, keep
-#   README a summary; cite spec, don't restate exhaustively.
+```typescript
+// CRITICAL — do NOT "reset on accept" in the display machine. reset() nulls
+// displayedSig, which would make the post-accept query a FIRST PAINT and push it
+// through the hesitation gate (menuDelayMs) — under a future re-requesting
+// pi-tui with chaining disabled that WOULD suppress the offer (a non-intent
+// word result is gated). The current no-reset + 4c-exception IS the h3.11
+// behavior. Document this in the 4c-exception comment so nobody "cleans it up".
 
-# CRITICAL: no live-verification claims for the new behaviors — the live
-#   smoke is P3.M1.T2.S3's BINDING deliverable and runs AFTER this item.
-#   Existing "live-verified" sentences describe past events and stay.
+// CRITICAL — the armed branch (b) requires the fragment AT A WORD START
+// (fragAtWordStart, BUG-005 guard). Battery lines must place the completed word
+// at line start or after a space: ["implement"] col 9, or ["please implement"]
+// col 17 — NOT ["ximplement"] (glued → (c) reset → normal path answers).
 
-# Line anchors drift: parallel item P3.M1.T1.S1 does not touch README, but
-#   always re-grep anchors before editing; edit by exact text match.
+// CRITICAL — grant interplay: a fresh grant's first grant.tick(frag) records
+// seen=1 and returns false (never spends). The simulated re-request at the
+// completed word therefore leaves the chain ARMED — assert chain.state() stays
+// the accepted word after the query (and after accepting the offer, the
+// extension word — "armed at the FINAL accepted word", h2.53).
 
-# The config table is a wide pipe table — keep every row's pipe count valid
-#   and align cells the way existing rows do; no linter exists to catch
-#   broken tables (only a rendered read-through).
+// GOTCHA — makeStack's display provider is created WITHOUT hesitation options
+// (firstPaintDelayMs defaults 0) — fine for the no-suppression battery; if you
+// add a menuDelayMs case, pass opts to createDisplayProvider explicitly.
 
-# Commit 5855f83 LOOSENED the floor 12 → 30 (higher = looser: reject iff
-#   q >= threshold) — do not describe 30 as "stricter" in any prose.
-#   maxSuggestions 20 is a width-bound retune tied to the same changeset.
+// GOTCHA — real-Editor menu selection: pi-tui picks the initial selection via
+// getBestAutocompleteMatchIndex. Seed the store so the intended accept item is
+// unambiguous (e.g. only "implement" + "implementation" for fragment "implem" —
+// "implement" wins). If a run ever selects the longer item, select explicitly
+// with a down-arrow handleInput ("\x1b[B") before Tab — but prefer deterministic
+// seeding.
 
-# casing resolution: "frequency-wins from tallies", NOT "last seen" and NOT
-#   "most-recent-casing-wins" (both retired with Candidate.display,
-#   P1.M2.T1.S2). Typed capital first letter is preserved — only the first
-#   letter adapts.
+// GOTCHA — pi-tui async: requestAutocomplete → getSuggestions is a Promise; the
+// menu opens only after it resolves (flush() pattern). explicitTab/force
+// debounce is 0; plain-letter debounce is 0 (attachment debounce applies only
+// to @/# patterns).
 
-# Do not cite file paths that don't exist: the casing resolver landed in
-#   core (P1.M2.T1.S1) — pin its actual module with
-#   grep -rn "resolveInsertionCasing\|casingResolver\|resolveCasing" src/core
-#   before citing it, or cite src/core/store.ts (tallies) generically.
+// GOTCHA — the display wrapper's applyCompletion sets completionSincePaint and
+// delegates; the BASE applyCompletion arms the chain; current.applyCompletion
+// splices. Order in the battery: call provider.applyCompletion (the DISPLAY
+// provider — the registered surface), never inner.applyCompletion, when testing
+// the 4c no-suppression path.
 ```
 
 ## Implementation Blueprint
 
 ### Data models and structure
 
-None — prose-only change to one Markdown file.
+None. No new types, no config, no store changes, no wiring changes. The provider
+stack's public surface is unchanged.
 
 ### Implementation Tasks (ordered by dependencies)
 
 ```yaml
-Task 0: PRE-FLIGHT (verify the world the README will describe)
-  - RUN: git log --oneline -12   # confirm series/branch/deferral changesets
-    landed (5855f83 floor retune, 50a7801 branch rebuild, the P3.M1.T1.S1
-    deferral commit, P1.M2 series-offers commits)
-  - RUN: ls test/defer-pi-menu.repro.test.ts test/branch-purity.test.ts &&
-    npx vitest run test/defer-pi-menu.repro.test.ts test/branch-purity.test.ts
-    # both must exist and be green before README names them
-  - RUN: the anchor re-grep (Documentation section) and the resolver-file
-    grep; note any drift
-  - IF a P1.M2 dependency visibly hasn't landed (batteries red/absent):
-    still describe the behavior per spec (spec is truth) but flag it in the
-    report for S2/S4 — do not invent landed-state claims.
+Task 1: EDIT spec/07-completion-ui.md — h3.15 re-verify list gains the fifth PIN
+  - FIND: "### pi-tui contract dependencies (re-verify on upgrades)" (~:596):
+    intro sentence "Four runtime contracts are leaned on by the FALLBACK path…"
+    → change "Four" to "Five".
+  - APPEND to the bullet list (match the existing bullet style):
+    "the post-applyCompletion re-request — pi-tui 0.84.4 does NOT re-query
+    after an apply (menu-Tab accept ends in cancelAutocomplete, the forced
+    single-item fast path returns; verified 2026-10), so the fallback path's
+    post-Tab extension offer degrades to no re-offer (07 h3.11) while
+    suppression still never arms; if a pi-tui upgrade ever re-requests, the
+    offer rides it — re-verify test/fallback-post-tab.contract.test.ts."
+  - WHY FIRST: the AGENTS.md spec-maintenance policy (binding) requires spec and
+    code to land in agreement; h3.11's fallback paragraph (:316-321) already
+    mandated "verify at implementation and PIN at the consumption site".
 
-Task 1: WP1 — rewrite the relief blurb (:108-114)
-  - REPLACE the whole bullet with the runs/95-band/retired-in-place blurb
-    specified in WP1; keep README voice (bold lead, file refs in parens).
-  - KEEP the ~483-word audit sentence only as explicit history
-    ("the 2026-09 audit that retired it caught ~483 capitalized common
-    words — the top-band ceiling now guards that class").
+Task 2: MODIFY src/pi/provider.ts — Mode A JSDoc on the acceptance sites
+  - SITE A (base applyCompletion, ~:678): extend the existing doc comment with a
+    paragraph citing spec 07 h3.11: acceptance ARMS the chain (h2.53 —
+    unchanged) but NEVER arms suppression — the seam change is unconditional,
+    independent of whether any offer renders; the 100 ms display window can
+    never re-serve a pre-acceptance set (the display layer's 4c-exception), and
+    the (verified absent — see the fragment-arm PIN) post-apply re-request would
+    carry the extension offer.
+  - SITE B (display machine): in the rule-4 doc EXCEPTION text and at the
+    4c-exception code comment (`if (completionSincePaint)`, ~:1210) cite spec 07
+    h3.11 — acceptance invalidates the anchor AND paints fresh; suppression (4d)
+    never re-serves post-accept; add the anti-pattern note: acceptance must NOT
+    reset display state (a reset would make the post-accept query a gated first
+    paint under menuDelayMs and suppress a future re-request's offer).
+  - SITE C (display applyCompletion, ~:1262): one line citing h3.11 (the flag is
+    what makes every post-accept query fresh — the seam guarantee).
 
-Task 2: WP2 — feature-blurb additions and casing fixes (:32+)
-  - ADD "Capitalized-series completion" bullet AFTER the chained-completion
-    bullet; ADD "Branch hygiene" bullet near "Session salience retention";
-    EXTEND the stock-contexts bullet with the Tab-deferral clause (WP2.3
-    text).
-  - FIX the two casing sentences (WP2.4) by exact-text replacement.
-  - MATCH the existing bullet style: "- **Bold lead** — explanation
-    (`file refs`)."
+Task 3: MODIFY src/pi/provider.ts — the PIN at the consumption site
+  - SITE: the armed branch (b) fragment arm, at/above the `.filter((s) =>
+    s.next !== frag.toLowerCase() && …)` (~:501-529). Add a PIN comment:
+    "PIN (spec 07 h3.11 fallback + h3.15, re-verify on pi-tui upgrades):
+    pi-tui 0.84.4 does NOT re-request autocomplete after applyCompletion
+    (editor.js menu-Tab accept → cancelAutocomplete; forced single-item fast
+    path → return). The post-Tab extension offer therefore rides the NEXT
+    keystroke's query — this fragment arm (successor filtering with exact-equal
+    exclusion) when the chain is armed, the normal 04 query when it is not —
+    and the immediate post-Tab re-offer DEGRADES to nothing (no render),
+    while suppression never arms (unconditional). If a future pi-tui re-requests
+    after an apply, this arm answers that re-request at the completed word —
+    test/fallback-post-tab.contract.test.ts flips red; re-verify and update
+    this PIN plus the h3.15 list."
+  - Keep it in the file's established PIN voice (cf. the force fast-path PIN at
+    the `forced` read ~:330).
 
-Task 3: WP3 — config table + calibration numbers (:467-474, :424-437)
-  - EDIT the two Default cells (8→20 with width-bound Meaning rewrite;
-    12→30), verify the other six rows against src/pi/config.ts, change only
-    what contradicts.
-  - RECOMPUTE the q >= 30 population count via tools/calibrate-bands.mjs
-    (Level 4) and update :426/:429; drop the count sentence rather than
-    guess.
+Task 4: ADD the battery to test/provider.test.ts (describe blocks at end of file)
+  Block 1 — "post-accept never suppresses (spec 07 h3.11 fallback path)":
+  - it("accept then unforced re-query inside the 100 ms window paints FRESH —
+    4c-exception, never the pre-acceptance set"): makeStack; seed
+    implement×3, implementation×2, implements×1 via put; suggest(provider,
+    ["implem"], 0, 6) → non-empty set, prefix "implem"; provider.applyCompletion(
+    ["implem"], 0, 6, {value:"implement",label:"implement"}, "implem") (display
+    surface); IMMEDIATELY suggest(provider, ["implement"], 0, 9) → assert
+    returned prefix === "implement" (NOT "implem") and items exclude
+    "implement" (fresh extension set — armed branch successor offer for the
+    bigram-seeded store; see Block 2 for the exact set) — no re-serve.
+    Seed bigrams recordBigramRuns([["implement","implementation"]]) ×2 and
+    ([["implement","implements"]]) ×1 so the successor offer is deterministic:
+    ["implementation","implements"]? — count desc → implementation(2) first.
+  - it("accept then FORCED re-query returns the base single top item untouched
+    (rule 1.5)"): same setup; provider.getSuggestions(["implement"], 0, 9,
+    { signal, force: true }) → exactly 1 item, the top extension, prefix
+    "implement" — never a re-served multi-item set.
+  - it("CONTROL — 4d narrowing suppression intact WITHOUT an accept"): paint
+    set for "implem" (implement+implementation seeded); put(store,
+    "implemented") between queries; re-suggest at ["implem"] (same prefix,
+    differing set, real-clock gap ≈ 0 < 100 ms) → the DISPLAYED set is
+    re-served (prefix "implem", old items) — proves the seam change is
+    accept-specific. (Query twice in a row quickly; no fake timers needed —
+    the queries are synchronous-fast.)
+  Block 2 — "post-Tab extension offer content (spec 07 h3.11, simulated
+  re-request)":
+  - it("chaining ON: re-request at the completed word offers extension
+    successors — exact-equal excluded, count-desc, description 'chain'"):
+    fresh store + createHapaxProvider(store, cfg(), makeCurrent(), chain);
+    put implement/implementation/implements; recordBigramRuns per above;
+    inner.applyCompletion(["implem"], 0, 6, item implement, "implem") (arms
+    chain("implement"), delegates to current — assert current.applyCompletion
+    called once); suggest(inner, ["implement"], 0, 9) → items
+    [implementation, implements] (NO "implement"), prefix "implement",
+    description "chain"; chain.state() STILL "implement" (grant not spent —
+    assert); __hapaxLive().prefix === "implement".
+  - it("mid-sentence completed word takes the same rule"):
+    ["please implement"], 0, 17 — same assertions.
+  - it("accepting the offer re-arms at the extension (h2.53 final-word)"):
+    applyCompletion with the offered item (value "implementation") →
+    chain.state() === "implementation".
+  - it("chaining OFF: the normal 04 query answers — store-wide extensions,
+    shortest-first, exact-equal excluded"): cfg({enableChaining:false}); put
+    implement×3, implementation×2, implements×1 (no bigrams); accept via
+    applyCompletion (arms nothing); suggest(inner, ["implement"], 0, 9) →
+    [implements, implementation] (10 < 14 chars — shortest key first; NO
+    "implement"), prefix "implement", descriptions from query.ts provenance.
+  - it("terminal word: empty offer → delegation as ever (zero-candidate
+    rule)"): store with node only; accept "node" (typed "nod"); suggest(inner,
+    ["node"], 0, 4) → current.getSuggestions called; its sentinel returned
+    verbatim; __hapaxLive() null; chain reset (armed (b) found no successors).
+  - it("PRESERVATION — forced single-item unchanged; close-on-space and
+    typed-word arming untouched"): assert the forced read still narrows the
+    armed extension offer to items[0]; suggest(inner, ["node "], 0, 5) → null
+    (close-on-space); the existing "series-first offers + typed arming"
+    describe stays green untouched (do not edit it).
 
-Task 4: WP4 — Checks wording (:606)
-  - EXTEND the adversarial-suites sentence with the two battery names.
-  - READ-THROUGH Status (:13) + Dev-loop (:~545-556): no edits unless a
-    sentence is now false.
+Task 5: CREATE test/fallback-post-tab.contract.test.ts (real-Editor PIN)
+  - HEADER comment: the contract suite for spec 07 h3.11 fallback + h3.15 pin
+    5; cites the verified 0.84.4 evidence (editor.js :540-552 menu-Tab accept
+    ends in cancelAutocomplete — no requestAutocomplete; :1902-1917 forced
+    fast path returns) and the degradation (no immediate re-offer; suppression
+    never arms).
+  - HARNESS (defer-pi-menu.repro.test.ts pattern): setKeybindings(new
+    KeybindingsManager(TUI_KEYBINDINGS)); fakeTui(); theme stub; a counting
+    current-provider: getSuggestions vi.fn(async () => null) (pi's stock
+    yields nothing — hapax fully owns word completion) + splice-semantics
+    applyCompletion copied from the repro's makePiProvider (:56-79), recording
+    applied values; build the FULL fallback stack: inner =
+    createHapaxProvider(store, cfg(), current, createChainMachine()); provider
+    = createDisplayProvider(inner); const ed = new Editor(tui, theme, {});
+    ed.setAutocompleteProvider(provider) (auto-wires triggerCharacters —
+    editor.js :287-291).
+  - FIXTURE: store seeded put implement×3, implementation×2 + recordBigramRuns
+    [["implement","implementation"]] ×2 (chain arms on accept; top successor
+    "implementation"). NOTE threshold default 2: fragment "implem" is 6 chars ✓.
+  - TESTS:
+  - it("typing opens the menu (precondition)"): type "implem" char-by-char +
+    flush → isShowingAutocomplete() true; current.getSuggestions NOT called
+    for word fragments (hapax owns) — count pinned at 0.
+  - it("menu-Tab accept delegates verbatim, closes the menu, and fires NO
+    re-request (PIN: 0.84.4 absence — degradation)"): type "implem", flush;
+    const calls = current.getSuggestions.mock.calls.length; handleInput("\t")
+    + flush → applied === ["implement"], getText() contains "implement",
+    isShowingAutocomplete() === false, and NO additional provider-level
+    getSuggestions call occurred (instrument by wrapping provider with a
+    counting proxy object delegating all four members — assert its
+    getSuggestions count unchanged after the accept until the next keystroke).
+  - it("next keystroke after accept queries fresh — no suppression"): after
+    the accept, type "a" + flush → a getSuggestions DID fire at
+    "implementa" (counting proxy) and the menu re-opened
+    (isShowingAutocomplete true — the armed fragment arm's extension offer).
+  - it("Tab-Tab ladder via the forced path (options.force UNCHANGED)"):
+    type "implem", flush; Tab (menu accept "implement"); Tab again (menu
+    closed → handleTabCompletion → force:true → armed branch forced
+    single-item → pi-tui :1902 fast path applies) + flush → applied ===
+    ["implement", "implementation"], text walks the ladder.
+  - gotcha: if the initial menu selection ever lands on "implementation"
+    instead of "implement", make the seeding unambiguous or select via
+    down-arrow handleInput("\x1b[B") — prefer deterministic seeding; the
+    assertion is on `applied`, so a wrong selection fails loudly, not
+    silently.
 
-Task 5: VALIDATION LOOP (below) — all levels, in order.
+Task 6: RUN the validation loop; record results in the PRP's wake (commit message
+  or follow-up notes). If ANY battery test exposes a real suppression defect in
+  the display machine (it should not, per the research), fix it MINIMALLY inside
+  the h3.11 contract and document the fix in the forcing test — never delete
+  coverage.
 ```
 
 ### Implementation Patterns & Key Details
 
-```markdown
-<!-- Relief blurb target shape (adapt prose; keep every fact): -->
-- **Proper nouns — back via runs, not relief (2026-10)** — the 2026-09
-  relief branch stays retired-in-place (ceiling == reject floor, scales
-  with retunes — PROPER_NOUN_ADMIT_CEILING in `src/core/score.ts`).
-  Casing evidence re-entered through two doors: capitalized runs
-  (below) and single mid-sentence capitals under the relaxed band
-  max(R_eff, 95) (`MID_CAP_RELAXED_BAND`). The noise guard is the
-  dictionary top-band ceiling (q ≤ 135, `PROPER_SERIES_TOP_BAND_CEILING`):
-  such members are chain-only — `The ` still offers `Fed` — so the ~483
-  capitalized common words of the 2026-09 audit (`echo`, `windows`,
-  `failed`) stay out of standalone results.
-
-<!-- maxSuggestions Meaning cell target shape: -->
-sanity ceiling on candidates offered at once — the widget line's real cap
-is the terminal width (rightmost items drop first), so the default sits at
-the schema max (2026-10 width-bound retune); tune down for fewer words
-per line
+```typescript
+// The no-suppression guarantee, mechanically (why comments + battery suffice):
+// accept → display.applyCompletion sets completionSincePaint = true →
+// delegates → base arms chain(accepted word) → current splices. The next query
+// at the completed word: base answers via armed branch (b) (fragment at a word
+// start, exact-equal exclusion, publishChain → description "chain") → display
+// classify: isHapax ✓ (prefix === live.prefix) → gate 3.5 skipped
+// (displayedSig non-null — acceptance never resets) → 4a sig differs → 4b
+// maybe (≥100 ms) → 4c-exception (completionSincePaint) → PAINT FRESH. There
+// is NO path where a post-accept query re-serves the pre-acceptance set.
+//
+// Forced post-accept query: rule 1.5 returns the base result BEFORE any
+// classification — the armed branch's forced single-top extension, untouched.
+//
+// The verified absence (0.84.4): after applyCompletion pi-tui calls
+// cancelAutocomplete (menu path) or returns (forced fast path); the ONLY
+// re-request seams are updateAutocomplete (menu OPEN only) and per-keystroke
+// triggers (whitespace excluded from triggerCharacters). Hence: no immediate
+// re-offer (degradation), ladder reachable via Tab-Tab (forced) and type-ahead
+// (armed fragment arm) — all pinned by the contract suite.
 ```
 
 ### Integration Points
 
 ```yaml
-NO code/config/spec integration points. Downstream consumers:
-- P3.M1.T2.S2 (gauntlet): unaffected; run BEFORE it so the tree is coherent.
-- P3.M1.T2.S3 (live smoke): README must not pre-claim its results.
-- P3.M1.T2.S4 (DoD append + drift report): consumes this README as input;
-  any spec/README divergence found later goes in its drift report.
+SPEC:
+  - edit: spec/07-completion-ui.md h3.15 (~:596-610) — fifth bullet + "Four"→"Five"
+  - none elsewhere: h3.11's fallback paragraph already specifies the degradation;
+    this item's PIN fulfills its "verify at implementation and PIN at the
+    consumption site" mandate.
+
+NO OTHER INTEGRATION POINTS — no config, no store, no index.ts, no widget files
+(parallel P4.M1.T1.S1/S2 own src/pi/widget.ts + test/widget.test.ts; do not touch
+them). Feeds: P3.M1.T2.S2 (gauntlet counts this battery + contract suite green),
+P3.M1.T2.S3 (live smoke scenario iv).
 ```
 
 ## Validation Loop
 
-### Level 0: Re-anchor
-
-```bash
-grep -n -E "Proper-noun relief|^## Features|Case-preserving|display casing|REJECT_COMMON_THRESHOLD|45,118|^### Development|^#### Checks" README.md
-```
-
 ### Level 1: Syntax & Style (Immediate Feedback)
 
 ```bash
-git diff --stat          # Expected: README.md ONLY (1 file changed)
-npm run check            # Expected: zero errors (proves no code was touched)
+npm run check        # tsc --noEmit — zero errors (comments + tests only; the
+                     # new test file must typecheck against pi-tui's Editor)
+# Expected: clean. Type errors mean the contract-test casts are wrong — follow
+# the repro file's `as unknown as` idiom rather than fighting the types.
 ```
 
 ### Level 2: Unit Tests (Component Validation)
 
 ```bash
-npm test
-# Expected: green vs baseline — the ONLY permitted failure is the known
-# environmental network-gated case (test/acceptance.test.ts "pi -p loads
-# the real extension...", documented in architecture/04 §2 and owned by
-# P3.M1.T2.S2's gauntlet). Any other failure = something besides README
-# changed — revert it.
+npx vitest run test/provider.test.ts                      # the new battery + all existing describes green
+npx vitest run test/fallback-post-tab.contract.test.ts    # the real-Editor PIN suite
+npm test                                                  # full suite (vitest --run)
+# Expected: all green. Existing describes that must stay green UNTOUCHED:
+# "series-first offers + typed arming", "Tab-only-completes — forced path",
+# "never-hijack acceptance", "stock-context delegation (BUG-001)".
 ```
 
-### Level 3: Integration Testing (System Validation)
+### Level 3: Integration Testing (Real pi-tui — the VERIFY mandate)
 
 ```bash
-# Stale-claim sweep — all must return NOTHING:
-grep -n "REJECT_COMMON_THRESHOLD = 12\|score q ≥ 12\|score q >= 12" README.md
-grep -n "45,118" README.md
-grep -n "| \`8 \`" README.md | grep -i maxsuggestions
-grep -n "last seen in-session\|most-recent-casing-wins" README.md
-grep -n "Proper-noun relief — retired" README.md
+# The item's verification instrument IS the contract suite (real Editor, real
+# async timing) — run it and READ the pin test names as the verified record:
+npx vitest run test/fallback-post-tab.contract.test.ts -v
+# The "fires NO re-request" test is the PIN: if a pi-tui upgrade changes the
+# contract, it flips red and forces the h3.15 re-verification (update the PIN
+# comment in provider.ts + the spec bullet + the test to the new truth).
 
-# New coverage present — each must match:
-grep -cn "series" README.md                                    # >= 4
-grep -n "chain-only" README.md                                 # present
-grep -n "session_tree\|branch" README.md | grep -ci hygiene     # >= 1
-grep -n "defer" README.md                                      # Tab-deferral clause present
-grep -n "branch-purity.test.ts\|defer-pi-menu.repro.test.ts" README.md  # both named
-
-# Every cited file exists (spot-check the new refs):
-ls test/defer-pi-menu.repro.test.ts test/branch-purity.test.ts
+# Cross-check the installed pi-tui version matches the research (0.84.4):
+grep '"version"' node_modules/@earendil-works/pi-tui/package.json
+# and spot-check the two accept sites still match the findings:
+sed -n '540,552p;1902,1917p' node_modules/@earendil-works/pi-tui/dist/components/editor.js
 ```
 
 ### Level 4: Creative & Domain-Specific Validation
 
 ```bash
-# Recompute the population count for the Calibration guarantee:
-node tools/calibrate-bands.mjs the with context handoff
-# (prints q + verdict per word; the tool's population section computes
-#  count(q >= floor) — read the floor-30 number from it, or replicate its
-#  quantile logic in a throwaway node -e script; never estimate by hand.)
-
-# Rendered read-through (binding for docs changes):
-# 1. View README.md rendered (or read top-to-bottom): the config table's
-#    pipes/columns render; no bullet numbering/duplication artifacts.
-# 2. Cross-read each new/edited claim against the spec section it
-#    summarizes (spec 01 h2.9, 04 Capitalized runs + Case handling,
-#    05 Branch navigation rebuild, 07 never-hijack, 08 Schema) — README
-#    must be a faithful summary, never a contradiction (spec h2.1).
-# 3. Confirm no NEW live-verification/performance claims were added.
+# Live TTY (spec 09 h2.61) is BINDING for UI-layer changes, but the fallback
+# path only registers when NO editor factory exists (index.ts dual-path), and
+# the plan routes the post-Tab-offer live smoke to P3.M1.T2.S3 scenario (iv).
+# This item's sanctioned verification surface is the real-Editor contract suite
+# above (the item contract names the harness explicitly). Optional sanity:
+# a live session cannot exercise the fallback path while the widget is primary;
+# do not force it — S3 owns the live gate.
+# Performance: zero new queries, timers, or allocation on the keystroke path —
+# comments and tests only; nothing to benchmark.
 ```
 
 ## Final Validation Checklist
 
 ### Technical Validation
 
-- [ ] Level 1-4 all green; stale-claim sweep returns nothing
-- [ ] `git diff --stat` = README.md only; `npm run check` green
-- [ ] `npm test` green vs baseline (only the known environmental case may fail)
-- [ ] Calibration population count recomputed at floor 30 (or sentence dropped)
+- [ ] `npm run check` clean
+- [ ] `npm test` green (full suite)
+- [ ] `test/defer-pi-menu.repro.test.ts` green VERBATIM (untouched)
+- [ ] Existing provider describes green UNTOUCHED (forced path, never-hijack,
+      stock-context, series-first/typed-arming)
+- [ ] widget files untouched (parallel item's scope)
 
 ### Feature Validation
 
-- [ ] WP1: relief blurb = runs + 95-band + retired-in-place + top-band guard
-- [ ] WP2: series blurb, branch-hygiene blurb, Tab-deferral clause, 2 casing
-      fixes — all landed; casing phrasing is frequency-wins-from-tallies
-- [ ] WP3: defaults 20/30 in table; width-bound rationale; other rows verified
-- [ ] WP4: both batteries named in Checks; no new live claims
-- [ ] Every file/test the README cites exists at HEAD
+- [ ] Post-accept unforced query → fresh paint, prefix = completed word, no
+      re-serve (4c-exception pinned)
+- [ ] Post-accept forced query → base single top item untouched (rule 1.5)
+- [ ] 4d narrowing suppression intact without an accept (control)
+- [ ] Simulated re-request: armed-fragment successor offer (exact-equal
+      excluded, "chain", grant unspent, armed(final) on offer-accept);
+      chaining-off query offer (shortest-first); terminal word → delegation
+- [ ] Real-Editor: no getSuggestions after applyCompletion (PIN), next
+      keystroke queries fresh, Tab-Tab ladder applies the top extension
+- [ ] Degradation documented at the PIN site + spec h3.15 fifth bullet
 
 ### Code Quality Validation
 
-- [ ] README bullet/table style matches surrounding house style
-- [ ] No spec edits (spec/ untouched — `git diff --stat` proves it)
-- [ ] No content copied beyond summary level — spec remains authoritative
+- [ ] JSDoc cites spec 07 h3.11 at both acceptance sites + h3.15 at the PIN
+- [ ] No behavioral production change beyond comments (any forced fix is
+      minimal, documented in the forcing test)
+- [ ] Spec/code agreement: h3.15 edit landed with the code (AGENTS.md policy)
+- [ ] Battery follows test/provider.test.ts conventions (fresh store per test,
+      makeCurrent sentinels, suggest helper)
 
 ### Documentation & Deployment
 
-- [ ] Report notes any dependency that hadn't landed at edit time (for S2/S4)
-- [ ] Drift between README wording and spec recorded in the report for
-      P3.M1.T2.S4's drift report if any was found and not resolvable here
-
-## Anti-Patterns to Avoid
-
-- ❌ Don't edit `spec/`, `PRD.md`, `tasks.json`, or any source/test file —
-  README.md is the entire deliverable.
-- ❌ Don't describe floor 30 as "stricter" — the retune LOOSENED admission.
-- ❌ Don't add live-verification or performance claims for the new behaviors
-  (S3 owns the live smoke; perf gates are unchanged).
-- ❌ Don't keep the stale casing vocabulary ("last seen in-session",
-  "most-recent-casing-wins", "display casing") anywhere.
-- ❌ Don't hand-wave the 45,118-style population count — recompute or drop it.
-- ❌ Don't restate spec sections exhaustively — README is a summary with refs.
-- ❌ Don't cite files by guessed paths — verify each path exists before
-  citing it.
+- [ ] No new env vars, config, or dependencies (nothing to document)
+- [ ] PR notes the verified contract state (0.84.4 absence) for future
+      upgraders
 
 ---
 
-**Confidence Score**: 9/10 — every stale claim is pinned to a measured anchor
-with verified code constants and spec backing; the task is prose-only with a
-deterministic grep sweep as its gate. Residual risk: sibling P1.M2 widget
-series-offer code landing after this PRP was written (mitigated by Task 0's
-pre-flight check — behavior is described per spec either way) and the
-population-count recomputation requiring one tool run with non-obvious output
-shape.
+## Anti-Patterns to Avoid
+
+- ❌ Don't add a "reset on accept" to the display machine — it would make the
+  post-accept query a gated FIRST PAINT under menuDelayMs and suppress a future
+  re-request's offer (the exact anti-h3.11 behavior). The no-reset + 4c-exception
+  IS the rule.
+- ❌ Don't touch the chain arming in base applyCompletion — acceptance arming is
+  UNCHANGED (item contract; spec h2.53).
+- ❌ Don't modify the forced single-item return, close-on-space, series-first
+  offers, or typed-word arming — preservation is pinned by existing tests.
+- ❌ Don't invent a hapax-side re-request (no timers, no pushing into pi — pi is
+  pull-based; the provider only ever RETURNS sets).
+- ❌ Don't turn the PIN test into an internal-state assertion on pi-tui — pin the
+  OBSERVABLE contract (getSuggestions call count across the accept boundary).
+- ❌ Don't edit test/defer-pi-menu.repro.test.ts, src/pi/widget.ts,
+  test/widget.test.ts, src/pi/index.ts, or src/core/query.ts — other items' scope.
+- ❌ Don't ship the spec edit separately from the code (spec-maintenance policy:
+  they land together).
+- ❌ Don't skip reading a red contract test as a contract change signal — a red
+  "no re-request" pin on upgrade means pi-tui changed; update the PIN trio
+  (provider.ts comment, spec bullet, test) to the new verified truth.

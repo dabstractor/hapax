@@ -1,473 +1,439 @@
-# PRP — P4.M1.T1.S1: Seam retirement + extension-offer evaluation in the Tab-insert path
+# PRP — P3.M1.T1.S1: Pre-check isShowingAutocomplete in the widget Tab branch; harden repro into a regression suite
 
 ---
 
 ## Goal
 
-**Feature Goal**: Tab-accept EXITS the explicit-dismissal suppression seam on
-the widget path, and after every Tab insertion the visibility machine runs a
-synchronous "extension offer" evaluation — a re-query with the fragment now
-equal to the completed word — implementing spec 07 h3.11 + its h3.10 seam
-amendment and h3.12 item 6. Escape / boundary pass-through / Enter-submit keep
-arming rest-of-word suppression unchanged.
+**Feature Goal**: Fix the pre-existing Tab-stealing bug on the widget path: when
+pi's OWN autocomplete menu is open (forced file menu, slash-argument menu, any
+stock surface), the widget layer must never consume Tab — it forwards the press
+verbatim so pi's menu accepts its highlighted item. Deferral keys on the menu's
+ACTUAL open state (`inner.isShowingAutocomplete?.() === true`), not on static
+context classification, because case 3 of the repro proves classification cannot
+work (the hesitation race re-arms the hapax line while pi's menu is open).
+Simultaneously harden `test/defer-pi-menu.repro.test.ts` from an investigation
+repro (console.log scaffolding, "not a regression suite yet" header) into a
+clean regression suite, and extend `test/widget.test.ts`'s key-handling bullets
+to pin the deferral state at the wiring level.
 
-**Deliverable**: A modified `src/pi/widget.ts` (seam retirement in
-`insertHighlighted` + extension-offer evaluation in the tab-insert branch of
-`widgetHandleInput` + updated JSDoc), plus updated/added tests in
-`test/widget.test.ts` (and `test/widget-visibility.test.ts` only if a machine
-comment change warrants it). NO new files. NO spec edits (the spec is already
-amended — see Context). NO query-core changes (exact-equal exclusion already
-shipped).
+**Deliverable**:
+1. A ~6-line deferral pre-check (+ JSDoc) in `widgetHandleInput`
+   (`src/pi/widget.ts`), placed after `decideWidgetKey` and BEFORE the
+   tab-insert handling — `decideWidgetKey` stays PURE (no editor state).
+2. Hardened `test/defer-pi-menu.repro.test.ts`: header updated, describe label
+   `repro:` → `regression:`, all `console.log` + eslint-disable scaffolding
+   stripped, assertions kept and strengthened with precondition asserts.
+3. New key-handling bullets in `test/widget.test.ts` (harness gains an
+   `isShowingAutocomplete` knob).
+4. Minimal spec sync (spec/07 Tab bullet + h3.13 parenthetical; spec/09
+   widget.test.ts key-handling bullet) per the binding spec-maintenance policy.
 
-**Success Definition**: Typing `implem` then Tab inserts `implement` and
-IMMEDIATELY offers `implementation | …` (fresh generation, highlight reset,
-no hesitation delay even under `menuDelayMs > 0`); typing `node` then Tab
-inserts `node` and the line simply closes (0 candidates → disqualification
-close, NO suppression — the next keystroke OR backspace reopens); Escape /
-boundary / Enter still suppress for the rest of the word; the chain still
-arms at every accepted word; the Tab-deferral pre-check still runs first;
-`npm run check` + `npm test` green; live TTY verification per spec/09 h2.61.
+**Success Definition**: `npx vitest run test/defer-pi-menu.repro.test.ts` →
+**4/4 green** (3 former reds + the pure-slash contrast case, which must stay
+green unchanged). `npm run check` clean. `npm test` green except the known
+environmental network-gated acceptance case (see Validation). The
+`defer-pi-menu` battery is the named precondition for P3.M1.T2.S2's gauntlet.
+Live TTY verification of this key-handling change is BINDING and is owned by
+P3.M1.T2.S3 — this item ships the code + automated proof; do not claim the live
+check here.
 
-## User Persona (if applicable)
+## User Persona
 
-**Target User**: the pi coding-agent user typing prompts with hapax installed.
+**Target User**: hapax owner / pi users with the widget path active (any session
+where an editor factory exists).
 
-**Use Case**: Repeated-Tab ladders — `implem` → Tab (`implement`) → Tab
-(`implementation`) — and ordinary single-word completion where the word is
-terminal (no extensions).
+**Use Case**: The user presses Tab to summon pi's own file completion on a plain
+word (`templates/`-style), or types a slash command's argument and pi's
+argument menu auto-opens, then presses Tab to accept pi's highlighted item.
 
-**User Journey**: Type a fragment; menu offers ranked candidates (shortest
-key first); Tab inserts the highlighted word; if extensions of that word
-exist, a fresh offer renders instantly and Tab walks the ladder monotonically;
-if not, the line closes silently and backspace out of a sibling fork
-(`implement` → `implements` dead-end → backspace → `implement`) re-renders
-`implement`'s offer.
+**User Journey**: Type `load the te` → Tab (1st) opens pi's forced file menu →
+Tab (2nd) must accept `templates/`. Today hapax's armed widget line steals that
+2nd Tab and inserts a hapax dictionary word instead — the user's explicit
+accept of a stock menu is hijacked.
 
-**Pain Points Addressed**: The 2026-10 owner-reported live wedge —
-`implem` → Tab → `implement`, then NOTHING until the entire word was
-backspaced (Tab-accept suppression blocked the extension offer the
-progressive-completion ranking was built to serve).
+**Pain Points Addressed**: A visible never-hijack violation (spec 07 h2.46
+"stock path/slash completion is untouched by construction"; h2.51 never-hijack)
+— three red test cases document it.
 
 ## Why
 
-- The 04 ranking (shortest-first + exact-equal exclusion) is designed for
-  repeated-Tab ladders, but the T3 suppression seam lumped Tab-accept into
-  explicit dismissal, so the first Tab wedged the word (spec 07 h3.11
-  "Problem").
-- Exact-equal exclusion (already in the query core) plus the extension offer
-  now define precisely what deserves to show post-Tab — the seam no longer
-  needs to blind the machine (spec 07 h3.10 amendment).
-- Sibling P4.M1.T1.S2 (ladder recursion / backspace recovery /
-  fresh-generation battery) and P4.M1.T2.S1 (fallback path) pin on top of
-  this seam change; P3.M1.T2.S3 scenario iv live-verifies it.
+- Spec 07 h2.46 (Display architecture) guarantees the widget path leaves stock
+  path/slash/`@` completion "untouched by construction"; consuming Tab while
+  pi's menu is open breaks that guarantee.
+- Spec 07 h2.51 (Never-hijack rules): no key is ever captured outside the
+  sanctioned windows — Tab over an OPEN pi menu is pi's Tab, not hapax's.
+- This is the P3.M1.T2.S2 gauntlet precondition ("check + test (incl. former
+  repro) + bench") — the changeset cannot close while the repro is red.
+- Architecture findings (plan/006_7bd0258da993/architecture/03 §R4 and 04 §1)
+  already ratified the insertion point and the open-state-keyed rule.
 
 ## What
 
-User-visible behavior (spec 07 h3.11, verbatim contract):
+**Behavior**: In `widgetHandleInput`, after the pure `decideWidgetKey` decision
+is computed and BEFORE any insert/suppress/tick/arming executes: if the decision
+is `tab-insert` AND the inner (enter-submit-proxied, real) editor reports
+`isShowingAutocomplete?.() === true`, return `forwardInput(data)` verbatim —
+pi's menu accepts its highlighted item; hapax inserts nothing. The deferral:
 
-- Tab-accept arms NO suppression. Escape / boundary pass-through /
-  Enter-submit keep arming rest-of-word suppression unchanged; the
-  suppression-lapse machinery now serves only those three.
-- After a Tab insertion (word, `#fragment` trigger completion, or chain-shim
-  zero-span acceptance — all the same rule), the visibility machine runs
-  normally; its first evaluation is the EXTENSION OFFER: re-query with the
-  fragment now equal to the completed word. Exact-equal exclusion removes the
-  completed word itself; the offer is every live match — in practice the
-  proper-prefix extensions — ranked by the normal 04 rules.
-- ≥1 candidate → the offer renders as a FRESH generation (highlight reset to
-  the first word, un-entered, boundary pass-through available) and is an
-  INTENT show: `menuDelayMs` hesitation-gate bypass, immediate render at
-  Tab-insert; the 100 ms swap debounce + hysteresis apply as to any set
-  change.
-- 0 candidates (terminal word — the common case) → disqualification close:
-  hide with NO suppression; the next qualifying edit — keystroke OR
-  BACKSPACE — reopens normally.
-- Tab on the offer inserts the highlighted word and the rule applies
-  recursively (S2's battery pins the ladder); typing narrows; Space closes;
-  Escape/boundary on the offer IS an explicit dismissal (suppression, seam
-  retained).
-- Chain arming: every Tab-insert still arms `armed(inserted word)` — walking
-  the ladder leaves the chain armed for the FINAL accepted word (pinned by
-  S2).
-- Residual menu-flash after Tab when an extension exists but is unwanted
-  (`node` → brief `nodes`/`nodejs` offer before the space closes it):
-  owner-accepted, self-closing on Space.
+- does NOT dismiss or suppress the hapax line (pure forward, same shape as the
+  `forward` decision),
+- does NOT set `interacted` (only navigate does),
+- does NOT arm the chain (returns before the arming seam),
+- does NOT release or alter the line claim,
+- ticks the input clock exactly ONCE via `forwardInput`'s guard seam (same as
+  every forwarded key — no double tick),
+- leaves the Enter-submits guard and all other branches untouched.
+
+When no menu is open (`undefined` or `false`), behavior is byte-identical to
+today. When the hapax line is hidden/empty, the decision is already `forward`
+and Tab forwards as today (case 3's 1st Tab) — no change.
 
 ### Success Criteria
 
-- [ ] After a consumed Tab that inserts a word WITH extensions, the machine
-      is `visible` with the extension set, `suppressUntilWordStart === false`,
-      `state.highlightIndex === 0`, `state.interacted === false`, and the
-      render was requested — synchronously, in the same keypress.
-- [ ] After a consumed Tab that inserts a TERMINAL word, the line is hidden,
-      `suppressUntilWordStart === false`, and the next qualifying keystroke
-      reopens (backspace-recovery specifics are S2's).
-- [ ] Escape / boundary pass-through / Enter-submit still set
-      `suppressUntilWordStart === true` (existing suppression battery stays
-      green unchanged).
-- [ ] With `menuDelayMs > 0`, the post-Tab offer still renders immediately
-      (hesitation bypass — intent show).
-- [ ] The `isShowingAutocomplete` deferral pre-check still runs FIRST in the
-      Tab branch (`test/defer-pi-menu.repro.test.ts` green).
-- [ ] Chain arming still fires at the accepted store key with a fresh grant;
-      after the offer evaluation the chain ends armed at the accepted word
-      (even mid-ladder when the consult's (c) arm resets the chain — the arm
-      site re-arms afterward).
-- [ ] `npm run check` and `npm test` green; live TTY verification recorded.
+- [ ] All 3 former red cases pass: pi's `applyCompletion` receives the
+      accepting Tab (`pi.applied` `["templates/"]`).
+- [ ] Contrast case 4 (pure slash `/mo`) stays green with NO changes to its
+      assertions.
+- [ ] `decideWidgetKey` signature and purity unchanged (no editor state in, no
+      new decision action).
+- [ ] JSDoc on the deferral branch citing spec 07 h2.46 + h2.51.
+- [ ] Repro file header no longer says "not a regression suite yet"; zero
+      `console.log`; zero `eslint-disable` comments.
+- [ ] `test/widget.test.ts` gains deferral bullets (forward-not-insert with the
+      menu open; inert when closed/absent; throwing probe never breaks input).
+- [ ] `npm run check` + `npm test` per Validation Loop.
 
 ## All Needed Context
 
 ### Context Completeness Check
 
-"If someone knew nothing about this codebase, would they have everything
-needed to implement this successfully?" — Yes: every edit site is pinned to
-file + function + current line neighborhood, the mechanism (close +
-synchronous re-evaluate riding the R7 fresh-reopen rule) is fully specified
-with rationale, the one ordering hazard (eval-before-arm vs the chain
-consult's (c) reset) is analyzed, and the tests to update/add are enumerated.
-Verified against HEAD `a618343` on 2026 research pass; line numbers drift —
-navigate by the quoted code, not only the numbers.
+"If someone knew nothing about this codebase, could they implement this
+successfully?" — Yes: exact line anchors, the precedent guard to copy, the
+composition chain explaining how `isShowingAutocomplete` is reachable from the
+wiring, the red-test evidence, and the test-harness anatomy are all below.
 
 ### Documentation & References
 
 ```yaml
 # MUST READ - Include these in your context window
-- file: spec/07-completion-ui.md
-  why: The binding contract being implemented — h3.10 "Widget key handling"
-    (the seam amendment: "Tab-accept is NOT in the seam (2026-10)"), h3.11
-    "Post-Tab extension offer" (the full rule incl. fork ruling + residual
-    cost), h3.12 "Widget visibility state machine" item 6 (intent show,
-    hesitation-gate bypass, immediate render).
-  pattern: h3.10 bullet "Explicit dismissal", h3.11 whole section, h3.12 items 2-6.
-  gotcha: The spec is ALREADY amended (commit 6799367 "docs(spec): post-Tab
-    extension offer adopted"). Do NOT edit spec/ — spec and code must land in
-    agreement, and the spec half already landed. This item ships the code half.
-
-- file: spec/09-testing-and-acceptance.md
-  why: "Live verification technique (binding)" (~line 286) — the tmux recipe
-    every UI-layer change MUST follow; unit tests alone are insufficient by
-    project law.
-  pattern: pi --no-session in a tmux pane; tmux send-keys ONE CHAR AT A TIME
-    with 0.08-0.12 s sleeps (bursts cancel in-flight autocomplete queries);
-    verify via tmux capture-pane.
-  gotcha: Piping stdout makes pi's TUI exit silently — a real TTY is required.
-
 - file: src/pi/widget.ts
-  why: The ONLY production file to modify. Key sites (verify by quoted text,
-    lines drift): insertHighlighted's doc block + its trailing
-    "state.hide(); visibility.onDismissed(true)" (~:1462); onDismissed's
-    T3-seam comment listing "Tab-accept" as a seam member; the tab-insert
-    branch of widgetHandleInput (deferral pre-check → rec capture →
-    insertHighlighted → arm site, ~:1670-1818); createVisibilityMachine's
-    evaluate (lapse → R1 → chain consult → match → R2 → query → R4-R7).
-  pattern: The file's house style — dense JSDoc citing spec sections,
-    fully-defensive optional member access, "state/machine failures never
-    break input" try/catch, one clock tick per keypress.
-  gotcha: (1) hide() clears machine.painted() — rec MUST be captured BEFORE
-    insertHighlighted (already the case; do not reorder it away). (2) The
-    machine's onInput is normally driven from a microtask (W1 fix) because
-    DELEGATED keystrokes read a pre-keystroke buffer — but the Tab insert is
-    applied synchronously via setText, so a synchronous machine.onInput()
-    after the insert reads the POST-insert buffer. Do not "fix" this into a
-    microtask; the offer must land in the same keypress.
+  why: The single source file to modify. Key anchors (verified at HEAD dbafbfc):
+    :1197 decideWidgetKey (PURE — signature/data-in/data-out MUST NOT change);
+    :1534 inner = createEnterSubmitEditor(opts.inner(...), keybindings, tick)
+      (the widget's innerRecord IS the enter-submit proxy — property reads
+      forward through its get trap to the REAL editor);
+    :1579 forwardInput (dynamic guard-handleInput read; ONE clock tick);
+    :1595 widgetHandleInput; :1610 decideWidgetKey call in try/catch;
+    :1621 forward branch; :1691 tab-insert branch (the handling to precede).
+  pattern: copy the introspection idiom from editor.ts:111-115 verbatim.
+  gotcha: NEVER read editor state inside decideWidgetKey (purity convention at
+    :1180-1195); editor-state checks live in the wiring — the Enter-submit
+    guard is the precedent (architecture/03 §R4 "Recommended: option 2").
 
-- file: src/pi/chain-grant.ts
-  why: The one-shot grant tracker ticked inside evaluate's consult branch —
-    read it to understand grant.tick's word-boundary counting before
-    reasoning about the extension evaluation's interaction with an armed
-    chain.
-  pattern: tick returns true only when the SECOND word is observed; reset()
-    at every arm site.
-  gotcha: The consult branch ticks the grant BEFORE its (a)/(b) split; a
-    fresh grant's first tick records seen=1 and returns false (never spends).
-
-- file: src/core/query.ts
-  why: PROOF the offer needs no core change — exact-equal exclusion is
-    already: anchored pass `if (k === lower) continue;` (~:592) and tier-0
-    pass (~:646, "parity with the anchored pass").
-  pattern: rankMatches(store, fragment, { limit, fuzzThreshold, loose }) —
-    exactly what the machine's `query` dep already calls.
-  gotcha: Do NOT touch query.ts in this item.
-
-- file: test/widget.test.ts
-  why: Test conventions + the tests that pin today's WRONG behavior.
-  pattern: makeInsertHarness (composed editor + fake buffer + trap store +
-    press/show/requestRender/onKeystroke, ~:900); the Tab describe block
-    (~:960+). suppression battery at :701-761 (stays green unchanged);
-    Tab-with-suppression assertions at :960-971 and :1089 (MUST change).
-  gotcha: show() drives state.set DIRECTLY (bypasses the machine — painted()
-    stays empty, no arming, no offer). Extension-offer tests must instead
-    seed the trap store and drive machine.onInput() so the machine paints —
-    then press Tab and assert on machine.getState()/state.
-
-- file: test/widget-visibility.test.ts
-  why: Machine-level drive pattern (fake editor state + injected `query`
-    seam + vi.useFakeTimers; machine.onInput() per keystroke; suppression
-    battery :288-351). If you add any machine-surface behavior, test it HERE
-    with this harness; pure wiring behavior belongs in widget.test.ts.
-  gotcha: onDismissed(false) = close-no-suppress is already pinned (:751-761)
-    — your seam retirement makes the Tab path USE it.
+- file: src/pi/editor.ts
+  why: :111-115 is the exact precedent guard —
+    (innerAny.isShowingAutocomplete as (() => boolean) | undefined)?.() === true
+    — including the defensive cast and optional-call shape. Also documents the
+    proxy's forwarding semantics (get/set/has, functions bound to inner,
+    `then` undefined) the widget layer relies on for the read.
+  pattern: fully-defensive optional-chaining probe; worst case inert.
 
 - file: test/defer-pi-menu.repro.test.ts
-  why: P3.M1.T1.S1's regression suite — the isShowingAutocomplete deferral
-    pre-check MUST stay first in the Tab branch. It must stay green verbatim.
+  why: The 207-line battery to turn green and harden. Currently 3 failed/1
+    passed (verified live). Harness = REAL pi-tui Editor as widget inner +
+    pi-provider double (getSuggestions/applyCompletion recording `applied[]`)
+    + createWidgetEditorFactory; flush() = 10 microtask turns; case 3 uses
+    vi.useFakeTimers() + advanceTimersByTimeAsync with menuDelayMs 400.
+  pattern: keep the harness EXACTLY as-is (contract: mocking stays "the file's
+    own harness (real Editor + provider double)").
+  gotcha: do NOT rename the file (P3.M1.T2.S2's gauntlet and the task tree
+    reference the defer-pi-menu battery by this name); do NOT weaken the
+    contrast case.
+
+- file: test/widget.test.ts
+  why: Wiring-level key-handling bullets to extend. makeInsertHarness (:843)
+    builds the editor double `raw` (handleInput/getLines/getCursor/setText/
+    setCursorCol/render) behind a never-mutate pin Proxy; `press()` drives the
+    composed handleInput; `show()` seeds state; `calls`/`innerCalls` log every
+    inner interaction in order. The Tab describe starts at :942
+    ("widget key handling — Tab inserts the highlighted word (spec §07 h2.46
+    rule 0, S2)").
+  pattern: follow the existing it(...) naming + calls-sequence assertions.
+  gotcha: the double has NO isShowingAutocomplete member today — the new
+    widget.ts probe reads undefined and stays inert for every existing test
+    (backwards compatible). Extend the harness with an opt-in knob; do not add
+    the member unconditionally.
+
+- file: spec/07-completion-ui.md
+  why: Spec sync target. The "Tab inserts the highlighted word" bullet sits at
+    :222 (widget key handling section); the "Tab-open gesture" section's
+    FALLBACK-ONLY parenthetical claims the bug class is "structurally absent"
+    on the widget path — this repro falsifies the accept-stealing half of that
+    claim, so the parenthetical needs one corrective clause.
+  gotcha: spec/PRD heading numbers (h2.46/h2.51/h3.13) are the PRD index
+    numbering; the spec files use unnumbered headings. Cite by section title
+    in prose; h-numbers are fine in code comments (existing convention —
+    widget.ts already says "spec §07 h3.9").
+
+- file: spec/09-testing-and-acceptance.md
+  why: Unit-battery spec for widget.test.ts key handling ("Key handling
+    (editor-proxy double)" bullet) — gains the deferral clause. Also the source
+    of the BINDING live-verification technique (tmux send-keys one char at a
+    time, 0.08–0.12 s sleeps) that P3.M1.T2.S3 will run for this change.
+
+- docfile: plan/006_7bd0258da993/architecture/03-pi-surfaces-r2-r3-r4.md
+  why: §R4 "deferral insertion points" (line 89) — ratifies the exact check,
+    the placement options, and recommends option 2 (veto the tab-insert
+    decision in the wiring; keep decideWidgetKey pure).
+
+- docfile: plan/006_7bd0258da993/architecture/04-tests-docs-r5.md
+  why: §1 documents the red battery case-by-case (why each fails, why static
+    classification cannot work for case 3) and §2 the suite baseline —
+    including the environmental acceptance.test.ts failure signature that is
+    NOT this item's concern.
+
+- file: plan/006_7bd0258da993/P2M1T2S2/PRP.md
+  why: The PARALLEL in-flight item (branch-purity battery; test-only + an
+    index.ts session_tree handler). No file overlap with this change; do not
+    touch its deliverables (test/branch-purity.test.ts) and expect it in the
+    tree at gauntlet time.
 ```
 
 ### Current Codebase tree (relevant excerpt)
 
 ```bash
-src/pi/widget.ts            # 1884 lines — the ONLY production file touched
-src/pi/chain-grant.ts       # read-only reference (grant semantics)
-src/pi/provider.ts          # read-only (fallback path — P4.M1.T2.S1's scope, NOT yours)
-src/core/query.ts           # read-only (exact-equal exclusion already shipped)
-test/widget.test.ts         # UPDATE: post-Tab suppression assertions; ADD: offer battery
-test/widget-visibility.test.ts  # machine-surface tests, if any
-test/defer-pi-menu.repro.test.ts # must stay green (deferral pre-check first)
+src/pi/
+  editor.ts        # enter-submit proxy; isSubmitKey export; THE precedent guard
+  widget.ts        # widget layer: decideWidgetKey (pure), widgetHandleInput (wiring)
+  provider.ts      # fallback path (untouched), createChainMachine import source
+test/
+  defer-pi-menu.repro.test.ts   # THE battery: 3 red / 1 green today
+  widget.test.ts                # wiring-level key handling (extend)
+  widget-visibility.test.ts     # visibility machine (untouched)
+spec/
+  07-completion-ui.md           # Tab bullet :222; Tab-open parenthetical (sync)
+  09-testing-and-acceptance.md  # widget key-handling bullet (sync)
 ```
 
 ### Desired Codebase tree with files to be added and responsibility of file
 
 ```bash
-# NO new files. Changes:
-src/pi/widget.ts            # seam retirement + extension-offer eval + JSDoc (Mode A)
-test/widget.test.ts         # updated assertions + new extension-offer battery
-test/widget-visibility.test.ts  # only if a machine-surface behavior changed (none expected)
+# NO new files. Modified:
+src/pi/widget.ts                  # +deferral pre-check in widgetHandleInput (+JSDoc)
+test/defer-pi-menu.repro.test.ts  # hardened regression suite (same path, same harness)
+test/widget.test.ts               # +deferral key-handling bullets (+harness knob)
+spec/07-completion-ui.md          # 2 one-clause sync edits
+spec/09-testing-and-acceptance.md # 1 one-clause sync edit
 ```
 
 ### Known Gotchas of our codebase & Library Quirks
 
-```typescript
-// CRITICAL ORDERING (the one real hazard): the extension evaluation MUST run
-// BEFORE the arm site. Evaluating AFTER arm() would send the offer through
-// evaluate's CHAIN CONSULT (b) branch — topSuccessors(NEW word) filtered by
-// matchFragment — producing a successor-index offer instead of h3.11's
-// defined QUERY offer ("every live match of the completed word"). Evaluating
-// BEFORE arm(): common case (chain idle) → pure query offer; ladder case
-// (chain armed at the PREVIOUS word) → the consult may answer with successor
-// extensions or (c)-reset the chain — and the arm site re-arms at the
-// accepted word immediately after, so "chain ends armed at the FINAL
-// accepted word" (S2's pin) holds either way. TEST the ladder case.
+```text
+# CRITICAL: decideWidgetKey is PURE (data/visible/count/highlightIndex/
+#   interacted/keybindings — no editor state) and MUST STAY PURE. Editor-state
+#   checks belong in the wiring; the Enter-submit seam is the precedent.
+#   Do NOT add an isShowingAutocomplete parameter or a new decision action.
 
-// CRITICAL MECHANISM: the immediate render does NOT need a new intent flag.
-// onDismissed(false) is closeWith(now) → hide() + closeAt stamp. The very
-// next synchronous evaluate sees !visible AND now - closeAt ≈ 0 < reopenMs
-// (200) → R7 fresh-reopen: hesitation (R5) bypassed, paints immediately on
-// the !visible branch (R6's swap-debounce park only applies to a CONTINUOUSLY
-// visible line). Skipping the close would leave visible=true → R6 parks the
-// offer behind the 100 ms swap timer → VIOLATES "immediate render".
+# CRITICAL: NEVER mutate a shared editor instance (v1 RangeError crash, spec 07
+#   h2.52 history). The deferral only READS through the proxy.
 
-// CRITICAL: hide() clears machine.painted() — rec (the accepted record for
-// chain.arm) is captured BEFORE insertHighlighted today. Keep that capture;
-// the extension evaluation repaints painted() with the offer, which must NOT
-// disturb rec (it is a local — safe).
+# The read must be defensive: innerRecord is Record<PropertyKey, unknown> —
+#   cast exactly like editor.ts:113:
+#   (innerRecord.isShowingAutocomplete as (() => boolean) | undefined)?.() === true
+#   Wrap the whole check in try/catch; on ANY throw fall through to the normal
+#   tab-insert path (deferral inert — the file's failure model: worst case
+#   inert, never broken).
 
-// GOTCHA: fresh generation is automatic. applyVisibility pushes state.set()
-// only on a signature change; the offer set can never equal the pre-Tab set
-// (the inserted word was IN the pre-Tab set and exact-equal exclusion removes
-// it from the offer), so set() always fires → highlightIndex 0 + interacted
-// false (WidgetState.set contract). Assert it anyway.
+# Placement: AFTER the decision try/catch (~:1610-1620), BEFORE the
+#   `decision.action === "forward"` line (:1621) — or anywhere before the
+#   tab-insert branch (:1691). It must return BEFORE the consumed-tick block
+#   (~:1667 opts.onKeystroke) so the press ticks exactly once (via
+#   forwardInput's guard seam) and never double-ticks.
 
-// GOTCHA: trigger completions (#implem → Tab inserts "implement", trigger
-// consumed) and chain-shim zero-span acceptances (inserts "Fed" at an empty
-// word start) take the SAME rule for free — post-insert the cursor sits
-// after a plain word, extractMatchState returns threshold mode with the
-// completed word as fragment. No special-casing; ADD A TEST for the trigger
-// case anyway.
+# Key on decision.action === "tab-insert", NOT on matchesKey(data, "tab"):
+#   decideWidgetKey stays the single key classifier; the deferral is a veto on
+#   one of its decisions. When the hapax line is hidden/empty the decision is
+#   already "forward" — Tab forwards as today (no behavior change; case 3's
+#   1st Tab depends on this).
 
-// GOTCHA: a display containing '/' or '.' (rule-4d keys keep edge slashes)
-// can make the post-insert position a STOCK CONTEXT — evaluate's R1 hides
-// (no suppression) automatically because "the machine runs normally". Do
-// not pre-filter; let R1 handle it.
+# The eslint-disable comments in the repro are inert scaffolding (repo has no
+#   eslint config) — remove them together with the console.log calls.
 
-// GOTCHA: pending swap timers are cancelled by hide() (closeWith → hide →
-// clearSwapTimer) — a parked pre-Tab swap cannot leak into the offer.
+# test/no-persistence.test.ts greps for persistence: this change adds none.
 
-// GOTCHA: exactly ONE clock tick per keypress. The consumed Tab already
-// ticks opts.onKeystroke() in the consumed-keys block BEFORE the branch; do
-// NOT tick again, and do NOT route the extension eval through tick()'s
-// microtask (it also ticks the clock a second time via the guard seam —
-// wrong for a consumed key).
+# No eslint/ruff/prettier here — "style" gate = npm run check (tsc --noEmit,
+#   strict). No new imports needed in widget.ts.
 ```
 
 ## Implementation Blueprint
 
 ### Data models and structure
 
-None. No new types, no config, no store, no schema. `VisibilityMachine`'s
-public surface is UNCHANGED (`onInput`/`onDismissed`/`getState`/`painted`/
-`dispose`) — the machine itself needs NO behavioral change; only a comment
-edit inside `onDismissed` (the seam-member list drops "Tab-accept").
+None — no new data shapes. The only state touched is the early return path
+through the existing `forwardInput` closure; `WidgetState`, the visibility
+machine, the chain-grant, and `WidgetKeyDecision` are untouched.
 
 ### Implementation Tasks (ordered by dependencies)
 
 ```yaml
-Task 1: MODIFY src/pi/widget.ts — insertHighlighted seam retirement
-  - FIND: the end of insertHighlighted's success path:
-      state.hide(); // immediate visual dismissal…
-      visibility.onDismissed(true); // …+ suppression until the next word start
-  - REPLACE the onDismissed(true) call with onDismissed(false):
-      state.hide(); // immediate visual close…
-      visibility.onDismissed(false); // …a CLOSE, never suppression (spec 07
-      // h3.10 amendment / h3.11: Tab-accept EXITS the seam — the close stamps
-      // closeAt so the extension evaluation reopens FRESH and immediately)
-  - KEEP state.hide() (defensive: if the extension eval ever throws, the line
-    is closed, never stale).
-  - UPDATE the doc block (Mode A, spec-maintenance rides with the work):
-    the "Dismissal" paragraph must now cite spec 07 h3.11/h3.10 — Tab-accept
-    is a CLOSE (no suppression); the suppression seam serves only Escape /
-    boundary pass-through / Enter-submit; the post-Tab offer is evaluated by
-    the CALLER (the tab-insert branch) right after this returns.
-  - NOTE: the failure model (any throw → return false → forward) is untouched.
+Task 1: MODIFY src/pi/widget.ts — the deferral pre-check (+ JSDoc)
+  - LOCATE: widgetHandleInput (:1595). After the `decision = decideWidgetKey(...)`
+    try/catch (:1610-1620) and BEFORE `if (decision.action === "forward")
+    return forwardInput(data);` (:1621), insert:
 
-Task 2: MODIFY src/pi/widget.ts — extension-offer evaluation in the tab-insert branch
-  - FIND (widgetHandleInput, tab-insert arm area):
-      const consumed = insertHighlighted(
-        innerRecord as unknown as EditorLike,
-        state,
-        machine,
-        opts.config,
-        requestRender,
-      );
-      if (!consumed) return forwardInput(data); // span-miss forward: NEVER arms
-  - INSERT between that line and the arming block (ORDER IS LOAD-BEARING —
-    see Known Gotchas):
-      // POST-TAB EXTENSION OFFER (spec 07 h3.11 + h3.12 item 6): the
-      // visibility machine "runs normally" — synchronous onInput() against
-      // the POST-insert buffer (setText is synchronous; the W1 microtask
-      // deferral exists only for DELEGATED keystrokes reading a pre-
-      // keystroke buffer). The onDismissed(false) close above stamps
-      // closeAt, so this first evaluation is a FRESH REOPEN (R7): immediate
-      // paint, menuDelayMs hesitation bypassed — the intent-show semantics
-      // of h3.12 item 6 — with the live query's extension set (exact-equal
-      // exclusion removed the completed word; ranked by the normal 04
-      // rules). 0 candidates → the machine's own R4 disqualification close:
-      hidden, NO suppression, next qualifying edit (keystroke OR backspace)
-      reopens. Runs BEFORE the arm site so the offer is the QUERY result,
-      never a successor-index shim, and the (c) chain reset (mid-ladder
-      consult) is immediately superseded by the arm below — the chain ends
-      armed at the FINAL accepted word.
-      applyVisibility(machine.onInput());
-      requestRender();
-  - This sits INSIDE the existing try/catch ("state/machine failures never
-    break input") — wrap not needed beyond it.
-  - DO NOT add a clock tick (the consumed-key block above already ticked
-    exactly once); DO NOT use tick() (its microtask double-ticks).
+      // Tab-deferral (P3.M1.T1.S1; spec 07 h2.46 + h2.51 — JSDoc below/at
+      // the branch): pi's OWN menu is open → the Tab is pi's, never hapax's.
+      try {
+        if (
+          decision.action === "tab-insert" &&
+          (innerRecord.isShowingAutocomplete as (() => boolean) | undefined)?.() === true
+        ) {
+          return forwardInput(data);
+        }
+      } catch {
+        /* deferral probe hiccup → fall through to the normal tab-insert path */
+      }
 
-Task 3: MODIFY src/pi/widget.ts — comment retirement (Mode A docs, rides with the work)
-  - onDismissed (in createVisibilityMachine): the seam comment currently
-    reads "T3 seam (Escape / boundary pass-through / Tab-accept /
-    Enter-submit)". Drop "Tab-accept"; cite spec 07 h3.10 amendment
-    (2026-10: Tab-accept is NOT in the seam; the suppression lapse now
-    serves only the three remaining members).
-  - VisibilityState.suppressUntilWordStart doc mentions the dismissal set —
-    verify it names only the three remaining members; adjust if it lists Tab.
-  - grep widget.ts for any other "Tab-accept" + suppression coupling in
-    comments (the R4/lapse comment blocks stay — they serve the three).
+  - JSDOC (Mode A, rides with the work): a block comment on/above the check
+    documenting the rule — "Tab is forwarded verbatim (never inserted over)
+    while the inner editor's own autocomplete menu is open: forced-file Tab,
+    slash-argument menus, any stock surface. Deferral keys on the menu's
+    ACTUAL open state, not static context classification — the
+    hesitation/race case (menuDelayMs) can re-arm the hapax line while pi's
+    menu is open, and classifyStockContext does not model the argument or
+    forced-file surfaces. Spec anchors: 07 h2.46 ('stock path/slash
+    completion is untouched by construction') + h2.51 never-hijack. The probe
+    is fully defensive (optional chaining + try/catch): worst case inert."
+  - PRESERVE: decideWidgetKey signature/table untouched; Enter-submits guard
+    untouched; enter-submit / boundary-pass-through branches untouched.
+  - NAMING: no new symbols beyond the inline check (nothing to name).
 
-Task 4: UPDATE test/widget.test.ts — retire the wrong pins
-  - :960 "Tab inserts items[highlightIndex].display over the word span;
-    consumed end-to-end … line dismissed + suppressed": suppressUntilWordStart
-    must now be FALSE; keep the setText/caret/buffer/innerCalls/consumed
-    assertions. NOTE: this harness show()-drives state.set (machine painted()
-    empty, trap store) — the offer evaluation will run the machine against
-    the trap store; set the trap's expectation for the post-insert fragment
-    (e.g. store/next-result) so the machine's verdict is deterministic.
-  - :1089-area post-Tab suppression assertion: same change.
-  - Any other test asserting suppression after a consumed Tab (grep
-    suppressUntilWordStart in Tab-context tests) — same change.
+Task 2: HARDEN test/defer-pi-menu.repro.test.ts into a regression suite
+  - KEEP: the file path, the harness verbatim (real Editor + provider double +
+    createWidgetEditorFactory + flush/type helpers + setKeybindings module
+    init), all four cases' existing assertions — especially the contrast
+    case's `expect(text.startsWith("/mo")).toBe(true)`.
+  - HEADER (line 1): replace "INVESTIGATION REPRO (not a regression suite yet)"
+    with a regression-suite header, e.g. "REGRESSION SUITE (was an
+    investigation repro): the widget layer defers to pi's own autocomplete
+    menu when it is open — spec 07 h2.46/h2.51 (P3.M1.T1.S1)." Keep the
+    harness-description paragraphs that follow.
+  - RENAME describe label: "repro: hapax must defer to pi's open autocomplete
+    menu" → "regression: hapax must defer to pi's open autocomplete menu".
+  - STRIP: every `console.log(...)` call and its paired
+    `// eslint-disable-next-line no-console` comment (all 4 cases).
+  - STRENGTHEN (keep assertions, add preconditions so green can't be vacuous):
+    in cases 1–3, where `showing` is already computed, assert
+    `expect(showing).toBe(true)` BEFORE the accepting Tab (proves pi's menu
+    really opened — the deferral's precondition). Where useful, keep the
+    getText() read as an assertion (e.g. case 1: text contains "templates/")
+    — but do NOT weaken or delete any existing expect.
+  - DO NOT: rename the file, change DEFAULT_CONFIG/menuDelayMs values, alter
+    the provider double's regex or items, or touch case 4's flow.
 
-Task 5: ADD test/widget.test.ts — extension-offer battery (this item's core)
-  Drive visibility through the MACHINE (seed trap store → machine.onInput()
-  paints the pre-Tab set → press Tab), mirroring the composed-editor harness:
-  - it("Tab with extensions: offer renders immediately as a fresh generation,
-    no suppression"): pre-Tab query paints [implement, implementation] for
-    "implem"; press Tab → buffer "implement"; assert consumed, machine
-    visible, currentSet is the extension set for fragment "implement"
-    (exact-equal excluded — no "implement"), suppressUntilWordStart false,
-    state.highlightIndex 0, state.interacted false, requestRender called.
-  - it("Tab on a terminal word: disqualification close, no suppression"):
-    pre-Tab set [node] for "nod"; Tab → buffer "node"; query("node") → [];
-    assert hidden, suppressUntilWordStart false, and the next keystroke at a
-    qualifying position reopens (basic case; sibling-fork backspace walk is
-    P4.M1.T1.S2's battery).
-  - it("menuDelayMs > 0: the offer still renders immediately (intent show)"):
-    compose with menuDelayMs e.g. 5000; fast typing paints nothing, Tab
-    inserts and the OFFER paints in the same keypress.
-  - it("trigger completion takes the same rule"): "#implem" + Tab → buffer
-    "implement", offer evaluates on the inserted word.
-  - it("chain arming preserved: after the offer evaluation the chain is
-    armed at the accepted key with a fresh grant") — including the
-    MID-LADDER case: chain armed at "implement" (previous accept), Tab
-    inserts "implementation" from the offer; whatever the consult does
-    (successor shims or (c) reset), post-branch chain state is armed at
-    "implementation" and grant is fresh.
-  - it("Escape / boundary / Enter still suppress (regression)"): the
-    existing :701-761 battery — keep green; add one explicit Tab-vs-Escape
-    contrast case if not already implied.
+Task 3: EXTEND test/widget.test.ts — key-handling bullets for the deferral state
+  - HARNESS: extend makeInsertHarness's `seed` parameter with an optional
+    `piMenuOpen?: boolean`; when true, add to `raw`:
+    `isShowingAutocomplete: () => true`. Default (absent) adds NOTHING —
+    existing tests must be byte-identical in behavior (the widget probe reads
+    undefined → inert).
+  - ADD cases to the Tab describe (:942+), following existing naming and the
+    ordered `calls` log style:
+    1. "Tab while pi's menu is open (isShowingAutocomplete() === true)
+       FORWARDS verbatim: inner receives the Tab bytes, NO setText/caret edit,
+       line stays visible, no suppression, interacted untouched"
+       — build with lines ["ze"], col 2, show(["Zendesk"]), piMenuOpen: true;
+       press "\t"; assert innerCalls === ["\t"], no setText in calls,
+       state not hidden, onDismissed never called (machine untouched).
+    2. "deferral probe inert when the menu is closed/absent: Tab still inserts
+       the highlighted word" — covered by the existing insert cases (the
+       double has no member); make it explicit if cheap, else note in the
+       describe header.
+    3. "a THROWING isShowingAutocomplete never breaks input: falls through to
+       the normal tab-insert path" — seed `isShowingAutocomplete: () => { throw
+       new Error("probe"); }` (harness knob may need a function form), assert
+       the insert still lands (setText called) and nothing throws.
+  - CHECK the v2 wiring-observables describe (:643) still passes — deferral
+    forwards tick exactly once via the guard seam (no double tick).
 
-Task 6: RUN validation (below) and record live TTY results
-  - Live technique per spec/09 h2.61 (BINDING for UI-layer changes): pi
-    --no-session in tmux, send-keys one char at a time (0.08-0.12 s),
-    capture-pane. Scenarios: (a) implem→Tab→offer visible; Tab again →
-    ladder walks; (b) node→Tab→line closes, brief flash if extensions
-    exist, space/next-word reopens; (c) Escape after an offer → suppressed
-    rest of word; (d) Tab while pi's own menu open → deferral intact.
+Task 4: SPEC SYNC (binding AGENTS.md policy — code and spec land together)
+  - spec/07-completion-ui.md, "Tab inserts the highlighted word" bullet
+    (:222): append one clause, e.g. "— UNLESS the inner editor's own
+    autocomplete menu is open (isShowingAutocomplete): the Tab forwards
+    verbatim and pi's menu accepts its item; deferral keys on the menu's
+    actual open state, never on context classification (the hesitation race
+    can re-arm the widget line while pi's menu is open)."
+  - spec/07-completion-ui.md, "Tab-open gesture" FALLBACK-ONLY parenthetical
+    (h3.13): amend the clause "Tab is consumed by the editor proxy before
+    this editor branch can run" to note the deferral — e.g. "…before this
+    editor branch can run (except while pi's own menu is open, when the
+    widget defers — see Widget key handling)".
+  - spec/09-testing-and-acceptance.md, widget.test.ts "Key handling
+    (editor-proxy double)" bullet: append "Tab with pi's own menu open
+    (isShowingAutocomplete() === true) forwards verbatim — never inserts a
+    hapax word over an open stock menu (P3.M1.T1.S1)."
+  - NOTE: these are one-clause edits riding with the code, not a spec
+    redesign. If the pipeline context forbids spec edits in this item, record
+    the exact three clauses verbatim in the final report for P3.M1.T2.S4's
+    drift report instead — but default to landing them (the repo's binding
+    policy).
+
+Task 5: VALIDATION LOOP (below) — all levels, in order.
 ```
 
 ### Implementation Patterns & Key Details
 
-```typescript
-// The whole production diff, conceptually (widget.ts):
+```ts
+// The ONE code change, in full (src/pi/widget.ts, inside widgetHandleInput):
 
-// (1) insertHighlighted, success-path tail — BEFORE:
-state.hide(); // immediate visual dismissal…
-visibility.onDismissed(true); // …+ suppression until the next word start
-// AFTER:
-state.hide(); // immediate visual close…
-visibility.onDismissed(false); // CLOSE, never suppression (spec 07 h3.11:
-// Tab-accept exits the seam; the closeAt stamp makes the caller's extension
-// evaluation a fresh, immediate, hesitation-bypassed reopen — h3.12 item 6)
+/**
+ * Tab-deferral (P3.M1.T1.S1; spec 07 h2.46 + h2.51). pi's OWN autocomplete
+ * menu is open → the Tab is pi's, never hapax's: forward verbatim so the
+ * stock menu accepts its highlighted item. Keyed on the menu's ACTUAL open
+ * state (isShowingAutocomplete), not context classification — the forced-file
+ * and slash-argument surfaces are unclassified, and the menuDelayMs race can
+ * re-arm the widget line while pi's menu is open (repro case 3). Reads
+ * forward through the enter-submit proxy to the real editor (editor.ts:111-115
+ * precedent); fully defensive — a missing member or throw falls through to the
+ * normal tab-insert path (worst case inert). Placed after decideWidgetKey (its
+ * decision is vetoed, keeping the pure table free of editor state) and before
+ * any insert/suppress/tick/arming executes: a forwarded deferral ticks the
+ * clock exactly once (guard seam) and mutates nothing.
+ */
+try {
+  if (
+    decision.action === "tab-insert" &&
+    (innerRecord.isShowingAutocomplete as (() => boolean) | undefined)?.() === true
+  ) {
+    return forwardInput(data);
+  }
+} catch {
+  /* deferral probe hiccup → normal tab-insert path */
+}
 
-// (2) tab-insert branch — AFTER `if (!consumed) return forwardInput(data);`
-// and BEFORE the `if (opts.config.enableChaining && rec && ...)` arm block:
-applyVisibility(machine.onInput()); // POST-TAB EXTENSION OFFER (h3.11)
-requestRender();
-
-// Why this is correct WITHOUT new machinery:
-// - onDismissed(false) === closeWith(now): hide() + closeAt stamp, and
-//   hide() clears any pending swap timer (no stale-swap leak).
-// - machine.onInput() reads the LIVE post-insert buffer synchronously
-//   (setText already applied); fingerprint differs from lastFingerprint →
-//   not a cursor-move close; evaluate runs: lapse (no-op) → R1 (stock
-//   contexts hide cleanly — the '/'-bearing display corner) → chain consult
-//   (only when a PREVIOUS accept left it armed — the ladder case) →
-//   extractMatchState returns the completed word as threshold fragment →
-//   query → R4 (no suppression — none armed) → R5 bypassed by freshReopen
-//   (now - closeAt ≈ 0 < 200) → !visible → paint() immediately.
-// - paint() releases suppression flags (none set), sets painted() = offer
-//   (S2 reads it for the NEXT Tab's rec), stamps lastPaintAt.
-// - applyVisibility: offer sig ≠ pushedSig (the inserted word is absent by
-//   exact-equal exclusion but present pre-Tab) → state.set() → FRESH
-//   generation (highlightIndex 0, interacted false) — h3.11's "fresh
-//   generation" requirement for free.
-// - 0 candidates: evaluate's R4 → closeWith(now) → hidden, closeAt stamped
-//   → next qualifying edit reopens (fresh-reopen window) — "keystroke OR
-//   BACKSPACE": a backspace that produces a qualifying fragment ticks
-//   onInput normally and reopens; nothing suppresses.
+// PATTERN: same introspection idiom as the Enter-submit guard
+// (editor.ts): optional-chained probe on a Record<PropertyKey, unknown> cast,
+// strict `=== true`, try/catch around the whole check.
+// GOTCHA: return BEFORE the consumed-tick block — a deferral is a forward,
+// and forwardInput already ticks the guard's seam exactly once.
 ```
 
 ### Integration Points
 
 ```yaml
-NONE — no config surface, no store, no provider, no index.ts wiring. The
-WIDGET_MACHINE / WIDGET_STATE symbol seams are unchanged (tests keep using
-widgetMachineOf/widgetStateOf). Sibling dependencies:
-- P4.M1.T1.S2 (next): pins ladder recursion + backspace recovery + the
-  fresh-generation battery on THIS seam — do not break its ability to read
-  machine.painted() post-offer (paint() populates it).
-- P4.M1.T2.S1 (fallback path): the seam change is unconditional there too,
-  but provider.ts is NOT in this item's scope — do not touch it.
-- P3.M1.T2.S3 scenario iv: the live smoke that ultimately verifies this.
+NO new integration points. Verified non-interactions:
+- decideWidgetKey: unchanged — all table tests keep passing byte-identically.
+- Enter-submit guard: untouched and still in the chain (forwardInput routes
+  through it; it may still cancel a non-slash pi menu on Enter — unchanged).
+- Chain arming: the deferral returns BEFORE the arm seam — a deferred Tab
+  never arms/extends a chain (correct: hapax accepted nothing).
+- Line claim / suppression / interacted: untouched by the deferral path.
+- P2.M1.T2.S2 (parallel): test/branch-purity.test.ts + session_tree handler —
+  zero file overlap; do not touch.
+- P3.M1.T2.S2 (gauntlet) consumes this battery green; P3.M1.T2.S3 owns the
+  BINDING live TTY verification of this key-handling change (spec 09
+  technique; the work is not changeset-complete until that lands — note it
+  in the commit/report, do not attempt it here).
 ```
 
 ## Validation Loop
@@ -475,111 +441,106 @@ widgetMachineOf/widgetStateOf). Sibling dependencies:
 ### Level 1: Syntax & Style (Immediate Feedback)
 
 ```bash
-npm run check   # tsc typecheck — zero errors; run after the widget.ts edit
-# Expected: clean. If errors, READ them; the change is comment + two-line
-# logic — type errors mean you touched something beyond the seam.
+npm run check        # tsc --noEmit, strict — zero errors. (No eslint/prettier in this repo.)
 ```
+
+Run after editing widget.ts, again after the test edits. The double cast in
+the probe is required (innerRecord is Record<PropertyKey, unknown>).
 
 ### Level 2: Unit Tests (Component Validation)
 
 ```bash
-npm test                                  # full suite (vitest)
-npx vitest run test/widget.test.ts        # the changed battery
-npx vitest run test/widget-visibility.test.ts  # suppression battery stays green
-npx vitest run test/defer-pi-menu.repro.test.ts # Tab-deferral pre-check first
-# Expected: all green. Failing post-Tab-suppression assertions in OTHER
-# files (acceptance/adversarial-typing) mean those tests pinned the retired
-# seam — update them to the new contract (cite spec 07 h3.10 amendment in
-# the test comment), never delete coverage.
+# The battery — THE deliverable gate:
+npx vitest run test/defer-pi-menu.repro.test.ts
+# Expected: 4 passed (3 former reds + contrast). If any red persists, read
+# which Tab was consumed: insert a temporary log in widgetHandleInput ONLY
+# while debugging, remove before finishing (zero console.log in the final file).
+
+# Wiring-level deferral bullets:
+npx vitest run test/widget.test.ts
+# Expected: all green incl. the new deferral cases; existing insert/navigate/
+# escape/pass-through/tick-accounting cases unchanged.
+
+# Guard purity + neighbors:
+npx vitest run test/editor-enter.test.ts test/widget-visibility.test.ts test/chain.test.ts
+# Expected: green (untouched behavior pins).
 ```
 
-### Level 3: Integration Testing (Live TTY — BINDING for UI-layer changes)
+### Level 3: Integration Testing (System Validation)
 
 ```bash
-# spec/09 h2.61 technique (pi needs a real TTY; piping stdout exits silently):
-tmux new-session -d -s hapax 'pi --no-session'
-# Seed the store: submit one short user message containing your ladder words
-# (e.g. "implement implementation implements"), Ctrl+C the turn.
-# Drive ONE CHAR AT A TIME with 0.08-0.12s sleeps (bursts cancel in-flight
-# autocomplete — a known false-conclusion source):
-tmux send-keys -t hapax 'i' 'm' 'p' 'l' 'e' 'm'   # with per-key sleeps
-tmux capture-pane -t hapax -p                     # verify the pre-Tab offer
-tmux send-keys -t hapax Tab                       # insert + extension offer
-tmux capture-pane -t hapax -p                     # verify: implement + offer
-# Scenarios: (a) implem→Tab→"implementation" offer, Tab again → ladder;
-# (b) a terminal word → close, no offer; (c) Escape on the offer →
-# suppressed rest-of-word; (d) Tab with pi's own menu open → deferral.
-# Temporary appendFileSync instrumentation behind an env var in widget.ts is
-# the sanctioned observation channel — REMOVE before committing.
+npm test   # full suite
+# Expected: green EXCEPT possibly the known environmental network-gated case:
+#   test/acceptance.test.ts > "pi -p loads the real extension and answers
+#   cleanly" (exit 1 + stderr outside the skip regex — pre-existing baseline
+#   failure documented in architecture/04 §2; owned by P3.M1.T2.S2's gauntlet).
+# RULE: compare against baseline. That one environmental signature → note it,
+#   proceed. ANY other failure → a regression from this change: fix it here.
 ```
 
 ### Level 4: Creative & Domain-Specific Validation
 
-```bash
-# Not applicable: no network, no persistence, no telemetry (invariant 4).
-# Performance: the offer adds ONE synchronous store query (< 1 ms budget,
-# spec 02 h2.18) per consumed Tab — within budget by construction; no new
-# timers, no allocation-heavy paths.
-```
+Live TTY verification of this key-handling change is BINDING (spec 09 — UI
+changes are verified live, not by unit tests alone) but is **sequenced to
+P3.M1.T2.S3** (live smoke: series walk, branch hygiene, Tab deferral). This
+item must NOT claim it. Do not add temporary instrumentation here; T2.S3 owns
+the tmux send-keys walkthrough (one char at a time, 0.08–0.12 s sleeps).
 
 ## Final Validation Checklist
 
 ### Technical Validation
 
-- [ ] `npm run check` clean
-- [ ] `npm test` green (full suite)
-- [ ] `test/defer-pi-menu.repro.test.ts` green verbatim (deferral first)
-- [ ] widget-visibility suppression battery (:288-351, :701-761 in widget
-      tests) green UNCHANGED (Escape/boundary/Enter taxonomy untouched)
+- [ ] `npm run check` — zero errors
+- [ ] `npx vitest run test/defer-pi-menu.repro.test.ts` — 4/4 green
+- [ ] `npx vitest run test/widget.test.ts` — green incl. new deferral bullets
+- [ ] `npm test` — green vs baseline (only the known environmental acceptance
+      case may fail; identical signature, noted in the report)
 
 ### Feature Validation
 
-- [ ] Tab + extensions → immediate fresh offer, no suppression, highlight 0
-- [ ] Tab + terminal word → close, no suppression, next edit reopens
-- [ ] menuDelayMs > 0 → offer still immediate (intent show)
-- [ ] Trigger completion (`#implem`) takes the same rule
-- [ ] Chain armed at accepted word after the offer evaluation (mid-ladder
-      (c)-reset case included), fresh grant
-- [ ] Live TTY scenarios (a)-(d) executed and recorded
+- [ ] All 3 former reds pass (`pi.applied` `["templates/"]` in each)
+- [ ] Contrast case 4 unchanged and green; Enter-submits guard untouched
+- [ ] `decideWidgetKey` untouched (diff shows zero changes above :1595 except
+      none in the pure function)
+- [ ] JSDoc present on the deferral branch, citing spec 07 h2.46 + h2.51
+- [ ] Repro file: regression header, zero console.log, zero eslint-disable,
+      precondition asserts (`showing === true`) in cases 1–3
+- [ ] Spec sync clauses landed in spec/07 (×2) and spec/09 (×1) — or recorded
+      verbatim for T2.S4's drift report
+- [ ] Report notes the BINDING live-verification handoff to P3.M1.T2.S3
 
 ### Code Quality Validation
 
-- [ ] JSDoc cites spec 07 h3.11/h3.10 at the Tab-insert path (Mode A — rides
-      with the work)
-- [ ] The seam-member comment lists only Escape / boundary / Enter-submit
-- [ ] No changes outside src/pi/widget.ts + tests; spec/ untouched; no new
-      files; provider.ts (fallback) untouched
-- [ ] Exactly one clock tick per keypress preserved; consumed key never
-      delegates
+- [ ] Defensive probe only — optional chaining, `=== true`, try/catch,
+      no mutation of the inner editor (v1 crash lesson)
+- [ ] No new imports, no new symbols, no changes to exported signatures
+- [ ] Harness changes are opt-in (`piMenuOpen` absent = today's double)
 
 ### Documentation & Deployment
 
-- [ ] No new env vars, no config surface changes (nothing to document)
-- [ ] Spec/code agreement: spec half landed in 6799367; code half is this
-      change — nothing further to sync
-
----
+- [ ] JSDoc is self-documenting; no environment variables; nothing persisted
 
 ## Anti-Patterns to Avoid
 
-- ❌ Don't add an `extensionIntent` flag / new machine API — the
-  onDismissed(false) close + synchronous onInput() already yield immediate,
-  hesitation-bypassed, fresh rendering via the R7 fresh-reopen rule. (If you
-  find freshReopen insufficient in a test, STOP and re-read h3.12 item 6
-  before inventing machinery.)
-- ❌ Don't evaluate the offer AFTER chain.arm() — the consult branch would
-  answer from the successor index instead of the query (h3.11 defines the
-  offer as the query result) and the fresh grant would interact with the
-  consult's tick.
-- ❌ Don't reorder the rec capture (must precede insertHighlighted — hide()
-  clears painted()).
-- ❌ Don't route the extension evaluation through tick()'s microtask or add a
-  second onKeystroke tick — one tick per keypress is load-bearing.
-- ❌ Don't touch src/pi/provider.ts, src/core/query.ts, or spec/ — the
-  fallback path is P4.M1.T2.S1, the core needs nothing, and the spec already
-  adopted this change.
-- ❌ Don't delete suppression-lapse machinery — it now serves the three
-  remaining seam members (spec h3.10: "the lapse now serves only the Escape /
-  boundary / Enter-submit dismissals").
-- ❌ Don't skip live TTY verification because unit tests pass — UI-layer
-  changes require it (spec/09, binding).
+- ❌ Don't pass editor state into `decideWidgetKey` or add a new decision
+  action — purity is a ratified convention (architecture/03 §R4).
+- ❌ Don't classify contexts instead of probing the menu — case 3 proves
+  static classification cannot work (hesitation race + unclassified surfaces).
+- ❌ Don't dismiss/suppress the hapax line on deferral — it's a pure forward.
+- ❌ Don't tick the clock twice (return before the consumed-tick block).
+- ❌ Don't rename the repro file or weaken/delete existing assertions —
+  "keep assertions" is contract.
+- ❌ Don't mutate any editor instance, ever (v1 RangeError history).
+- ❌ Don't chase the environmental acceptance.test.ts failure — it's the
+  gauntlet's (T2.S2), not this item's.
+- ❌ Don't run or claim the live TTY verification — it's T2.S3's, and it's
+  BINDING there.
+
+---
+
+**Confidence Score**: 9/10 — the fix is a single veto branch at a
+research-verified insertion point with a live-confirmed red battery as its
+gate, an exact precedent idiom to copy, and backwards-compatible harness
+extension. Residual risk: case 3's fake-timer choreography interacting with
+the hesitation gate is the only subtle path, and the battery itself will
+prove it the moment the branch lands.
