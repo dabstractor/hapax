@@ -104,19 +104,41 @@ keep it current; this README is a summary).
   (`classifyStockContext` in `src/pi/provider.ts`, priority slash →
   mention → quoted-path → path): hapax answers nothing there, and Tab in
   those contexts behaves exactly as stock pi — it never opens the hapax
-  menu (`test/provider-match.test.ts`).
-- **Proper-noun relief — retired (2026-09)** — the relief that admitted
-  capitalized attested words (`National`-class) is retired-in-place
-  (ceiling == reject band); the 2026-10 R_eff curve subsumes it. A live
-  audit showed the old band admitting ~483 capitalized common words
-  (`echo`, `windows`, `failed`). Mechanism and calibration history live
-  in `src/core/score.ts`; named-entity completion, if wanted back, is an
-  allowlist design question (spec 04).
+  menu (`test/provider-match.test.ts`). The widget path adds a runtime
+  guard: when pi's OWN autocomplete menu is open (forced file menu,
+  slash-argument menu, any stock surface), the widget Tab forwards
+  verbatim — pi's menu accepts its highlighted item and hapax never
+  inserts over it. Deferral keys on the menu's ACTUAL open state
+  (`isShowingAutocomplete()`), not context classification, because the
+  `menuDelayMs` race can re-arm the widget line while pi's menu is open
+  (`src/pi/widget.ts`, `src/pi/editor.ts`;
+  `test/defer-pi-menu.repro.test.ts`).
+- **Proper nouns — back via runs, not relief (2026-10)** — the 2026-09
+  relief branch stays retired-in-place: its ceiling
+  (`PROPER_NOUN_ADMIT_CEILING` in `src/core/score.ts`) equals the reject
+  floor and scales with every retune, so it admits nothing beyond the
+  floor. Casing evidence re-entered through two 2026-10 doors:
+  **capitalized runs** (the series completion below, spec 04) and single
+  mid-sentence capitals, which admit under the relaxed band
+  `max(R_eff, 95)` (`MID_CAP_RELAXED_BAND`, `src/core/score.ts`). The
+  noise guard that keeps the doors safe: run members whose dictionary
+  commonness sits in the table's top band
+  (`PROPER_SERIES_TOP_BAND_CEILING = 135`) are **chain-only** — never
+  standalone suggestions, though their series bigrams still form and
+  offer neighbors (`The ` → `Fed`). That guard is what replaced relief
+  without re-admitting the ~483 capitalized common words the 2026-09
+  audit caught (`echo`, `windows`, `failed`). Mechanism and calibration
+  history live in `src/core/score.ts`.
 - **Session salience retention** — recency, repetition, and a sticky
   user-typed feed the eviction score that decides which candidates
   stay in the bounded store (`src/core/score.ts`).
 - **Case-preserving insertion** — type `nrel`, get `NREL`: matching is
-  case-insensitive, insertion uses the casing last seen in-session.
+  case-insensitive; insertion casing is resolved at completion time from
+  the candidate's casing tallies (`resolveCompletionCasing`,
+  `src/core/query.ts`): a typed capital first letter is never uncased,
+  and an all-lowercase fragment gets the form that occurred more often
+  in the conversation — ties go lowercase, and a word seen only
+  capitalized completes capitalized (spec 04, "Case handling").
 - **Secrets never suggested** — an always-on, two-layer gate keeps
   key-shaped strings out of the store (`src/core/shapeGate.ts`). Layer 1
   (`maskSecrets()`, a raw-text pre-segmentation pass wired at
@@ -140,6 +162,18 @@ keep it current; this README is a summary).
   (integration item 5, PASS in `docs/M1-DoD.md`).
 - **Zero persistence, zero telemetry, zero network** — everything lives in
   RAM and dies at `session_shutdown` (`src/pi/index.ts`).
+- **Branch hygiene** — the store is a pure function of the ACTIVE
+  branch's replayable history: on `/tree` navigation (`session_tree`),
+  hapax discards pending ingest, snapshots
+  `ctx.sessionManager.getBranch()`, and replays it through the identical
+  restore pipeline into a fresh store — words typed on an abandoned
+  branch (a misspelling submitted, then `/tree` back to fix it) never
+  surface on other branches. Queries are gated at the same seam as
+  startup restore; the first post-navigation query resolves at replay
+  settle (tens of ms, in the background). Compaction never triggers a
+  rebuild — the store survives compaction (`src/pi/index.ts` handler,
+  `src/core/store.ts` `reset()`, `src/pi/ingest.ts`
+  `discardPending()`; pinned by `test/branch-purity.test.ts`).
 - **Chained Tab completion — zero additional typing, one word per Tab**
   (`src/pi/provider.ts`, `src/pi/widget.ts`) — a top-3 successor index is
   built at ingest from
@@ -155,8 +189,9 @@ keep it current; this README is a summary).
   Tab inserts ONE word and re-arms, so `Acme` → `Zephyr` → `Noria` →
   `Inverter` walks with nothing typed between accepts; every other chain
   behavior below (one-word-per-Tab re-arm, live filtering, resets, restore
-  arming) is identical on the two paths. Inserted chain words use the candidate's display
-  casing (most-recent-casing-wins), exactly like word completions. Typed characters filter the live successor list
+  arming) is identical on the two paths. Inserted chain words resolve casing at
+  completion time exactly like word completions (series successors
+  insert in their run casing). Typed characters filter the live successor list
   normally (anchored fuzzy matches admitted into chains, gated by the
   same `fuzzThreshold`) — and chains stay ANCHORED everywhere: the chain
   gate consults tiers 1–3 only; tier-0 anchorless matches never arm or
@@ -167,6 +202,21 @@ keep it current; this README is a summary).
   chain-after-restore probe in `test/adversarial-typing.test.ts` (machine:
   `test/chain.test.ts`; gating: `test/chaining-gating.test.ts`; index:
   `test/successors.test.ts`; widget path: `test/widget.test.ts`).
+- **Capitalized-series completion** — runs of ≥ 2 consecutive
+  capitalized whole words are recognized as proper-noun series wherever
+  they sit (line-initial and after punctuation included), and every
+  member becomes completable vocabulary: a run member admits regardless
+  of the commonness band (attested members land in admission group 1,
+  dictionary-absent members in group 0), outranking both dictionary
+  attestation and lowercase sightings. The words chain: series bigrams
+  are recorded at ingest (`recordBigramRuns`, `src/core/store.ts`), and
+  completing or typing a member — a space closing an UPPERCASE-initial
+  typed word; lowercase typings never arm — arms the next member as the
+  top zero-typed-character offer, series successors first, on BOTH
+  display paths (`src/pi/provider.ts`, `src/pi/widget.ts`). Dictionary
+  top-band members are chain-only (see the proper-nouns bullet) —
+  `The ` still offers `Fed`. Casing admits, never ranks: result ordering
+  stays tier → sessionCount → length → lex (spec 01, 04, 07).
 
 ## Quick start
 
@@ -424,11 +474,12 @@ commit. Builds are deterministic: same input TSVs → byte-identical binary.
 
 Admission is governed by the length-conditioned reject curve R_eff in
 `src/core/score.ts` (2026-10): a flat floor at `REJECT_COMMON_THRESHOLD =
-12` through 8 characters, a sqrt ramp `R + (255−R)·√((len−8)/12)` across
+30` through 8 characters, a sqrt ramp `R + (255−R)·√((len−8)/12)` across
 9–19, admit-all at ≥ 20. The floor is calibrated against this artifact's
-quantized rank distribution and the calibration is load-bearing: 45,118 of
-the 48,802 entries score q ≥ 12, so essentially the whole everyday-prose
-vocabulary rejects at short lengths — `the` (240), `with` (179), `this`
+quantized rank distribution and the calibration is load-bearing: 20,464 of
+the 48,802 entries score q ≥ 30 (the artifact's everyday-prose head —
+every word through roughly rank 20,000), so common prose words reject at
+short lengths — `the` (240), `with` (179), `this`
 (197), `them` (156), the PRD's named reject example `context` (51), plus
 `data` (82), `code` (91), `lazy` (67), `ordinary` (79), `provider` (34)
 — while longer rare words survive the ramp (`handoff`, q = 10, admits;
@@ -466,8 +517,8 @@ silently (forward compatibility):
 | ---------------- | ------- | ------- | ------------------------------------------------------- | ---------------------------------------------- |
 | `triggerChar`    | string  | `"#"`   | one non-word, non-space character (`/^[^\w\s]$/`), or `""` to disable trigger mode entirely; `@`, `/` and `"` are reserved (pi's stock contexts own them — the trigger could never fire, so load emits one warning) | prefix that opens the completion popup |
 | `threshold`      | number  | `2`     | `1`–`3` (clamped)                                        | retained but inert — matching is effectively 1 char (see spec 07) |
-| `maxSuggestions` | number  | `8`     | `1`–`20` (clamped)                                       | cap on candidates offered at once (the widget line cap AND terminal-width truncation) |
-| `rejectCommonness` | number | `12`  | `1`–`255` (clamped)                                      | dictionary-attestation FLOOR of the length-conditioned reject curve R_eff (flat through 8 chars, sqrt ramp, admit-all at 20) — higher = looser; the whole curve scales from this floor. Also governs the conjugation guard's stem comparisons (via R_eff). Probe any word first: `node tools/calibrate-bands.mjs <words...>` prints q + verdict (lowercase and Capitalized). Default is the baked constant in `src/core/score.ts` |
+| `maxSuggestions` | number  | `20`    | `1`–`20` (clamped)                                       | sanity ceiling on candidates offered at once — the widget line's real cap is the terminal width (rightmost items drop first), so the default sits at the schema max (2026-10 width-bound retune); tune down for fewer words per line |
+| `rejectCommonness` | number | `30`  | `1`–`255` (clamped)                                      | dictionary-attestation FLOOR of the length-conditioned reject curve R_eff (flat through 8 chars, sqrt ramp, admit-all at 20) — higher = looser; the whole curve scales from this floor. Also governs the conjugation guard's stem comparisons (via R_eff). Probe any word first: `node tools/calibrate-bands.mjs <words...>` prints q + verdict (lowercase and Capitalized). Default is the baked constant in `src/core/score.ts` |
 | `fuzzThreshold`  | number  | `60`    | `0`–`100` (clamped)                                      | minimum fuzzy match score (spec 04) for a candidate to enter a result set. Per-mode defaults (2026-10): 60 ambient (word matching), 45 under the trigger char (scattered tier-1 visible there); an explicitly set value overrides BOTH modes. Higher = stricter; 100 = exact-prefix-only mode. Default is the calibration starting point (tuning protocol, spec 09), imported automatically from the baked constant in the query module — same pattern as `rejectCommonness` |
 | `menuDelayMs`     | number  | `0`     | `0`–`2000` (clamped)                                     | hesitation gate for the menu's first appearance; **default OFF** (150/300 calibration attempts failed against real rhythm — set only if flow-popping returns) |
 | `enableChaining` | boolean | `true`  | `true` / `false`                                         | gates chained (successor) completion only; word completion unaffected either way; `enablePhrases` is accepted as a deprecated alias and is mapped to this key |
@@ -613,9 +664,11 @@ npm run bench   # PRD §09 perf-gate micro-benchmarks (synthetic fixtures; >3× 
 
 The `npm test` gate also runs the adversarial suites —
 `test/adversarial-typing.test.ts` (prose no-menu, Tab-corruption editor
-sims, chain-after-restore) and `test/adversarial-ingest.test.ts`
-(realistic-key masking, bad-dict restore) — the
-regression pins behind the guarantees above.
+sims, chain-after-restore), `test/adversarial-ingest.test.ts`
+(realistic-key masking, bad-dict restore),
+`test/defer-pi-menu.repro.test.ts` (widget Tab defers to pi's open
+menu), and `test/branch-purity.test.ts` (branch-hygiene rebuild + gated
+replay) — the regression pins behind the guarantees above.
 
 Performance gates (PRD §09; asserted at 3× budget headroom by
 `test/perf-gates.test.ts`):
