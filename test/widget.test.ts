@@ -51,7 +51,7 @@ import type { Mock } from "vitest";
 import { CandidateStore } from "../src/core/store.js";
 import { DEFAULT_CONFIG } from "../src/pi/config.js";
 import type { HapaxConfig } from "../src/pi/config.js";
-import type { ChainMachine } from "../src/pi/provider.js";
+import { createChainMachine, type ChainMachine } from "../src/pi/provider.js";
 import type { ChainGrantTracker } from "../src/pi/chain-grant.js";
 import type { WidgetState } from "../src/pi/widget.js";
 import {
@@ -957,7 +957,7 @@ const makeInsertHarness = (
 };
 
 describe("widget key handling — Tab inserts the highlighted word (spec §07 h2.46 rule 0, S2)", () => {
-  it("Tab inserts items[highlightIndex].display over the word span; consumed end-to-end: no inner keypress, line dismissed + suppressed, repaint requested", () => {
+  it("Tab inserts items[highlightIndex].display over the word span; consumed end-to-end: no inner keypress, line CLOSED but NEVER suppressed (spec 07 h3.10 amendment / h3.11), repaint requested", () => {
     const h = makeInsertHarness({ lines: ["ze"], line: 0, col: 2 });
     h.show(["Zendesk", "zephyr"]); // highlightIndex 0 → Zendesk
 
@@ -968,9 +968,14 @@ describe("widget key handling — Tab inserts the highlighted word (spec §07 h2
     expect(h.innerCalls).toEqual([]); // the inner editor NEVER sees the Tab
     expect(h.buf.lines).toEqual(["Zendesk"]); // the edit landed in the buffer
     expect(h.state.hidden).toBe(true); // dismissed…
-    expect(h.machine.getState().suppressUntilWordStart).toBe(true); // …explicitly (suppress until next word)
-    expect(h.requestRender).toHaveBeenCalledTimes(1); // consumed key → defensive repaint
-    expect(h.onKeystroke).toHaveBeenCalledTimes(1); // the S1 clock tick, once
+    // Tab-accept is a CLOSE, never a suppression (spec 07 h3.11: it EXITS
+    // the T3 seam): this harness's empty trap store offers no extensions
+    // for the completed word, so the synchronous offer evaluation lands
+    // on the machine's own R4 disqualification close — hidden, never
+    // suppressed; the next qualifying edit reopens.
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+    expect(h.requestRender).toHaveBeenCalledTimes(2); // insert's defensive repaint + the extension offer's (P4.M1.T1.S1)
+    expect(h.onKeystroke).toHaveBeenCalledTimes(1); // the S1 clock tick, once — the offer eval never ticks
   });
 
   it("highlightIndex selects the item (index 1 → zephyr) and DISPLAY casing is inserted, not the typed casing", () => {
@@ -1085,8 +1090,10 @@ describe("widget key handling — Tab inserts the highlighted word (spec §07 h2
 
     expect(h.calls).toEqual([`setText:${JSON.stringify("Zendesk")}`]); // no caret entry
     expect(h.buf.lines).toEqual(["Zendesk"]);
-    expect(h.state.hidden).toBe(true); // still a full acceptance
-    expect(h.machine.getState().suppressUntilWordStart).toBe(true);
+    expect(h.state.hidden).toBe(true); // still a full acceptance…
+    // …but a CLOSE, never suppression (spec 07 h3.11 — Tab-accept exited
+    // the seam; the offer evaluation's trap store yields no extensions).
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
     expect(h.innerCalls).toEqual([]);
   });
 
@@ -1618,6 +1625,220 @@ describe("widget Tab acceptance arms the chain — classification matrix (BUG-00
     expect(h.innerCalls).toEqual([]);
     expect(chain.arm).not.toHaveBeenCalled(); // gated off — never arms
     expect(chain.state()).toBeNull(); // the chain machine stays idle
+  });
+});
+
+// ── post-Tab extension offer (spec 07 h3.11 + h3.12 item 6, P4.M1.T1.S1) ──
+
+// CONTRACT: a consumed Tab inserts the highlighted word and the visibility
+// machine "runs normally" — its first evaluation is the EXTENSION OFFER: a
+// synchronous re-query with the completed word as fragment (exact-equal
+// exclusion removes the word itself). ≥1 candidate → FRESH generation,
+// immediate render (R7 fresh-reopen bypasses menuDelayMs — intent show),
+// NO suppression. 0 candidates → R4 disqualification close, NO suppression.
+// Escape / boundary / Enter keep arming suppression (the seam's remaining
+// members). Every drive here paints through the REAL machine (seeded
+// store + flushPaint), mirroring the arming matrix above — never h.show().
+//
+// FIXTURE NOTE: stores avoid singular+plural pairs — §04's plural pruning
+// drops "implements" whenever "implement" is in the set, so the extension
+// ladders use -ing/-ation shapes instead (the PRP's own example offers
+// "implementation", not "implements").
+
+describe("widget post-Tab extension offer (spec 07 h3.11, P4.M1.T1.S1)", () => {
+  const ladderStore = (): CandidateStore =>
+    seedStore([
+      ["implement", "implement"],
+      ["implementing", "implementing"],
+      ["implementation", "implementation"],
+    ]);
+
+  it("Tab with extensions: the offer renders immediately as a fresh generation — extension set, highlight 0, un-interacted, no suppression", async () => {
+    const chain = spiedChain();
+    const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
+      chain,
+      store: ladderStore(),
+    });
+    await flushPaint(); // settle gate + settle-wake evaluate paints the live "implem" set
+
+    // Pre-Tab sanity — the line is LIVE with the ranked set (shortest key
+    // first), so the Tab's rec capture has real painted records:
+    expect(h.state.hidden).toBe(false);
+    expect(h.machine.painted().map((r) => r.display)).toEqual([
+      "implement",
+      "implementing",
+      "implementation",
+    ]);
+
+    h.press("\t"); // inserts "implement" (highlight 0); offer evaluates SYNCHRONOUSLY
+
+    expect(h.buf.lines).toEqual(["implement"]); // the insert landed
+    expect(h.state.hidden).toBe(false); // the offer is LIVE in the same keypress
+    const st = h.machine.getState();
+    expect(st.visible).toBe(true);
+    // Exact-equal exclusion removed "implement" — the offer is the proper-
+    // prefix extensions, ranked by the normal §04 rules:
+    expect(st.currentSet.map((i) => i.display)).toEqual([
+      "implementing",
+      "implementation",
+    ]);
+    expect(st.suppressUntilWordStart).toBe(false); // Tab-accept is NOT in the seam
+    // Fresh generation (WidgetState.set contract — new signature):
+    expect(h.state.highlightIndex).toBe(0);
+    expect(h.state.interacted).toBe(false);
+    expect(h.requestRender).toHaveBeenCalled(); // the offer asked for its repaint
+    expect(h.onKeystroke).toHaveBeenCalledTimes(1); // the consumed Tab's single clock tick — the offer eval never ticks
+  });
+
+  it("Tab on a terminal word: R4 disqualification close, no suppression — the next qualifying keystroke reopens", async () => {
+    const chain = spiedChain();
+    const h = makeInsertHarness({ lines: ["zeb"], line: 0, col: 3 }, {
+      chain,
+      store: seedStore([
+        ["implement", "implement"],
+        ["implementing", "implementing"],
+        ["implementation", "implementation"],
+        ["zebra", "zebra"],
+      ]),
+    });
+    await flushPaint(); // settle wake paints [zebra] — the only match of "zeb"
+
+    h.press("\t"); // inserts "zebra" — TERMINAL: query("zebra") → [] (exact-equal excluded, no z-extensions)
+
+    expect(h.buf.lines).toEqual(["zebra"]);
+    expect(h.state.hidden).toBe(true); // 0 candidates → the machine's own disqualification close
+    const st = h.machine.getState();
+    expect(st.visible).toBe(false);
+    expect(st.suppressUntilWordStart).toBe(false); // NO suppression — a close, never a dismissal
+
+    // The next qualifying edit reopens normally — nothing is held. A
+    // space ends the word (R3 close, already hidden), then the next
+    // word's first keystroke re-queries fresh. (The raw inner stub never
+    // applies forwarded bytes — the harness buffer is mutated by hand,
+    // mirroring the real editor applying its own keystrokes.)
+    h.buf.lines = ["zebra "]; // the space lands in the buffer…
+    h.buf.col = 6;
+    h.press(" "); // …its forwarded event is the W1-evaluated R3 close
+    await flushPaint();
+    expect(h.state.hidden).toBe(true);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+    h.buf.lines = ["zebra i"]; // the next word's first letter lands…
+    h.buf.col = 7;
+    h.press("i");
+    await flushPaint();
+    expect(h.state.hidden).toBe(false); // reopened
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "implement",
+      "implementing",
+      "implementation",
+    ]);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+  });
+
+  it("menuDelayMs > 0: the post-Tab offer still renders in the SAME keypress (intent show — R7 fresh-reopen bypasses the hesitation gate)", async () => {
+    const chain = spiedChain();
+    const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
+      chain,
+      store: ladderStore(),
+      config: cfg({ menuDelayMs: 5000 }),
+    });
+    await flushPaint(); // settle wake: first tick (prev null) paints — the gate only holds REOPENS
+    expect(h.state.hidden).toBe(false); // the line is live pre-Tab (Tab needs a painted set to insert)
+
+    h.press("\t"); // inserts "implement"; the OFFER evaluates synchronously.
+    // Without the closeAt stamp + R7 bypass this evaluation would be R5-
+    // HELD (prev ≈ 0 ms ago < 5000) and the line would stay hidden — this
+    // assertion is the falsifiable intent-show pin (h3.12 item 6). The
+    // R5 hold itself is machine-pinned in widget-visibility.test.ts.
+
+    expect(h.buf.lines).toEqual(["implement"]);
+    expect(h.state.hidden).toBe(false); // immediate render — no timer wait
+    const st = h.machine.getState();
+    expect(st.visible).toBe(true);
+    expect(st.currentSet.map((i) => i.display)).toEqual([
+      "implementing",
+      "implementation",
+    ]);
+    expect(st.suppressUntilWordStart).toBe(false);
+    expect(h.state.highlightIndex).toBe(0); // fresh generation
+  });
+
+  it("trigger completion takes the same rule: '#implem' + Tab → 'implement' inserted, extension offer evaluated on the inserted word", async () => {
+    const chain = spiedChain();
+    const h = makeInsertHarness({ lines: ["#implem"], line: 0, col: 7 }, {
+      chain,
+      store: ladderStore(),
+    });
+    await flushPaint(); // trigger-mode paint of the anchored set
+
+    h.press("\t"); // span "#implem" → "implement" (trigger consumed); same post-insert rule
+
+    expect(h.buf.lines).toEqual(["implement"]);
+    const st = h.machine.getState();
+    expect(st.visible).toBe(true);
+    expect(st.currentSet.map((i) => i.display)).toEqual([
+      "implementing",
+      "implementation",
+    ]); // threshold fragment "implement" — exact-equal excluded
+    expect(st.suppressUntilWordStart).toBe(false);
+    expect(h.state.highlightIndex).toBe(0);
+  });
+
+  it("chain arming preserved: after the offer evaluation the chain ends ARMED at the final accepted word with a fresh grant — including the mid-ladder (c)-reset case", async () => {
+    const chain = createChainMachine(); // REAL machine — state() must reflect the arm sites
+    const grantResets = vi.fn();
+    const grant: ChainGrantTracker = {
+      tick: vi.fn(() => false), // fresh-grant first-tick semantics: records, never spends
+      reset: grantResets,
+    };
+    const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
+      chain,
+      grant,
+      store: ladderStore(),
+    });
+    await flushPaint();
+
+    // Ladder rung 1: "implem" → Tab → "implement". The offer eval runs
+    // BEFORE the arm site (chain still idle → pure query offer):
+    h.press("\t");
+    expect(h.buf.lines).toEqual(["implement"]);
+    expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "implementing",
+      "implementation",
+    ]); // the QUERY offer, not a successor-index shim
+    expect(chain.state()?.word).toBe("implement"); // armed at the accepted key
+    expect(grantResets).toHaveBeenCalledTimes(1); // fresh grant beside the arm
+
+    // Ladder rung 2 (mid-ladder): Tab on the offer inserts "implementing"
+    // (highlight 0 of the offer). The offer eval now runs with the chain
+    // ARMED at "implement": the consult ticks the grant, finds no
+    // matching successors → (c) resets the chain and falls through to
+    // the normal query ("implementing" → 0 live matches → R4 close) —
+    // and THEN the arm site re-arms at the accepted word. Whatever the
+    // consult does, the chain ends armed at the FINAL accepted word:
+    h.press("\t");
+    expect(h.buf.lines).toEqual(["implementing"]);
+    expect(h.state.hidden).toBe(true); // terminal: no extensions of "implementing" in this store
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false); // close, never suppression
+    expect(chain.state()?.word).toBe("implementing"); // the (c) reset was superseded by the re-arm
+    expect(grantResets).toHaveBeenCalledTimes(2); // fresh grant at EVERY arm site
+  });
+
+  it("Escape on the offer still suppresses (the seam's remaining members unchanged) — the Tab-vs-Escape contrast", async () => {
+    const chain = spiedChain();
+    const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
+      chain,
+      store: ladderStore(),
+    });
+    await flushPaint();
+    h.press("\t");
+    expect(h.machine.getState().visible).toBe(true); // the offer is live…
+    expect(h.machine.getState().suppressUntilWordStart).toBe(false); // …unsuppressed (Tab)
+
+    h.press("\u001b"); // Escape ON THE OFFER — an explicit dismissal (seam retained)
+
+    expect(h.state.hidden).toBe(true);
+    expect(h.machine.getState().suppressUntilWordStart).toBe(true); // suppressed for the rest of the word
   });
 });
 

@@ -622,7 +622,13 @@ describe("acceptance — real extension loads under pi -p -e (network-gated)", (
     new Promise((resolve, reject) => {
       const child = spawn(
         "pi",
-        ["-p", "-e", process.cwd(), "--no-builtin-tools", "say Zendesk lwlock"],
+        // -ne (0.84.4: "Disable extension discovery (explicit -e paths still
+        // work)") keeps the probe HERMETIC: without it the spawned pi loads the
+        // user's GLOBAL extensions from ~/.pi/agent, and any global extension
+        // built against a newer pi API (2026-10 live case: pi-subagents calling
+        // _piAi.toToolDeclaration, absent in the pinned 0.84.x) crashes the
+        // subprocess before hapax runs. hapax itself still loads via -e below.
+        ["-p", "-ne", "-e", process.cwd(), "--no-builtin-tools", "say Zendesk lwlock"],
         { stdio: ["ignore", "pipe", "pipe"] },
       );
       let stdout = "";

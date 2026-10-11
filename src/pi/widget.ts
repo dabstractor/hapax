@@ -47,8 +47,10 @@
  * item); if T2's visibility machine needs forced repaints, that is its
  * call. AMENDED in T3/S2: the CONSUMED Tab (insertHighlighted) never
  * delegates, so the key layer captures `tui` and asks for a repaint
- * defensively — best-effort, try/catch'd, and the ONLY requestRender
- * on this path.
+ * defensively — best-effort, try/catch'd. AMENDED in P4.M1.T1.S1: the
+ * post-Tab extension-offer evaluation asks for a SECOND repaint on the
+ * same keypress (the offer's set lands after the insert's ask) — also
+ * best-effort.
  *
  * Forward-task map:
  *   - P1.M3.T1.S2  (this task) render override + state holder. The
@@ -426,9 +428,10 @@ export function createLineClaim(): LineClaim {
 export interface VisibilityState {
   /** Should the widget line render right now? */
   visible: boolean;
-  /** Explicit dismissal (Escape/boundary-pass-through, set via
-   *  onDismissed(true))
-   *  — the line stays hidden until the next word start or trigger char. */
+  /** Explicit dismissal (Escape / boundary pass-through / Enter-submit —
+   *  the T3 seam's three members since the 2026-10 h3.10 amendment;
+   *  Tab-accept is NOT one — set via onDismissed(true)) — the line stays
+   *  hidden until the next word start or trigger char. */
   suppressUntilWordStart: boolean;
   /** The current (post-debounce/hysteresis) result set to render —
    *  { display } items in rank order. Empty when not visible. */
@@ -497,9 +500,12 @@ export interface VisibilityMachine {
    *  reads live editor state + the pure helpers, decides show/hide/
    *  suppress, and returns the fresh snapshot. */
   onInput(): VisibilityState;
-  /** T3 key-handler seam: explicit=true (Escape/boundary-pass-through) sets
-   *  suppressUntilWordStart and hides; explicit=false (disqualification-
-   *  style close) hides only. */
+  /** T3 key-handler seam: explicit=true (Escape / boundary pass-through /
+   *  Enter-submit — Tab-accept left the seam in the 2026-10 h3.10
+   *  amendment) sets suppressUntilWordStart and hides; explicit=false
+   *  (Tab-accept and disqualification-style closes) hides only and stamps
+   *  closeAt, so a same-keystroke follow-up evaluation reopens FRESH
+   *  (R7) — the post-Tab extension offer's mechanism. */
   onDismissed(explicit: boolean): void;
   /** Current snapshot (for render glue / tests). */
   getState(): VisibilityState;
@@ -1143,8 +1149,10 @@ export function createVisibilityMachine(
     onDismissed(explicit: boolean): void {
       const now = Date.now();
       if (explicit) {
-        // T3 seam (Escape / boundary pass-through / Tab-accept / Enter-submit):
-        // suppress until a NEW word start or trigger char. Record the
+        // T3 seam (Escape / boundary pass-through / Enter-submit — spec 07
+        // h3.10 amendment, 2026-10: Tab-accept is NOT in the seam; the
+        // suppression lapse serves only these three): suppress until a NEW
+        // word start or trigger char. Record the
         // dismissed fragment's start (the word-start half of the release
         // test) AND the dismissed buffer's fingerprint (the same-word
         // half — BUG-003), so release requires BOTH a different word
@@ -1340,10 +1348,15 @@ export function decideWidgetKey(
  * programmatic insert exactly as they would a typed one (flagged
  * live-verify item for P1.M3.T4.S1).
  *
- * Dismissal: this is an EXPLICIT acceptance — hide() for the immediate
- * visual, then machine.onDismissed(true) (the ONLY suppression seam;
- * never onDismissed(false) from the key layer). The consumed key never
- * delegates, so requestRender is asked for defensively — best-effort.
+ * Dismissal (spec 07 h3.10 amendment / h3.11, 2026-10): Tab-accept is a
+ * CLOSE, never a suppression — hide() for the immediate visual, then
+ * machine.onDismissed(false). The closeAt stamp makes the caller's
+ * post-Tab extension-offer evaluation (the tab-insert branch, right
+ * after this returns) a FRESH, immediate, hesitation-bypassed reopen
+ * (h3.12 item 6). The suppression seam now serves ONLY Escape /
+ * boundary pass-through / Enter-submit — never this path. The consumed
+ * key never delegates, so requestRender is asked for defensively —
+ * best-effort.
  *
  * Chain arming (BUG-001 fix, 2026-10): lives at the CALL SITE (the
  * tab-insert branch in the key handler), NOT here — the accepted record
@@ -1459,8 +1472,11 @@ function insertHighlighted(
       /* an app-side onChange hiccup must never break the keypress */
     }
 
-    state.hide(); // immediate visual dismissal…
-    visibility.onDismissed(true); // …+ suppression until the next word start
+    state.hide(); // immediate visual close…
+    visibility.onDismissed(false); // …a CLOSE, never suppression (spec 07
+    // h3.11: Tab-accept EXITS the seam). The closeAt stamp makes the
+    // caller's extension evaluation a fresh, immediate, hesitation-
+    // bypassed reopen — h3.12 item 6's intent show.
     try {
       requestRender?.(); // consumed key — no delegation, so ask for a repaint
     } catch {
@@ -1806,6 +1822,29 @@ export function createWidgetEditorFactory(
             requestRender,
           );
           if (!consumed) return forwardInput(data); // span-miss forward: NEVER arms
+          // POST-TAB EXTENSION OFFER (spec 07 h3.11 + h3.12 item 6): the
+          // visibility machine "runs normally" after a Tab insertion —
+          // word, '#fragment' trigger completion, or chain-shim zero-span
+          // acceptance alike. Synchronous onInput() reads the POST-insert
+          // buffer (setText is synchronous; the W1 microtask deferral
+          // exists only for DELEGATED keystrokes reading a pre-keystroke
+          // buffer). The onDismissed(false) close above stamped closeAt,
+          // so this first evaluation is a FRESH REOPEN (R7): immediate
+          // paint, menuDelayMs hesitation bypassed — the intent-show
+          // semantics of h3.12 item 6 — with the live query's extension
+          // set (exact-equal exclusion removed the completed word; ranked
+          // by the normal §04 rules). 0 candidates → the machine's own R4
+          // disqualification close: hidden, NO suppression, the next
+          // qualifying edit (keystroke OR backspace) reopens.
+          // ORDER IS LOAD-BEARING: this runs BEFORE the arm site so the
+          // offer is the QUERY result, never a successor-index shim, and
+          // a mid-ladder consult's (c) chain reset is immediately
+          // superseded by the re-arm below — the chain ends armed at the
+          // FINAL accepted word. No clock tick here: the consumed-keys
+          // block above already ticked exactly once (and never tick()'s
+          // microtask — it would double-tick via the guard seam).
+          applyVisibility(machine.onInput());
+          requestRender();
           // Chain arming (BUG-001 fix, 2026-10 — mirrors provider.ts's
           // applyCompletion classification): whole-word, trigger-span,
           // and chain-successor accepts all arm at the accepted record's
