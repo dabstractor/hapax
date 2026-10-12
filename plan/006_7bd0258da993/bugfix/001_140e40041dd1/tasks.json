@@ -18,7 +18,7 @@
               "type": "Task",
               "id": "P1.M1.T1",
               "title": "Wire the enriched runs payload at the index.ts production seam and un-shim mirrored fixtures",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Replace the transitional bare-key shim in session_start's IngestPipeline options with a direct pass-through of the runs payload, keeping the enableChaining conditional spread intact, and update the test fixtures that wire the same stale shim so the end-to-end seam is exercised with enriched data.",
               "subtasks": [
                 {
@@ -40,7 +40,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T1.S2",
                   "title": "Un-shim the mirrored test pipelines and assert series fields through ingest",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -66,7 +66,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "index.test.ts e2e: series marks, typed-word arming, and series-first ordering through the real factory",
-                  "status": "Researching",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1"

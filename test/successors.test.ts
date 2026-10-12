@@ -65,9 +65,9 @@ function makeSuccPipeline(rejects: (w: string) => boolean = () => false): {
   const pipeline = new IngestPipeline({
     store,
     dictionary,
-    onAdmittedTokens: (runs) =>
-      // index.ts's shim: members → keys (plan 006 payload widening)
-      store.recordBigramRuns(runs.map((r) => r.map((m) => m.key))),
+    // enriched payload pass-through — mirrors src/pi/index.ts's
+    // production wiring (series marks + run casing reach the store)
+    onAdmittedTokens: (runs) => store.recordBigramRuns(runs),
   });
   return { store, pipeline };
 }
@@ -141,7 +141,11 @@ describe("successor index (PRD 002 §06 h2.38/h3.7) — strict-adjacency ingest"
     // united→states bigram exists (store-level consequence of the runs
     // contract — ingest-pipeline.test.ts pins the run shapes themselves).
     await feed(pipeline, ["United States of America"]);
-    expect(store.topSuccessors("united")).toEqual([{ next: "states", count: 1 }]);
+    // "United States" is a capitalized run (spec §04 h2.26) — the pair
+    // lands series-marked with the run casing; "america" broke off.
+    expect(store.topSuccessors("united")).toEqual([
+      { next: "states", count: 1, series: true, nextDisplay: "States" },
+    ]);
     expect(store.topSuccessors("states")).toEqual([]); // america broke off
     expect(store.topSuccessors("america")).toEqual([]); // no trailing successor
   });
@@ -394,6 +398,27 @@ describe("successor index — series-first top-3 (plan 006)", () => {
     s.recordBigramRuns([["hub", "zeta"]]); // ordinary sighting — no downgrade
     expect(s.topSuccessors("hub")).toEqual([
       { next: "zeta", count: 3, series: true, nextDisplay: "Zeta" },
+    ]);
+  });
+});
+
+describe("capitalized runs through the enriched ingest payload (spec §04 h2.26)", () => {
+  it("series-marked successors with run casing; ordinary pairs stay bare {next, count}", async () => {
+    const { store, pipeline } = makeSuccPipeline();
+    await feed(pipeline, ["Golden Gate Park", "Golden Gate Park"]);
+    // BOTH pairs are cap-run pairs ("Golden Gate Park" = one run ×2):
+    expect(store.topSuccessors("golden")).toEqual([
+      { next: "gate", count: 2, series: true, nextDisplay: "Gate" },
+    ]);
+    expect(store.topSuccessors("gate")).toEqual([
+      { next: "park", count: 2, series: true, nextDisplay: "Park" },
+    ]);
+    // The duality — an ordinary lowercase pair keeps the bare shape, and
+    // the series entry still outranks it (successorBefore: series first).
+    await feed(pipeline, ["golden retriever yrs"]);
+    expect(store.topSuccessors("golden")).toEqual([
+      { next: "gate", count: 2, series: true, nextDisplay: "Gate" },
+      { next: "retriever", count: 1 },
     ]);
   });
 });

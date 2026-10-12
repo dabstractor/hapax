@@ -736,8 +736,9 @@ function makeChainPipeline(enableChaining: boolean): { store: CandidateStore; pi
     dictionary,
     ...(enableChaining
       ? {
-          onAdmittedTokens: (lines) =>
-            store.recordBigramRuns(lines.map((r) => r.map((m) => m.key))),
+          // enriched payload pass-through — mirrors src/pi/index.ts's
+          // production wiring (series marks + run casing reach the store)
+          onAdmittedTokens: (runs) => store.recordBigramRuns(runs),
         }
       : {}),
   });
@@ -819,12 +820,21 @@ describe("acceptance item 7 — chained completion, zero typed characters (zephy
     // 2026-10 width-bound retune (R=30): "turbine" (q=26) now ADMITS,
     // so the "Zorp turbine" co-occurrence forms a count-1 bigram beside
     // the walk — zephra (4) stays strictly top, the chain is unchanged.
+    // The fixture's "Zorp Zephra Noria Inverter" sequences (×4) are
+    // capitalized runs (spec §04 h2.26) — the enriched ingest payload
+    // marks those pairs series:true with the run casing as nextDisplay;
+    // "turbine" is lowercase-initial → an ordinary pair, bare shape (the
+    // duality is the pin).
     expect(store.topSuccessors("zorp")).toEqual([
-      { next: "zephra", count: 4 },
+      { next: "zephra", count: 4, series: true, nextDisplay: "Zephra" },
       { next: "turbine", count: 1 },
     ]);
-    expect(store.topSuccessors("zephra")).toEqual([{ next: "noria", count: 4 }]);
-    expect(store.topSuccessors("noria")).toEqual([{ next: "inverter", count: 4 }]);
+    expect(store.topSuccessors("zephra")).toEqual([
+      { next: "noria", count: 4, series: true, nextDisplay: "Noria" },
+    ]);
+    expect(store.topSuccessors("noria")).toEqual([
+      { next: "inverter", count: 4, series: true, nextDisplay: "Inverter" },
+    ]);
 
     // The vocabulary admits as word candidates (the replay that feeds the
     // bigrams also stores the tokens themselves):
@@ -1126,23 +1136,28 @@ describe("acceptance item 7 — NREL phrase (nrel-chain.jsonl, bugfix 001_0f4b64
     expect(store.get("visit")).toMatchObject({ rankGroup: 1, sessionCount: 2 });
     expect(store.size).toBe(5);
 
-    // The chain FORMS: three series pairs ×6 occurrences...
+    // The chain FORMS: three series pairs ×6 occurrences — series-marked
+    // with run casing now that the payload flows through enriched.
     expect(store.bigramSize).toBe(5); // the→national + visit→national + the 3 phrase pairs
     expect(store.topSuccessors("national")).toEqual([
-      { next: "renewable", count: 6 },
+      { next: "renewable", count: 6, series: true, nextDisplay: "Renewable" },
     ]);
     expect(store.topSuccessors("renewable")).toEqual([
-      { next: "energy", count: 6 },
+      { next: "energy", count: 6, series: true, nextDisplay: "Energy" },
     ]);
     expect(store.topSuccessors("energy")).toEqual([
-      { next: "laboratory", count: 6 },
+      { next: "laboratory", count: 6, series: true, nextDisplay: "Laboratory" },
     ]);
     // ...including the CHAIN-ONLY pair: "The" (q=240, top band) is never
     // stored but its series bigram still feeds the successor index
     // (h2.26 — "typing 'The ' offers ...").
     expect(store.get("the")).toBeUndefined();
-    expect(store.topSuccessors("the")).toEqual([{ next: "national", count: 2 }]);
-    expect(store.topSuccessors("visit")).toEqual([{ next: "national", count: 2 }]);
+    expect(store.topSuccessors("the")).toEqual([
+      { next: "national", count: 2, series: true, nextDisplay: "National" },
+    ]);
+    expect(store.topSuccessors("visit")).toEqual([
+      { next: "national", count: 2, series: true, nextDisplay: "National" },
+    ]);
 
     // The PRD's own probe finally offers: 'na' → National (casing granted
     // candidacy; ordering untouched — h2.31).
@@ -1166,5 +1181,25 @@ describe("acceptance item 7 — NREL phrase (nrel-chain.jsonl, bugfix 001_0f4b64
       prefix: "na",
     });
     expect(provider.__hapaxLive()).not.toBeNull();
+  });
+  it("capitalized-run history yields series-marked successors through the real pipeline (BUG-001 repro pinned)", async () => {
+    // The PRD's live repro, end-to-end through real ingest + the shipped
+    // dictionary: 'The' is chain-only (top band — never stored), 'Fed' is
+    // run-admitted, and the pair lands series-marked with the run casing.
+    // An ordinary lowercase pair fed through the SAME pipeline stays bare
+    // {next, count} — the duality the widened payload exists to express.
+    const { store, pipeline } = makeChainPipeline(true);
+    await pipeline.processText("The Fed raised rates today", true);
+    await pipeline.processText("The Fed raised rates today", true);
+
+    // chain-only duality: 'the' feeds bigrams, never stores as a word.
+    expect(store.get("the")).toBeUndefined();
+    expect(store.topSuccessors("the")).toEqual([
+      { next: "fed", count: 2, series: true, nextDisplay: "Fed" },
+    ]);
+
+    // Ordinary (non-run) pairs through the same pipeline: bare {next,count}.
+    await pipeline.processText("zorp zephra", true);
+    expect(store.topSuccessors("zorp")).toEqual([{ next: "zephra", count: 1 }]);
   });
 });

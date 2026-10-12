@@ -306,8 +306,9 @@ describe("A — branch purity: identical stores for identical sequences (spec 09
       store,
       dictionary: stubDict(),
       yieldFn: async () => {},
-      onAdmittedTokens: (runs) =>
-        store.recordBigramRuns(runs.map((r) => r.map((m) => m.key))),
+      // enriched payload pass-through — series marks + run casing reach
+      // the store exactly as production's unprojected wiring does
+      onAdmittedTokens: (runs) => store.recordBigramRuns(runs),
     });
     return { store, pipeline };
   };
@@ -359,6 +360,31 @@ describe("A — branch purity: identical stores for identical sequences (spec 09
     // The summary entry never entered the store (h2.37 summary rule).
     expect(rebuilt.store.get("summagicide")).toBeUndefined();
     expect(rebuilt.store.get("neveringest")).toBeUndefined();
+  });
+
+  it("A2b: series marks from capitalized runs survive the reset + restoreFromHistory rebuild (enriched payload rides replay)", async () => {
+    const texts = ["Golden Gate Park views", "Golden Gate Park again"];
+    const built = makeRig();
+    for (const text of texts) await built.pipeline.processText(text, true);
+    // Live build: the run pairs are series-marked with run casing.
+    expect(built.store.topSuccessors("golden")).toEqual([
+      { next: "gate", count: 2, series: true, nextDisplay: "Gate" },
+    ]);
+
+    // Gated rebuild from the same branch: the enriched payload rides the
+    // replay identically — marks, casing, counts all reconstructed.
+    const branch: SessionEntry[] = texts.map((content, i) =>
+      msgEntry(`m${i}`, userMsg(content)),
+    );
+    const rebuilt = makeRig();
+    rebuilt.store.reset(); // the h2.42 wholesale drop (fresh-store parity)
+    await new Promise<void>((resolve) =>
+      restoreFromHistory(rebuilt.pipeline, fakeSm(branch), undefined, resolve),
+    );
+    expect(storeState(rebuilt.store)).toEqual(storeState(built.store));
+    expect(rebuilt.store.topSuccessors("golden")).toEqual([
+      { next: "gate", count: 2, series: true, nextDisplay: "Gate" },
+    ]);
   });
 
   it("A3: dead-branch words never survive and nothing double-counts (successor edges included)", async () => {

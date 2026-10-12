@@ -457,8 +457,10 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
 
   beforeAll(async () => {
     // FULL zephra-chain replay — the /resume scenario — through a REAL
-    // pipeline with the SHIPPED dict and the bigram hook wired exactly
-    // like src/pi/index.ts's session_start: successor index complete
+    // pipeline with the SHIPPED dict and the bigram hook passing the
+    // enriched payload through (series marks + run casing reach the
+    // store, exactly like src/pi/index.ts's production wiring): successor
+    // index complete
     // (store.topSuccessors: zorp→zephra — turbine (q26) table-rejects
     // since the 2026-09 retighten; the old "license" entry was a
     // gate-rejected-"lab" bridge, removed by
@@ -468,8 +470,9 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
     const pipeline = new IngestPipeline({
       store: s,
       dictionary: loadDictionary(resolveDictPath()),
-      onAdmittedTokens: (lines) =>
-            s.recordBigramRuns(lines.map((r) => r.map((m) => m.key))),
+      // enriched payload pass-through — series marks + run casing reach
+      // the store exactly as production's unprojected wiring does
+      onAdmittedTokens: (runs) => s.recordBigramRuns(runs),
     });
     store = s;
     await replay(pipeline, entries);
@@ -494,6 +497,24 @@ describe("adversarial Probe C — chain post-restore (BUG-005)", () => {
       "bare word must carry word-provenance ('session xN'), not chain markers",
     ).toMatch(/^session x\d+$/);
     expect(chain.state(), "suggestions alone must never arm the chain").toBeNull();
+  });
+
+  it("capitalized-run pairs land series-marked through the enriched ingest payload (BUG-001)", () => {
+    // The replay above ran with the UNPROJECTED payload: the fixture's
+    // "Zorp Zephra Noria Inverter" sequences (×4) are capitalized runs
+    // (spec §04 h2.26), so every chain pair arrives series:true with run
+    // casing — through REAL ingest, not fabricated stores. "turbine"
+    // (lowercase-initial, ×1) stays an ordinary bare pair — the duality.
+    expect(store.topSuccessors("zorp")).toEqual([
+      { next: "zephra", count: 4, series: true, nextDisplay: "Zephra" },
+      { next: "turbine", count: 1 },
+    ]);
+    expect(store.topSuccessors("zephra")).toEqual([
+      { next: "noria", count: 4, series: true, nextDisplay: "Noria" },
+    ]);
+    expect(store.topSuccessors("noria")).toEqual([
+      { next: "inverter", count: 4, series: true, nextDisplay: "Inverter" },
+    ]);
   });
 
   it("§09 M2 item 7 post-restore: bare-word accept arms 'zorp' → Zephra → Noria → Inverter", async () => {
