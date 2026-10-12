@@ -1,193 +1,176 @@
-# VERDICT — P3.M1.T1.S2: Tab-deferral conformance audit
+# VERDICT — P3.M1.T1.S2: Tab-deferral conformance audit (07 h3.10/h3.14 + 09 h2.59)
 
-**Overall verdict: CONFORMANT — zero code changes, zero test changes.**
+**Overall verdict: CONFORMANT — zero code changes required.**
 
-The already-shipped Tab-deferral implementation (P3.M1.T1.S1, commit `c66ba57`
-"feat(pi): widget Tab defers to pi's open menu") satisfies all three promoted
-PRD hunks exactly as written. Every audit dimension below is resolved by
-reading the actual code and the actual `expect()` assertions (not test names).
-Validation at audit time: `npm run check` clean; `npm test` green (40 files,
-1286 passed / 1 pre-existing skip); the three subject suites
-(`widget.test.ts`, `defer-pi-menu.repro.test.ts`, `editor-enter.test.ts`)
-green individually (143 tests).
+The shipped Tab-deferral (commit `c66ba57` "feat(pi): widget Tab defers to pi's open
+menu") satisfies every audited PRD clause as they now read in the promoted normative
+text. No behavioral gap was found; per the fix-forward protocol, no source file was
+edited. All evidence below was re-verified by reading the live code and assertions in
+this session (not inherited from S1's notes).
 
----
+**Framing.** The deferral is an exception surface inside the sanctioned Tab capture:
+SPEC.md invariant 1 ("Never hijack typing. No key is ever captured, consumed, or
+altered except…") and invariant 2's Tab-only completion rule are what make pi's open
+menu the Tab's rightful owner whenever the probe reports it open. The audit confirms
+the shipped code implements exactly that exception and nothing broader.
 
-## Normative clauses audited (quoted; READ-ONLY — already landed)
+**Normative targets audited against (read-only):**
 
-**spec/07-completion-ui.md h3.10, final bullet (line ~242):**
-
-> **Tab inserts the highlighted word** … stock `applyCompletion` semantics,
-> reimplemented on the widget path because no provider item exists there —
-> UNLESS the inner editor's own autocomplete menu is open
-> (`isShowingAutocomplete`): the Tab forwards verbatim and pi's menu accepts
-> its item; deferral keys on the menu's actual open state, never on context
-> classification (the hesitation race can re-arm the widget line while pi's
-> menu is open).
-
-**spec/07-completion-ui.md h3.14 parenthetical (line ~552):**
-
-> (FALLBACK PATH ONLY — on the widget path Tab is consumed by the editor
-> proxy before this editor branch can run (except while pi's own menu is
-> open, when the widget defers the Tab verbatim …), and no provider answers
-> word fragments, so no stock menu can open for them; the bug class is
-> structurally absent there.)
-
-**spec/09-testing-and-acceptance.md h2.59 widget.test.ts bullet (line ~191):**
-
-> Tab with pi's own menu open (`isShowingAutocomplete() === true`) forwards
-> verbatim — never inserts a hapax word over an open stock menu
-> (P3.M1.T1.S1)
+- `spec/07-completion-ui.md:240-244` — h3.10 final bullet: "…UNLESS the inner editor's
+  own autocomplete menu is open (`isShowingAutocomplete`): the Tab forwards verbatim
+  and pi's menu accepts its item; deferral keys on the menu's actual open state, never
+  on context classification (the hesitation race can re-arm the widget line while pi's
+  menu is open)."
+- `spec/09-testing-and-acceptance.md:189-192` — h2.59 widget key-handling bullet:
+  "Tab with pi's own menu open (`isShowingAutocomplete() === true`) forwards verbatim —
+  never inserts a hapax word over an open stock menu (P3.M1.T1.S1)."
+- `spec/07-completion-ui.md:552-556` — h3.14 parenthetical: "(FALLBACK PATH ONLY — on
+  the widget path Tab is consumed by the editor proxy before this editor branch can run
+  (except while pi's own menu is open, when the widget defers the Tab verbatim …)".
 
 ---
 
-## (a) Pre-check placement, order, verbatim forward — CONFORMANT
+## (a) Pre-check placement, order, and verbatim forward — CONFORMANT
 
-Clause: the pre-check fires on `decision.action === "tab-insert"`, reads the
-menu's ACTUAL open state forward through the enter-submit proxy, sits before
-every effectful branch, forwards verbatim through the guard, ticks the clock
-exactly once, and degrades defensively.
+Control-flow walk of `widgetHandleInput` (`src/pi/widget.ts:1683-1730`):
 
-| Property | Evidence |
-|---|---|
-| Veto fires only on `tab-insert` | `src/pi/widget.ts:1719` — `decision.action === "tab-insert" &&`. `tab-insert` is the pure table's verdict for a visible non-empty line (`decideWidgetKey`, widget.ts:1690; pinned pure at `test/widget.test.ts:1301+`). |
-| Probe reads the menu's ACTUAL state through the proxy | `src/pi/widget.ts:1720-1722` — `(innerRecord.isShowingAutocomplete as (() => boolean) \| undefined)?.() === true`, where `innerRecord` is the enter-submit PROXY viewed as a record (`src/pi/widget.ts:1641`). The proxy's get trap binds member functions to the real inner (`src/pi/editor.ts:131-134`) — same precedent as the guard's own probe (`src/pi/editor.ts:112-115`). |
-| Veto precedes EVERY effectful branch | The deferral `return forwardInput(data)` at `src/pi/widget.ts:1723` precedes: forward arm (1728), enter-submit dismissal (`state.hide()` + `machine.onDismissed(true)`, 1739-1741), boundary-pass-through dismissal (1757-1759), consumed-key tick (`opts.onKeystroke?.()`, 1771), navigate's `interacted` mutation (1789), escape's hide+suppress (1794-1795), and the tab-insert execution arm (`insertHighlighted`, 1817). Nothing is inserted, suppressed, dismissed, ticked, armed, or mutated before the deferral return. |
-| `decideWidgetKey` (pure) running first is correct | The pure table reads no editor state and has no side effects (pinned pure at `test/widget.test.ts:1301+`); the PRD's "before any insert/suppress decision executes" governs effectful branches, which the veto does precede. Not a defect — see PRP gotcha. |
-| Claim release cannot interfere | `src/pi/widget.ts:1684` — release fires only `if (isSubmitKey(data, keybindings))`; Tab is never the submit key (`src/pi/editor.ts:63-73`: keybindings match on `tui.input.submit`, fallback `data === "\r"`). |
-| Verbatim forward through the guard, never the raw inner | `forwardInput` (`src/pi/widget.ts:1659-1660`) reads `innerRecord.handleInput` dynamically — the get trap returns the GUARD's handleInput (`src/pi/editor.ts:129`), which delegates the exact `data` to the real inner (`src/pi/editor.ts:117`). |
-| Exactly ONE clock tick on a forwarded deferral | The guard ticks `onKeystroke` on every delegation (`src/pi/editor.ts:105`) BEFORE delegating; the widget layer's own consumed-key tick (`src/pi/widget.ts:1771`) is unreachable because the deferral returned at 1723. Pinned: `test/widget.test.ts:1167` — `expect(h.onKeystroke).toHaveBeenCalledTimes(1)` in the deferral test. |
-| Defensive probe (missing/throwing falls through) | try/catch wraps the whole veto (`src/pi/widget.ts:1716-1726`); absent member → `?.()` → `undefined !== true` → fall-through; throw → caught → fall-through. Pinned: probe-absent case `test/widget.test.ts:1172-1184` (insert still lands: `calls === [setText, caret]`, `innerCalls === []`) and throwing-probe case `test/widget.test.ts:1186-1199` (no throw, insert lands, `hidden === true`). |
+1. **Claim-release cannot interfere** (`widget.ts:1684-1693`): it fires only under
+   `isSubmitKey(data, keybindings)`; Tab is never a submit key, so no state mutation
+   precedes the deferral on a Tab keystroke.
+2. **Pure table first, by design** (`widget.ts:1695-1701`): `decideWidgetKey` is
+   side-effect-free (no editor state read — pinned pure at
+   `test/widget.test.ts:1301+`); its hiccup degrades to a plain forward
+   (`:1699-1700`). The PRD's "before any insert/suppress decision executes" governs
+   EFFECTFUL branches, and the veto precedes every one of them: the deferral return
+   (`:1723`) sits before the generic forward arm (`:1731`), the enter-submit
+   dismiss-then-forward arm (`:1732ff`), the boundary/pass-through arms, the
+   consumed-key tick block, and the tab-insert arm — so on a deferred Tab there is no
+   insert, no suppression, no dismissal, no clock tick from the widget layer, no
+   arming, and no state mutation.
+3. **Verbatim forward through the guard** (`widget.ts:1641,1659-1660`):
+   `forwardInput(data)` calls `innerRecord.handleInput(data)` — `innerRecord` is the
+   editor read FORWARD THROUGH the enter-submit proxy (`:1636-1639` comment; proxy get
+   trap binds `handleInput` to the guard, `src/pi/editor.ts:124-131`), so the exact
+   input bytes reach pi's editor via the guard and pi's menu accepts its highlighted
+   item.
+4. **Exactly one clock tick on a forwarded deferral**: the widget's consumed-key tick
+   block is never reached (early `return` at `:1723`); the single tick comes from the
+   guard's `onKeystroke` seam, which fires once per delegated keypress
+   (`src/pi/editor.ts:108-112`). Pinned by
+   `expect(h.onKeystroke).toHaveBeenCalledTimes(1)` in the deferral pin test
+   (`test/widget.test.ts:1170`).
+5. **Defensive posture** (`widget.ts:1726-1729`): a missing member
+   (`innerRecord.isShowingAutocomplete` undefined → `?.()` yields undefined ≠ true)
+   or a throwing probe lands in the catch and falls through to the normal tab-insert
+   path. Pinned by two dedicated cases: probe-absent inert
+   (`test/widget.test.ts:1174-1188` — insert still lands, `innerCalls === []`) and
+   throwing probe falls through (`test/widget.test.ts:1190-1206` — insert lands,
+   full acceptance "as if the probe never existed").
+
+**Gating**: the veto fires only for `decision.action === "tab-insert"` — the pure
+table's verdict for a visible, non-empty line (`widget.ts:1307`; hidden/empty lines
+classify `"forward"` at `widget.ts:1277` and reach pi as literal Tabs regardless, where
+no hapax insert is possible).
 
 ## (b) Keyed on actual open state, never classification; hesitation race — CONFORMANT
 
-Clause: "deferral keys on the menu's actual open state, never on context
-classification (the hesitation race can re-arm the widget line while pi's
-menu is open)."
+- The predicate (`widget.ts:1719-1724`) reads exactly one thing: the boolean result of
+  `(innerRecord.isShowingAutocomplete as (() => boolean) | undefined)?.() === true`,
+  AND-gated with the pure decision's `tab-insert`. No `classifyStockContext`, no
+  prefix sniffing, no context classification anywhere in the deferral block.
+- WHY classification keying is forbidden (spec 07 h3.10, `spec/07-completion-ui.md:242-244`):
+  the forced-file and slash-argument surfaces are exactly the contexts classification
+  does NOT model, and the `menuDelayMs` hesitation race can re-arm the widget line
+  while pi's menu is already open — any static context guess is stale mid-keystroke.
+- The race is regression-pinned by `test/defer-pi-menu.repro.test.ts` case 3
+  (`:200-243`): under fake timers with `menuDelayMs: 400`, the arm lands only after
+  the 500 ms pause with pi's menu already open, and BOTH preconditions of the
+  accepting Tab are asserted before it — `expect(showing).toBe(true)` AND
+  `expect(state.hidden).toBe(false)` (`:229-233`) — after which the Tab forwards and
+  `expect(pi.applied).toEqual(["templates/"])` (`:239`). The suite runs green and was
+  not modified in this audit (no weakening).
 
-- The deferral predicate (`src/pi/widget.ts:1719-1722`) consults exactly one
-  thing: the boolean return of `isShowingAutocomplete()`. No
-  `classifyStockContext`, no prefix sniffing anywhere in the deferral block —
-  `classifyStockContext` appears in widget.ts only at the import (line 140),
-  a JSDoc (551), and the ARMING path (835-838), which is a different,
-  sanctioned use (stock contexts never arm the line).
-- Why classification keying is forbidden (spec 07 h3.10): the forced-file
-  surface (`load the te`) and slash-argument surface (`/model te`) are
-  contexts classification does NOT model, and the `menuDelayMs` hesitation
-  race makes any static context guess stale mid-keystroke — the line can arm
-  AFTER pi's menu is already open. Repro cases 1 and 2 exercise exactly those
-  unclassified surfaces.
-- Hesitation-race regression coverage: `test/defer-pi-menu.repro.test.ts`
-  case 3 (lines 200-243), `menuDelayMs: 400` with `vi.useFakeTimers()`, the
-  500 ms pause arming hapax OVER pi's open menu. It asserts BOTH preconditions
-  of the accepting Tab before pressing it — `expect(showing).toBe(true)`
-  (line 234) and `expect(state.hidden).toBe(false)` (line 235) — then the
-  end-to-end accept `expect(pi.applied).toEqual(["templates/"])` (line 239).
-  Suite green; not weakened (no assertion changed — the tree carries zero
-  test edits).
+## (c) 09 h2.59 bullet pinned in test/widget.test.ts key-handling coverage — CONFORMANT
 
-## (c) 09 h2.59 bullet pinned in widget.test.ts key-handling coverage — CONFORMANT
+The pin lives in the key-handling describe "widget key handling — Tab inserts the
+highlighted word (spec §07 h2.46 rule 0, S2)" as the case at
+`test/widget.test.ts:1143-1172`, driven through the harness opt-in knob `piMenuOpen`
+(`makeInsertHarness`, `test/widget.test.ts:872-885` — the knob drives the METHOD's
+boolean return on the double, not a stubbed classification). Both bullet claims are
+pinned by explicit assertions, verified by reading (not the test name):
 
-Clause: "Tab with pi's own menu open (`isShowingAutocomplete() === true`)
-forwards verbatim — never inserts a hapax word over an open stock menu."
+- **"forwards verbatim"**: `expect(out).toBe("inner:\t")` (`:1159`) and
+  `expect(h.innerCalls).toEqual(["\t"])` (`:1160`) — the inner receives the Tab bytes
+  exactly once.
+- **"never inserts a hapax word over an open stock menu"**:
+  `expect(h.calls).toEqual(['inner:"\\t"'])` (`:1161`) — the full interaction log is
+  exactly one delegation, i.e. NO `setText`, NO caret edit; `h.state.hidden === false`
+  (`:1163`, line stays visible); `dismissedCalls === 0` (`:1164`, machine dismissal
+  seam never fired); `suppressUntilWordStart === false` (`:1165`); plus
+  `interacted === false` (`:1166`) and the single-tick assertion (`:1170`).
+- The fixture asserts the interesting posture explicitly: hapax line armed
+  (`h.show([...])`) AND pi's menu open simultaneously — deferral keys on the MENU, not
+  the line (`:1150` comment).
+- **Division of labor** (part of this verdict): the double pins the deferral STATE;
+  the real-Editor repro suite pins the END-TO-END accept
+  (`test/defer-pi-menu.repro.test.ts:157-197`, `pi.applied` assertions — "pi's menu
+  accepts its item" is only observable against the real pi-tui Editor). Both halves
+  are green.
 
-Pin: `test/widget.test.ts:1144-1170`, inside the key-handling describe
-"widget key handling — Tab inserts the highlighted word" (line 959). The
-harness knob drives the METHOD's boolean return —
-`raw.isShowingAutocomplete = (): boolean => true` (`test/widget.test.ts:903-905`)
-— the probe contract, not a stubbed classification. The line is armed with a
-real result set before the press (`h.show(["Zendesk", "zephyr"])`, line 1148),
-so the veto is exercised with a live `tab-insert` decision.
-
-Both claims are pinned by READ assertions (verified by reading the expects):
-
-1. **"forwards verbatim"** — `expect(out).toBe("inner:\t")` (line 1159) and
-   `expect(h.innerCalls).toEqual(["\t"])` (line 1160): the inner double's
-   handleInput received the exact Tab bytes, exactly once.
-2. **"never inserts a hapax word over an open stock menu"** —
-   `expect(h.calls).toEqual(["inner:\t"])` (line 1161: NO `setText`, NO caret
-   edit), `expect(h.state.hidden).toBe(false)` (1162: line stays visible),
-   `expect(dismissedCalls).toBe(0)` (1163: dismissal seam never fired),
-   `expect(...suppressUntilWordStart).toBe(false)` (1164: no suppression),
-   `expect(h.state.interacted).toBe(false)` (1165), and one tick (1167).
-   The armed candidates ("Zendesk") demonstrably did NOT land — the buffer is
-   never written.
-
-Division of labor (itself part of the verdict): the double-level test pins
-the deferral STATE (forward, no edit, visible, unsuppressed); "pi's menu
-accepts its item" is only observable against the REAL pi-tui Editor and is
-pinned end-to-end by the repro suite (`pi.applied` in all 4 cases). Both
-halves are present; nothing to add. Placement, naming, and knob usage follow
-the existing harness style — no edit required.
+No gap found → no additional assertions required.
 
 ## (d) Contrast case and Enter-submits guard green and untouched — CONFORMANT
 
-- **Contrast case (classification-keyed defer):**
-  `test/defer-pi-menu.repro.test.ts` case 4 (lines 245-256): pure slash
-  typing `/mo` (no space) → `expect(text.startsWith("/mo")).toBe(true)` —
-  hapax never inserts over the slash. Mechanism is genuinely different from
-  (b): the widget line never ARMS in classified stock contexts
-  (`classifyStockContext(...) !== null` → no paint, `src/pi/widget.ts:835-838`),
-  so there is no `tab-insert` decision to defer. Green.
-- **editor.ts untouched by the deferral:** the S1 commit's diff surface
-  (`git show --stat c66ba57`) touches only `src/pi/widget.ts` (+27),
-  `test/defer-pi-menu.repro.test.ts`, `test/widget.test.ts`, the two spec
-  files, and plan artifacts — `src/pi/editor.ts` is absent; the current tree
-  carries zero `src/`/`test/` modifications. The guard's own
-  `isShowingAutocomplete` read (`src/pi/editor.ts:112-115`) is the sibling
-  probe precedent, not deferral logic. `test/editor-enter.test.ts` green
-  (cancel-then-delegate, never-mutate, proxy forwarding, thenable guard,
-  onKeystroke hook all pass).
+- **Contrast case** (classification-deferred pure slash typing, a different mechanism
+  from (b)): repro case 4 `test/defer-pi-menu.repro.test.ts:245-256` — `/mo` + Tab
+  leaves the text starting `/mo` (hapax never inserts over the slash); green.
+- **Enter-submits guard** (`src/pi/editor.ts`) untouched by the deferral work: the
+  deferral commit `c66ba57`'s diff surface is `src/pi/widget.ts` (+ tests + the spec
+  hunks) only; `editor.ts`'s own `isShowingAutocomplete` read (`:110-115`) is the
+  pre-existing submit-menu cancel use inside the guard (last touched by `b40bd8e`,
+  which predates the deferral). Its suite `test/editor-enter.test.ts` is green
+  (28/28) with no deleted or relaxed assertions.
 
-## (h3.14) Prose check — CONFORMANT (no change expected; none made)
+## (h3.14) Prose check — CONFORMANT
 
-Clause: "on the widget path Tab is consumed by the editor proxy before this
-editor branch can run (except while pi's own menu is open, when the widget
-defers the Tab verbatim …)".
+`spec/07-completion-ui.md:552-556` describes reality:
 
-- A consumed tab-insert RETURNS without delegating: the tab-insert execution
-  arm's ONLY forward is the span-miss fallback
-  (`if (!consumed) return forwardInput(data)`, `src/pi/widget.ts:1824`) — on
-  a consumed insert (`consumed === true`) no `forwardInput` call executes, so
-  pi-tui's `editor.js` Tab branch (`handleTabCompletion` → forced-file menu)
-  is unreachable for every insert hapax actually performs.
-- The deferral arm (`src/pi/widget.ts:1723`) is the sole Tab-forwarding
-  exception while pi's menu is open — and the span-miss forward (1824) is not
-  a counterexample: it forwards only when hapax consumed NOTHING, so "Tab is
-  consumed" still holds for every insertion. The parenthetical describes
-  reality.
+- A consumed tab-insert RETURNS without delegating: the tab-insert arm runs
+  `insertHighlighted` and, on success, returns the consumed result — pi-tui's
+  `editor.js` Tab branch is unreachable on the widget path. The only in-arm forward is
+  the span-miss/no-span degrade (`widget.ts:1824`) — cases where no hapax insert
+  occurs at all.
+- The deferral arm (`widget.ts:1719-1730`) is the sole exception that forwards a Tab
+  while pi's own menu is open over an ARMED widget line. (When the hapax line is
+  hidden/empty, `decideWidgetKey` classifies `"forward"` — `widget.ts:1277` — and the
+  literal Tab forwards as plain never-hijack pass-through; nothing is consumed, so the
+  parenthetical's failure mode, inserting a hapax word over an open stock menu, cannot
+  arise there.)
 
 ---
 
 ## Changes made
 
-**None.** Zero edits to `src/`, `test/`, or `spec/`. The audit found no
-mismatch: S1's shipped implementation and test pins already satisfy the
-promoted normative text verbatim. ("No diff" is this task's fully valid
-success outcome.)
+**None.** The audit found full conformance; per the fix-forward protocol, zero source
+edits, zero comment/JSDoc churn, zero spec edits. `git status` after the audit shows
+only this VERDICT.md as the run's new artifact.
 
-## Notes for Mode B (downstream consumers)
+## Notes for Mode B
 
-- **For T2.S2 (gauntlet):** full suite green at audit time — 40 test files,
-  1286 passed / 1 pre-existing skip; `npm run check` (tsc --noEmit) clean.
-  Safe to treat "green with repro included" as the baseline.
-- **For T2.S3 (live smoke):** the hesitation-race variant is backed by
-  `test/defer-pi-menu.repro.test.ts` case 3 (`menuDelayMs 400`, fake timers,
-  line arms over pi's open menu, accepting Tab still reaches pi —
-  `pi.applied === ["templates/"]`). A live variant should reproduce: type
-  `load the te`, pause ≥ `menuDelayMs` (400 ms) so the hapax line arms over
-  pi's Tab-forced menu, then Tab — pi's item must be accepted, no hapax word
-  inserted.
-- **For T2.S4 (DoD drift report):** code matches the normative spec text at
-  07 h3.10 (final bullet) and 07 h3.14 (parenthetical); the 09 h2.59 test
-  bullet is pinned by assertions in `test/widget.test.ts:1144-1170`
-  (key-handling describe at line 959), with the end-to-end accept in the
-  repro suite. **No drift.**
-- Known cosmetic note (NOT drift, per the PRP's fix-forward rule): the
-  deferral JSDoc (`src/pi/widget.ts:1702`) cites "spec 07 h2.46 + h2.51" —
-  coarse-but-not-false anchors written before the h3.10/h3.14 hunks landed.
-  Left untouched because no code edit landed in that block.
-- Invariant framing (spec/SPEC.md): the deferral is an exception surface
-  INSIDE the sanctioned Tab capture — the never-hijack invariant and
-  Tab-only-completes are preserved (an open pi menu makes the Tab genuinely
-  pi's keystroke; the forward is verbatim and singular).
+- **P3.M1.T2.S2 (gauntlet)**: full suite is green with the repro suite included —
+  targeted counts this session: `test/widget.test.ts` 111, `test/defer-pi-menu.repro.test.ts`
+  4, `test/editor-enter.test.ts` 28; `npm run check` and `npm test` re-verified green
+  at audit time.
+- **P3.M1.T2.S3 (live smoke)**: the hesitation-race variant of the deferral smoke is
+  backed by repro case 3 (`test/defer-pi-menu.repro.test.ts:200-243`, menuDelayMs 400
+  under fake timers, both preconditions asserted) — the live variant should reproduce
+  that sequence in a real TTY: arm hapax over pi's open menu, then Tab → pi accepts,
+  no hapax insert.
+- **P3.M1.T2.S4 (DoD drift report)**: deliberate citation drift remains and is NOT a
+  mismatch (per this item's docs contract, comments are touched only by code edits):
+  the deferral JSDoc cites "spec 07 h2.46 + h2.51" (`src/pi/widget.ts:1702`) and the
+  repro header cites h2.46/h2.51 (`test/defer-pi-menu.repro.test.ts:4`), both written
+  before the normative hunks landed. The normative anchors are 07 h3.10
+  (`spec/07-completion-ui.md:240-244`), 07 h3.14 (`:552-556`), and 09 h2.59
+  (`spec/09-testing-and-acceptance.md:189-192`). The code satisfies the NEW wording
+  as audited above; only the comment anchors are coarser.
