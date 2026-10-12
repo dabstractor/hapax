@@ -441,7 +441,7 @@ describe("session_start — bigram wiring (enableChaining)", () => {
     vi.restoreAllMocks(); // scope the CandidateStore.prototype spy
   });
 
-  it("enableChaining true (default) wires the hook — bigrams land in the store", async () => {
+  it("enableChaining true (default) wires the hook — enriched RunMember runs land in the store", async () => {
     useDict(); // alpha/beta/gamma are dict-absent → group 0 → admitted
     const { handlers, ctx } = wired();
     const spy = vi.spyOn(CandidateStore.prototype, "recordBigramRuns");
@@ -455,11 +455,70 @@ describe("session_start — bigram wiring (enableChaining)", () => {
     // Filter to THIS session's message: the prototype spy is shared by
     // every store instance, and an earlier test's fire-and-forget restore
     // drain can land its own recordBigramRuns call inside this window.
+    // Members are RunMember OBJECTS — the enriched payload passes
+    // through unprojected (BUG-001 fix: the keys-only shim is gone).
     await vi.waitFor(() => {
-      expect(spy.mock.calls.some(([lines]) => lines.flat().includes("alpha"))).toBe(true);
+      expect(
+        spy.mock.calls.some(([lines]) =>
+          lines.flat().some((m) => typeof m !== "string" && m.key === "alpha"),
+        ),
+      ).toBe(true);
     });
-    const call = spy.mock.calls.find(([lines]) => lines.flat().includes("alpha"))!;
-    expect(call[0]).toEqual([["alpha", "beta", "gamma"]]);
+    const call = spy.mock.calls.find(([lines]) =>
+      lines.flat().some((m) => typeof m !== "string" && m.key === "alpha"),
+    )!;
+    expect(call[0]).toEqual([
+      [
+        { key: "alpha", rawCasing: "alpha" },
+        { key: "beta", rawCasing: "beta" },
+        { key: "gamma", rawCasing: "gamma" },
+      ],
+    ]);
+  });
+
+  it("capitalized-run members carry series marks through the production seam", async () => {
+    useDict(); // dict-absent words — no chainOnly top-band branch in play
+    const { handlers, ctx } = wired();
+    const spy = vi.spyOn(CandidateStore.prototype, "recordBigramRuns");
+    startSession(handlers.get("session_start")!, ctx, "new");
+
+    await endMessage(
+      handlers.get("message_end")!,
+      ctx,
+      userMsg("Alpha Beta gamma"),
+    );
+    await vi.waitFor(() => {
+      expect(
+        spy.mock.calls.some(([lines]) =>
+          lines.flat().some((m) => typeof m !== "string" && m.key === "alpha"),
+        ),
+      ).toBe(true);
+    });
+    const call = spy.mock.calls.find(([lines]) =>
+      lines.flat().some((m) => typeof m !== "string" && m.key === "alpha"),
+    )!;
+    // "Alpha Beta" is a detected ≥2-member capitalized run (uppercase
+    // initials, plain space gaps) → both members series-marked with raw
+    // casing; "gamma" is an ordinary member of the same adjacency run,
+    // unmarked. toEqual pins the SHAPE: series is genuinely ABSENT on
+    // non-run members, never merely undefined.
+    expect(call[0]).toEqual([
+      [
+        { key: "alpha", rawCasing: "Alpha", series: true },
+        { key: "beta", rawCasing: "Beta", series: true },
+        { key: "gamma", rawCasing: "gamma" },
+      ],
+    ]);
+    // Store-level enrichment (the point of the seam): the run pair is
+    // SERIES-marked in the successor index — typed-word chain arming
+    // (topSuccessors(word).some(s => s.series)) now fires on real data.
+    // The spy's captured `this` is the session store that consumed it.
+    const store = spy.mock.contexts[
+      spy.mock.calls.indexOf(call)
+    ] as CandidateStore;
+    expect(store.topSuccessors("alpha")).toEqual([
+      { next: "beta", count: 1, series: true, nextDisplay: "Beta" },
+    ]);
   });
 
   it("enableChaining false leaves the hook unwired — recordBigramRuns never fires", async () => {

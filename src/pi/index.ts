@@ -234,16 +234,17 @@ export default function hapax(pi: ExtensionAPI): void {
       // still ingests candidates; this hook only feeds the bigram
       // layer), and before_agent_start's chain?.reset() is already
       // no-op-safe when the layer is disabled (idle machine).
-      // Plan 006 widening: the payload now carries RunMembers
-      // ({key, rawCasing, series?}) — the shim projects keys so
-      // recordBigramRuns' input stays byte-identical until P1.M1.T2.S2
-      // consumes the enrichment (series casing + cap-run marks).
+      // Plan 006 widening — LIVE (BUG-001 root fix): the payload's
+      // RunMember objects ({key, rawCasing, series?, chainOnly?}) pass
+      // through UNPROJECTED, so series marks, run casing, and chain-only
+      // members actually reach recordBigramRuns (which accepts
+      // RunMemberInput objects and legacy bare strings alike — bare-string
+      // feeders remain valid in tests/legacy callers). This is what makes
+      // typed-word chain arming, series-first ordering, run-casing
+      // display, and the /acwords (series) markers live end-to-end.
       ...(config.enableChaining
         ? {
-            onAdmittedTokens: (runs) =>
-              sessionStore.recordBigramRuns(
-                runs.map((r) => r.map((m) => m.key)),
-              ),
+            onAdmittedTokens: (runs) => sessionStore.recordBigramRuns(runs),
           }
         : {}),
     });

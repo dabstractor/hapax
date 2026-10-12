@@ -112,9 +112,9 @@ export interface RunMember {
   /** true when this occurrence belongs to a DETECTED capitalized run
    *  (spec §04 h2.26): a maximal ≥2-member sequence of uppercase-initial
    *  whole tokens on one line whose gaps are plain spaces/tabs in BOTH
-   *  the masked and the raw segment. The payload's runs are the ADJACENCY
-   *  runs (byte-identical keys under index.ts's members→keys shim), so
-   *  this flag is what picks the cap runs out — consumers read consecutive
+   *  the masked and the raw segment. The runs payload carries the flag
+   *  through to recordBigramRuns (index.ts passes members unprojected),
+ *  where it marks series bigrams — consumers read consecutive
    *  series members as the run; unmarked members never chain. The
    *  ≥2 floor is applied at detection: a lone uppercase-initial member
    *  is never marked. */
@@ -242,8 +242,8 @@ interface AdmitMemoEntry {
  *  runs of RunMembers: a new run starts at the line's first entry (its
  *  empty gapBefore breaks by construction) and at every entry whose
  *  MASKED gapBefore is not pure spaces/tabs — the exact break predicate
- *  splitRuns always used, so the members→keys projection (index.ts's
- *  shim) is byte-identical to the pre-widening string[][] payload. Never
+ *  splitRuns always used, so the keys projection of these runs is
+ *  byte-identical to the pre-widening string[][] payload. Never
  *  emits empty runs; members carry their occurrence casing, and members
  *  belonging to a detected capitalized run (see detectCapRuns) are
  *  series-marked. */
@@ -433,11 +433,11 @@ export interface IngestPipelineOptions {
    *  does (gap text carries across). Runs hold ≥ 1 word (empty lines
    *  emit nothing).
    *
-   *  TWO consumers, ONE payload (plan 006):
-   *  - Bigrams (unchanged): every member's `key`, projected by index.ts's
-   *    shim (`runs.map(r => r.map(m => m.key))`), reproduces the
-   *    pre-widening string[][] byte-identically — recordBigramRuns'
-   *    adjacent-pair counting is untouched until P1.M1.T2.S2.
+   *  TWO consumers, ONE payload (plan 006) — all LIVE:
+   *  - Bigrams: index.ts passes the runs through UNPROJECTED
+   *    (BUG-001 root fix); recordBigramRuns consumes the RunMember
+   *    objects directly (bare strings remain accepted for legacy/test
+   *    feeders) — adjacent-pair counting is unchanged.
    *  - Capitalized runs (spec §04 h2.26): members of a detected run —
    *    maximal ≥2 uppercase-RAW-initial whole tokens, plain space/tab
    *    gaps in BOTH the masked and raw segment — carry `series: true`.
@@ -445,9 +445,9 @@ export interface IngestPipelineOptions {
    *    masking blanks secrets to spaces (bigrams still chain across —
    *    unchanged, documented), but the raw gap holds the bytes, so cap
    *    runs split where bigrams don't. P1.M1.T3.S1 consumes the marked
-   *    key sets; P1.M1.T2.S2 consumes members incl. rawCasing and
-   *    replaces the shim.
-   *  Wired to store.recordBigramRuns via the shim. */
+   *    key sets; the store's series bigrams (rawCasing display +
+   *    typed-word arming) are live via the pass-through.
+   *  Wired to store.recordBigramRuns directly (index.ts). */
   onAdmittedTokens?: (runs: readonly (readonly RunMember[])[]) => void;
 }
 
