@@ -186,7 +186,7 @@
       "type": "Phase",
       "id": "P2",
       "title": "Minor fixes and changeset hardening (BUG-003 widget timing, BUG-004 PIN + fallback battery, docs sync)",
-      "status": "Ready",
+      "status": "Complete",
       "description": "The two minor PRD items plus the mandatory changeset-level documentation sweep. BUG-003: the widget path's typed-word arming site deliberately never paints, so the spec 07 M2 zero-char offer lands one input event late — fix paints the (a)-offer at the arming tick with chain-intent semantics, verified live per the binding TTY technique, with the spec 07 visibility-step-3 conflict recorded as drift (spec/*.md is read-only for pipeline agents). BUG-004: deliver the P4.M1.T2.S1 PIN at provider.ts's applyCompletion consumption site (verified: pi-tui never re-requests after an apply) plus the missing fallback-path post-accept battery. The final task syncs README.md and compiles the spec-drift report for the reconciling interactive session.",
       "milestones": [
         {
@@ -247,7 +247,7 @@
           "type": "Milestone",
           "id": "P2.M2",
           "title": "Fallback-path PIN and post-accept battery (BUG-004) + changeset-level documentation sync",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Deliver the missing P4.M1.T2.S1 artifacts: the PIN at provider.ts's applyCompletion consumption site recording the verified pi-tui no-re-request contract, and the fallback-path post-accept battery. Then the mandatory final documentation task: sync README.md's changeset-level claims and compile the spec-drift report (spec/*.md is read-only for pipeline agents — drift is recorded, an interactive session reconciles).",
           "tasks": [
             {
@@ -296,7 +296,7 @@
               "type": "Task",
               "id": "P2.M2.T2",
               "title": "Sync changeset-level documentation",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Final changeset-level sweep (Mode B): update README.md so its feature claims match the restored end-to-end behavior, and compile the spec-drift report enumerating every spec/*.md delta this changeset implies (spec is read-only for pipeline agents; the report is the reconciling interactive session's worklist).",
               "subtasks": [
                 {
@@ -329,7 +329,7 @@
                   "type": "Subtask",
                   "id": "P2.M2.T2.S2",
                   "title": "Compile the spec-drift report for the reconciling interactive session",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",
