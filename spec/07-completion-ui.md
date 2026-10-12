@@ -335,7 +335,11 @@ on each keystroke:
    line visible, subject to `menuDelayMs` (hesitation gate) and the
    100 ms swap debounce — both carried over unchanged.
 3. Trailing space with no `@`/`/` in text-before-cursor → hidden
-   (close-on-space carried over as the widget's own state).
+   (close-on-space carried over as the widget's own state) — except when
+   that space completes a typed word that arms a series chain (M2 armed(W)
+   below): the zero-char successor offer paints at the space tick itself,
+   before the user types anything (an intent-driven show in the spirit of
+   step 6; every subsequent edit returns to steps 1–5).
 4. Cursor move, Escape, boundary pass-through, disqualification →
    hidden (flicker hysteresis carried over: narrowing must not
    close-and-reopen).
@@ -595,7 +599,7 @@ applies it in the same keypress. Rules:
 
 ### pi-tui contract dependencies (re-verify on upgrades)
 
-Four runtime contracts are leaned on by the FALLBACK path (marked as
+Five runtime contracts are leaned on by the FALLBACK path (marked as
 PINs at their consumption sites in `src/pi/provider.ts`); none is
 enforced by types. The widget path leans instead on the editor-proxy
 composition rules (never mutate shared instances — the v1 crash
@@ -609,7 +613,15 @@ pi-tui upgrade, re-verify each:
 - one-query-per-word while the menu is closed (the word-start request
   is that word's only one — the startup gate exists because of it);
 - the editor's space-updates-open-menu flow (close-on-space depends on
-  being consulted at trailing space).
+  being consulted at trailing space);
+- no autocomplete re-request after applyCompletion (all three apply
+  sites in editor.js — menu-Tab accept (:545), select.confirm (:560),
+  and the forced single-item fast path (:1906), verified against
+  @earendil-works/pi-tui 0.84.4 — apply then cancel (the fast path:
+  requestRender) and return; the fallback path's post-Tab extension
+  offer and the zero-char chain offer therefore ride the NEXT
+  keystroke's request, the degradation spec 07 accepts — PIN in
+  src/pi/provider.ts applyCompletion);
 
 ## Never-hijack rules (acceptance-critical)
 

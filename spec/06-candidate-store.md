@@ -2,7 +2,10 @@
 
 ## M1: word candidates
 
-`src/core/store.ts` maintains the per-session store. One entry per lowercase key:
+`src/core/store.ts` maintains the per-session store. One entry per lowercase key.
+A *sighting* is the code-level admission unit (`Sighting` in
+`src/core/types.ts`) — one observed occurrence of a word in an ingested
+message; the upsert below consumes one sighting at a time.
 
 ```ts
 interface Candidate {
@@ -16,6 +19,14 @@ interface Candidate {
   userTyped: boolean     // sticky once true
   properName: boolean    // capitalized-initial seen at least once
   rankGroup: 0 | 1 | 2   // admission group (04)
+  pathDisplay?: string   // verbatim edge-bearing display for path-class
+                         // candidates (04 rule 4d: leading `/`, `~`, `./`,
+                         // `../`); seeded sticky-first by the FIRST path
+                         // sighting at the upsert create branch; the merge
+                         // branch never writes it; absent ≡ the candidate
+                         // never arrived as a path sighting; wins over
+                         // capDisplay at resolution (both coexist on
+                         // letter-initial paths that classify mid-cap)
 }
 ```
 
@@ -54,7 +65,14 @@ so restore-time eviction consequences (05) apply unchanged.
 
 On admitting a sighting of word `w` in message with ordinal `n`:
 
-- Absent → create entry (`sessionCount = 1`, ordinals = n, source flags set).
+- Absent → create entry (`sessionCount = 1`, ordinals = n, source flags
+  set). A path sighting (04 rule 4d shape: leading `/`, `~`, `./`, `../`)
+  additionally seeds `pathDisplay` from that first sighting's display —
+  sticky-first: later sightings never overwrite it, and the merge branch
+  never writes it. A candidate that FIRST arrived as a non-path word
+  keeps NO `pathDisplay` even when a later path sighting merges into it
+  (create-only seeding keeps it deterministic) — such a candidate inserts
+  bare.
 - Present → `sessionCount++`, `lastSeenOrdinal = n`, update the casing
   tallies per the sighting class (04 normalization: a mid-sentence
   capital bumps `capCount` and refreshes `capDisplay` when it becomes

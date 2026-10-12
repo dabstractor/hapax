@@ -1558,7 +1558,7 @@ describe("index.ts e2e — series pipeline through the real factory (widget path
     };
   }
 
-  it("(a) typing 'This ' through the composed editor arms {word:'this'}; the next word-start tick paints the run-cased 'Fed' offer", async () => {
+  it("(a) typing 'This ' through the composed editor arms {word:'this'}; the space tick itself paints the run-cased 'Fed' offer", async () => {
     const { editor, buf, chainState } = await widgetSeriesSession();
     // widgetStateOf's PUBLIC WidgetState omits hidden/items (they are the
     // internal view — insertHighlighted reads them through the same
@@ -1581,17 +1581,21 @@ describe("index.ts e2e — series pipeline through the real factory (widget path
     await typeChar(editor, buf, " ");
     expect(chainState()).toEqual({ word: "this" });
 
-    // THE OFFER: the armed consult branch paints at the NEXT word-start
-    // tick (today's landed timing — the arming site still closes: "never
-    // paint from the arming site"; the chain offer is INTENT so the
-    // hesitation gate never holds it). When P2.M1.T1.S1's space-tick
-    // paint lands, THIS assertion moves up to the space tick above —
-    // flip the comment, keep both expectations documented.
-    await typeChar(editor, buf, "F");
+    // THE OFFER: the zero-char successor paints AT the space tick itself
+    // (the landed P2.M1.T1.S1 timing — the arming site calls zeroCharOffer
+    // in its own frame; the chain offer is INTENT so the hesitation gate
+    // never holds it). This is the factory-seam pin for the same-tick
+    // contract the widget suites pin at the unit layer.
     expect(state.hidden).toBe(false);
     const displays = state.items.map((i) => i.display);
     expect(displays).toEqual(["Fed"]); // run casing via nextDisplay (chain shims)
     expect(displays.join(" ")).not.toMatch(/\bfed\b/); // never the bare key
+
+    // Narrowing on the next keystroke refines the standing paint without
+    // a close-reopen (the offer rides the armed chain, not a re-query).
+    await typeChar(editor, buf, "F");
+    expect(state.hidden).toBe(false);
+    expect(state.items.map((i) => i.display)).toEqual(["Fed"]);
   });
 
   it("(b) /acwords under the widget composition shows the (series) marker with run casing", async () => {

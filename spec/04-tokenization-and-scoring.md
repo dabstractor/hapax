@@ -711,7 +711,11 @@ trigger char, same rules.
   conversation wins (ties → lowercase; a word seen only capitalized
   completes capitalized). Words seen only in all caps complete
   verbatim in all caps; paths and technical literals always insert
-  verbatim. Menu labels use the same resolution against the live
-  fragment's first letter.
+  verbatim — and the verbatim-path rule outranks the Shift-preserve rule
+  above: a candidate carrying a verbatim path display (04 rule 4d edges —
+  leading `/`, `~`, `./`, `../`) inserts its edges unchanged even when the
+  fragment begins with a capital; the Shift rule governs letters only, and
+  a leading `/`, `~`, or `.` is not a letter. Menu labels use the same
+  resolution against the live fragment's first letter.
 - The store keys on lowercase; one candidate per lowercase key (casing
   variants merge into the tallies).
