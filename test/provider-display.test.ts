@@ -839,3 +839,107 @@ describe("hesitation gate (menuDelayMs — first-paint delay)", () => {
     expect(out!.prefix).toBe("z"); // pi-tui ignores prefix on empty sets
   });
 });
+// ─── Display — post-apply silence until the next request (spec 07 h3.11
+// fallback companion, spec/07-completion-ui.md:315–320; PIN in
+// src/pi/provider.ts applyCompletion — P2.M2.T1.S1) ───
+// The display-layer leg of the fallback-path post-accept battery (the
+// provider-level legs live in test/provider-live.test.ts). The h3.11
+// fallback paragraph: if pi-tui does not re-request after an apply, the
+// fallback path degrades to no re-offer. pi-tui issues NO autocomplete
+// request after applying a completion (all three dist editor apply sites
+// return without requestAutocomplete — verified against
+// @earendil-works/pi-tui ~0.84.4; paired consumption-site PIN in
+// provider.ts applyCompletion, P2.M2.T1.S1), and the display wrapper adds
+// no async source of its own: applyCompletion only flags
+// completionSincePaint and forwards — it schedules NO timer. So between
+// the apply and the next explicit getSuggestions call the display layer
+// must emit NOTHING: no pending swap, no timer promotion. These tests
+// advance the fake clock well past the debounce window to prove it, then
+// pin that the next request paints the extension set IN THAT CALL
+// (completionSincePaint — the applyRanSincePaint rule). A pi-tui upgrade
+// adding a post-apply re-request changes fallback-path offer timing and
+// MUST re-verify this battery (spec 07 h3.15 re-verify list).
+describe("display — post-apply silence until the next request (spec 07 h3.11 fallback companion)", () => {
+  /** The h3.11 fork fixture — same shape as the widget battery's fork and
+   *  the provider battery's forkStore (equal counts ×2, same ordinal band,
+   *  so §04 h2.29 tier ties fall to shortest-first): 'implements'
+   *  dead-ends ("implementation" does not extend it). */
+  const ladderStore = (): CandidateStore => {
+    const s = new CandidateStore();
+    put(s, "implement", 2, 9);
+    put(s, "implements", 2, 9);
+    put(s, "implementation", 2, 9);
+    return s;
+  };
+
+  it("after applyCompletion the clock promotes NOTHING; the next request paints the extension set in that call", async () => {
+    const { current, wrapper, emissions, emit } = harness(100, ladderStore());
+
+    // (1) First paint — the pre-Tab set. PLURAL PRUNING (spec 04):
+    // [implement, implementation]; "implements" enters only after the
+    // Tab's exact-equal exclusion removes "implement".
+    expect(await emit("implem")).toEqual(["implement", "implementation"]);
+    expect(emissions).toEqual([["implement", "implementation"]]);
+
+    // (2) Tab accepts the top item through the display wrapper: it flags
+    // completionSincePaint and FORWARDS to base.applyCompletion
+    // (provider.ts) — so the provider's arming side effect fires on the
+    // display path too. The delegation is observable at the inner mock.
+    wrapper.applyCompletion(
+      ["#implem"],
+      0,
+      7,
+      { value: "implement", label: "implement", description: "" },
+      "#implem",
+    );
+    expect(current.applyCompletion).toHaveBeenCalledTimes(1);
+    // The splice pi's real editor would perform with these arguments
+    // (blind prefix.length deletion math, test/helpers/editor-sim.ts):
+    // "#implem" − "#implem" + "implement" → "implement" @ col 9.
+    expect(editorApplyCompletion("#implem", 7, "implement", "#implem")).toBe(
+      "implement",
+    );
+
+    // (3) THE PIN — advance the clock a full debounce window (and then
+    // some): t=1000, every 100 ms swap boundary crossed ten times over.
+    // The apply scheduled NOTHING: no pending swap exists, no timer
+    // promotion fires, the emissions sequence is unchanged. An emission
+    // can only come from a getSuggestions call.
+    vi.advanceTimersByTime(1000); // t=1000: the apply scheduled nothing — nothing promotes
+    expect(emissions).toEqual([["implement", "implementation"]]);
+    expect(vi.getTimerCount()).toBe(0); // no swap timer left armed either
+
+    // (4) The next explicit request paints the extension set IN THIS CALL
+    // (completionSincePaint: the buffer changed underneath the displayed
+    // set, so the fresh set paints immediately — never re-served stale,
+    // never parked as pending). Exact-equal exclusion dropped
+    // "implement"; shortest-first ranks the fork.
+    expect(await emit("implement")).toEqual([
+      "implements",
+      "implementation",
+    ]);
+    // Whole-sequence assertion (file convention).
+    expect(emissions).toEqual([
+      ["implement", "implementation"],
+      ["implements", "implementation"],
+    ]);
+
+    // (5) The disqualification close on the display path: rankMatches of
+    // "implements" is 0 ("implementation" does not extend it) → the base
+    // DELEGATES → the mock's null → "<delegate>", and the wrapper resets
+    // (a following request re-opens fresh — still no suppression).
+    expect(await emit("implements")).toEqual("<delegate>");
+    expect(emissions).toEqual([
+      ["implement", "implementation"],
+      ["implements", "implementation"],
+      "<delegate>",
+    ]);
+    expect(await emit("implement")).toEqual(["implements", "implementation"]);
+    expect(emissions).toEqual([
+      ["implement", "implementation"],
+      ["implements", "implementation"],
+      "<delegate>",
+      ["implements", "implementation"],
+    ]);
+  });
+});
