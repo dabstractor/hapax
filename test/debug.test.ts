@@ -8,9 +8,9 @@
  * CandidateStore; the pipeline and pi surfaces are structural stubs.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readFileSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { STORE_CAP, CandidateStore } from "../src/core/store.js";
 import type { IngestStats, Sighting } from "../src/core/types.js";
 import { formatAcwordsDump, registerAcwordsCommand } from "../src/pi/debug.js";
@@ -349,6 +349,15 @@ function dumpHasRow(dump: string, text: string): boolean {
 // --- registerAcwordsCommand ----------------------------------------------------
 
 describe("acwords registration (PRD §08)", () => {
+  // The debug:true handler writes the sanctioned FIXED dump path (spec
+  // 08 — the product path is not configurable). Unit tests must not
+  // leave it behind: a fixed /tmp file collides across concurrent runs
+  // and workspaces, and reads as a stale persistence artifact after
+  // the suite ends (everything in hapax is RAM-only).
+  afterEach(() => {
+    rmSync("/tmp/hapax-store.txt", { force: true });
+  });
+
   it("registers nothing when config.debug is false", () => {
     const store = new CandidateStore();
     const { pi, register } = fakePi();

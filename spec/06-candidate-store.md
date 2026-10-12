@@ -31,7 +31,7 @@ Backing structures:
   binary search for the first-char range (the anchored fuzzy match's
   first-character requirement, 04, keeps the prefix index the scan
   entry point) + fuzzy tier/score over the range + rank (tier →
-  sessionCount → length → lex, 04) + top 8.
+  shorter key → sessionCount → lex, 04) + top 8.
 
 No persistence. Store is created at `session_start`, rebuilt in-place at
 `session_tree` (Branch purity below), dropped at `session_shutdown`.

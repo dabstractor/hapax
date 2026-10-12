@@ -271,8 +271,8 @@ or noise member splits the run around it.
   sightings of it exist (run evidence outranks both). Attested
   members land at rank group 1; absent members at group 0.
   Membership grants candidacy only — no ranking priority of any
-  kind attaches (result ordering is unchanged: tier → sessionCount
-  → length → lex).
+  kind attaches (result ordering is unchanged: tier → shorter key
+  → sessionCount → lex).
 - **Dictionary top-band ceiling.** A member whose dictionary
   commonness lies in the table's very top band (a baked ceiling
   constant — the most common couple hundred words: the, and, of, …)

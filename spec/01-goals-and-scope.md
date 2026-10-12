@@ -19,7 +19,7 @@ matching word (or the 1st character after the trigger char, default `#`).
 - **Salience** — the dynamic per-session retention score (frequency,
   recency, source, rarity). Drives store eviction; its frequency
   component (sessionCount) breaks ranking ties within match-strictness
-  tiers (04).
+  tiers — equal-length keys only, shorter key outranking it (04).
 - **Trigger char** — a configurable character (default `#`) that initiates
   lookup from the first character after it.
 - **Word matching** — anchored fuzzy lookup from the first character

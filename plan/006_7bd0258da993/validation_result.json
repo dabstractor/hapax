@@ -1,0 +1,5 @@
+{
+  "hasIssues": true,
+  "issueCount": 8,
+  "summary": "All 16 validation checks green (typecheck, 1286 tests, deterministic dict rebuild, calibration probes, benchmarks, live TTY E2E of the README user journey), but 8 minor issues found: 3 spec-internal/spec-vs-code drifts (08 rejectCommonness example 12 vs shipped 30; 09 ranking bullet teaches retired count-before-length order; 09 suppression bullet still names Tab-accept contrary to 07 h3.11), README missing the post-Tab extension-offer blurb, docs/M1-DoD.md lacking the current changeset's gauntlet/live-smoke entry, plan/006 tasks.json marking shipped+tested work as Ready, README perf table repeating the retired 60ms ingest headline, and test/debug.test.ts leaving a fixed /tmp/hapax-store.txt side effect."
+}

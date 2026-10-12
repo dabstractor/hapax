@@ -51,6 +51,16 @@ import { CandidateStore } from "../src/core/store.js";
 import { rankMatches } from "../src/core/query.js";
 import { writeDictFile } from "./helpers/dict-writer.js";
 
+// File-wide cleanup: several suites here fire the real /acwords handler
+// (debug:true), which writes the sanctioned FIXED dump path (spec 08 —
+// the product path is not configurable). Unit tests must not leave it
+// behind: a fixed /tmp file collides across concurrent runs and
+// workspaces, and reads as a stale persistence artifact after the
+// suite ends (everything in hapax is RAM-only).
+afterEach(() => {
+  rmSync("/tmp/hapax-store.txt", { force: true });
+});
+
 // --- fixture helpers ----------------------------------------------------------
 
 type UserMessage = Extract<AgentMessage, { role: "user" }>;

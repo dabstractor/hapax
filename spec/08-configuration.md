@@ -36,7 +36,7 @@ defaults, continue running. Missing files are normal.
                               // sits at the schema max and width binds
                               // on every realistic terminal. Tune down
                               // for fewer words per line.
-  "rejectCommonness": 12,    // 1–255: dictionary-attestation FLOOR of
+  "rejectCommonness": 30,    // 1–255: dictionary-attestation FLOOR of
                               // the length-conditioned reject curve R_eff
                               // (04): flat through 8 chars, sqrt ramp to
                               // admit-all at 20 — higher = looser, the

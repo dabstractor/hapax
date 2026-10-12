@@ -202,6 +202,24 @@ keep it current; this README is a summary).
   chain-after-restore probe in `test/adversarial-typing.test.ts` (machine:
   `test/chain.test.ts`; gating: `test/chaining-gating.test.ts`; index:
   `test/successors.test.ts`; widget path: `test/widget.test.ts`).
+- **Post-Tab extension offer — Tab-accept never wedges; one Tab per
+  ladder rung** (`src/pi/widget.ts`, spec 07 h3.11) — accepting a word
+  with Tab is NOT a dismissal: after the insertion hapax re-queries
+  with the completed word as the fragment, and since a fully-typed
+  word is never offered (exact-equal exclusion), the fresh offer is
+  the word's proper-prefix extensions, shortest first — `implem` →
+  Tab inserts `implement` → the offer re-renders
+  (`implements | implementation`) → Tab again, recursively, until the
+  ladder ends. A terminal word's EMPTY offer closes WITHOUT
+  suppression (a disqualification close): the next qualifying edit —
+  a keystroke OR a single Backspace — reopens, so backspacing out of
+  a dead-end fork (`implements`) re-renders the sibling offer for
+  one-keystroke recovery. Escape or a boundary arrow on an offer
+  still dismiss + suppress for the rest of the word (the
+  explicit-dismissal seam keeps those members — Tab is simply no
+  longer one), and Enter ALWAYS submits, immediately after a Tab
+  included. Pinned by the Post-Tab extension offer battery
+  (`test/widget.test.ts`).
 - **Capitalized-series completion** — runs of ≥ 2 consecutive
   capitalized whole words are recognized as proper-noun series wherever
   they sit (line-initial and after punctuation included), and every
@@ -216,7 +234,7 @@ keep it current; this README is a summary).
   display paths (`src/pi/provider.ts`, `src/pi/widget.ts`). Dictionary
   top-band members are chain-only (see the proper-nouns bullet) —
   `The ` still offers `Fed`. Casing admits, never ranks: result ordering
-  stays tier → sessionCount → length → lex (spec 01, 04, 07).
+  stays tier → shorter key → sessionCount → lex (spec 01, 04, 07).
 
 ## Quick start
 
@@ -276,6 +294,21 @@ typing the trigger char mid-chain resets to idle and honors trigger mode
 with the `#frag` prefix — and arms normally in resumed sessions: the walk
 above is reachable after a history replay (regression-pinned in
 `test/adversarial-typing.test.ts`).
+
+Progressive completion: Tab-accepting a word re-offers its extensions —
+the ladder continues one rung per Tab with nothing retyped, and a
+completed word is never re-offered itself (exact-equal exclusion):
+
+```text
+type  implem    → offers implement → Tab inserts "implement"
+                → offer re-renders: implements | implementation
+                → Tab inserts "implements" → Tab → "implementation"
+                → ladder exhausted: the empty offer closes, NOTHING
+                  suppressed — one Backspace re-renders the sibling offer
+```
+
+Enter still submits right after any Tab; Escape on an offer dismisses
+and suppresses for the rest of the word, as ever.
 
 Ordinary prose: typing is identical to stock pi — no key is captured, no
 result line appears for common words **WITH ANCHORED MATCHES** — the
@@ -678,7 +711,7 @@ Performance gates (PRD §09; asserted at 3× budget headroom by
 | 20k-candidate anchored-fuzzy query (first-char bucket + tiers + frequency sort + top 8) | < 1 ms p99 |
 | Tier-0 anchorless fallback pass (full store; fires only when the anchored scan returns zero; also `#` loose-mode scans) | < 3 ms p99 |
 | Dictionary load + full 20k-word lookup sweep | < 60 ms |
-| Ingest of 800 KB session text | < 60 ms, yield every ≤ 64 KB |
+| Ingest of 800 KB session text | < 180 ms (CI bound — spec 09 retired the never-met < 60 ms headline), yield every ≤ 64 KB |
 | Steady-state heap delta (dict + store) | < 6 MB |
 
 (The suite additionally pins two shipped-extras beyond the PRD gates: a

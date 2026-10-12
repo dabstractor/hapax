@@ -113,7 +113,7 @@ build script uses only node stdlib). Do not add dependencies.
 2. Extract the current word fragment before the cursor (or trigger-char run).
 3. If a word fragment is live (1 char; see 07) or the trigger char is
    active: anchored-fuzzy search the store (first-char bucket, 04),
-   sort tier → sessionCount → length → lex (04), return top 8 items.
+   sort tier → shorter key → sessionCount → lex (04), return top 8 items.
 4. This must complete in < 1 ms. No allocation-heavy work; the store's
    prefix index is maintained at ingest time — the fuzzy anchor (first
    char exact) keeps it the scan entry point.

@@ -186,7 +186,8 @@ export interface RankOptions {
  *  compareRankedMatches' ORDER key 1; `score` is the admission
  *  score 0–100 — threshold-gated before ranking (the discard lives in
  *  rankMatches, P1.M2.T1.S2) and NEVER order-determining: only the tier
- *  (and within it the raw sessionCount) sorts the menu. */
+ *  (and within it the shorter key, then the raw sessionCount) sorts the
+ *  menu. */
 export interface MatchResult {
   tier: 0 | 1 | 2 | 3;
   score: number;
@@ -408,7 +409,8 @@ export function resolveCompletionCasing(
 }
 
 /** Total order over the result list — the 2026-10 owner rule (spec
- *  §04 h2.29), a 4-key total order:
+ *  §04 h2.29 "Query ranking", progressive completion), a 4-key total
+ *  order:
  *
  *  1. tier desc — matchFragment strictness: exact prefix (3) >
  *     contiguous tail (2) > scattered (1) > anchorless ambient run (0,
@@ -417,21 +419,27 @@ export function resolveCompletionCasing(
  *     result). Strictness ALWAYS wins: no
  *     sessionCount difference crosses a tier boundary (the 1-count
  *     exact-prefix word outranks the 40-count scattered one).
- *  2. sessionCount desc WITHIN a tier — the more conversation-relevant
- *     word leftmost. RAW store counts only: the composite salience
- *     score still never sorts (membership/eviction only, see module
- *     doc); its sessionCount component is this key.
- *  3. shorter key first.
+ *  2. SHORTER KEY first WITHIN a tier — length outranks frequency: a
+ *     proper-prefix sibling always completes before its extension (the
+ *     shorter accept loses zero information; the next Tab reaches the
+ *     longer one) and ladders walk shortest-first.
+ *  3. sessionCount desc — EQUAL-LENGTH rivals only. RAW store counts
+ *     only: the composite salience score still never sorts
+ *     (membership/eviction only, see module doc); its sessionCount
+ *     component is this key.
  *  4. byte-lex on the lowercase key (keys are ASCII, so UTF-16 code-unit
  *     comparison equals byte order; locale-independent).
  *
  *  STABILITY CLAIM: two candidates swap ONLY when one's sessionCount
- *  strictly passes the other's within the same tier — same-tier churn is
- *  the owner-accepted cost; keys 1/3/4 are content-derived, so the menu
- *  stays stable while narrowing. Zero-fragment records share tier 0, so
- *  keys 2–4 order them (sessionCount desc → shorter → byte-lex).
- *  Retired history: the 2026-09 order was length → byte-lex with counts
- *  invisible. Exported for tests; rankMatches is the production caller. */
+ *  strictly passes the other's within the same tier AND the two keys
+ *  are equal length — equal-length churn is the owner-accepted cost;
+ *  keys 1/2/4 are content-derived, so the menu stays stable while
+ *  narrowing. Zero-fragment records share tier 0, so keys 2–4 order
+ *  them (shorter → sessionCount desc → byte-lex). Retired history: the
+ *  2026-09 order was length → byte-lex with counts invisible, and the
+ *  earlier 2026-10 frequency-first amendment (count desc before
+ *  length) is likewise superseded. Exported for tests; rankMatches is
+ *  the production caller. */
 export function compareRankedMatches(
   a: RankedSortRecord,
   b: RankedSortRecord,
@@ -493,10 +501,10 @@ function compareListing(a: RankedSortRecord, b: RankedSortRecord): number {
  * prefixRange deliberately throws RangeError on non-lowercase input
  * (caller-bug guard in store.ts). Returns at most `opts.limit` (default
  * 8) results in compareRankedMatches order (spec §04 h2.29: tier desc →
- * sessionCount desc within tier → shorter key → byte-lex; the composite
+ * shorter key → sessionCount desc → byte-lex; the composite
  * salience score never sorts — only its raw sessionCount component
- * does, within tiers; zero-fragment listings have no tiers and order by
- * sessionCount desc → shorter → byte-lex). Word `description` is `"session
+ * does, as the equal-length tie-break; zero-fragment listings have no
+ * tiers and order by sessionCount desc → shorter → byte-lex). Word `description` is `"session
  * x" + sessionCount` (ASCII x per the work-item contract, e.g. "session
  * x12"). `salience` is the exact unquantized value; `sessionCount` is
  * copied from the store entry and agrees with the description.
@@ -608,7 +616,7 @@ export function rankMatches(
         display: resolveCompletionCasing(c, rawFirst),
         description: `session x${c.sessionCount}`, // ASCII x per item contract
         salience: salience(c, ordinal), // exact unquantized value
-        sessionCount: c.sessionCount, // order key 2 within a tier (§04 h2.29)
+        sessionCount: c.sessionCount, // order key 3 — equal-length tie-break (§04 h2.29)
         // Match-path diagnostic only — the key must be OMITTED entirely
         // on the zero-fragment listing path (lower === ""), so public
         // tier === 0 unambiguously means an anchorless ambient match.

@@ -77,10 +77,13 @@
   first calibration's erratum (max 44 admitted nothing at 45).
 - Ranking: tier descending always (a 1-count exact-prefix word
   outranks a 40-count scattered match, which outranks any tier-0
-  anchorless run); sessionCount descending within
-  a tier (counts reorder ONLY same-tier neighbors); shorter key, then
-  byte-lex, as final ties; zero-fragment (`#` alone) = sessionCount
-  desc then ties; plural pruning still runs before the limit slice.
+  anchorless run); SHORTER KEY first within a tier — length outranks
+  frequency (04 "Query ranking", 2026-10 progressive completion: a
+  proper-prefix sibling completes before its extension, ladders walk
+  shortest-first); sessionCount descending as the EQUAL-LENGTH
+  tie-break, then byte-lex as the final tie; zero-fragment (`#` alone)
+  = sessionCount desc then ties; plural pruning still runs before the
+  limit slice.
 - Tier-0 anchorless fallback (2026-10): the contiguous run matches
   ANYWHERE in the key (`esk` → `zendesk`, `query` →
   `src/core/query.ts`); fragment floor 3; score 85 − 40·runStart/len
@@ -158,15 +161,19 @@
   show; zero candidates never render content (unclaimed: no row;
   claimed: blank row — Line claim below).
 - Suppression lapse (2026-10, spec 07): after explicit dismissal
-  (Escape / boundary / Tab-accept / Enter-submit), a tick that
+  (Escape / boundary / Enter-submit — Tab-accept is NOT in the seam
+  (07 h3.11): a Tab insertion arms NO suppression, its first
+  evaluation being the Post-Tab extension offer, below), a tick that
   OBSERVES the dismissed word occurrence gone — live buffer a prefix
   of the dismissed buffer no longer reaching the dismissed fragment's
   start (fully backspaced, empty buffer included) — releases
-  suppression: retyping the SAME word at that word start paints (the
-  Tab-completed FIRST word no longer wedges; mid-prompt recovery
-  needs no space deletion). The completed word still on screen and
-  same-word EXTENSION stay suppressed (rest-of-word + the immediate
-  post-Tab re-offer guard).
+  suppression: retyping the SAME word at that word start paints;
+  mid-prompt recovery needs no space deletion. The dismissed word
+  still on screen and same-word EXTENSION stay suppressed for the
+  rest of the word (rest-of-word, seam dismissals only). The former
+  "immediate post-Tab re-offer guard" is RETIRED (07 h3.11): since
+  Tab-accept no longer arms suppression, the post-Tab wedge class it
+  guarded no longer exists.
 - Line claim (2026-10, spec 07): the first non-empty display claims the
   row; from then on zero-candidate queries, disqualification and
   trailing-space closes, Escape/boundary dismissal, rest-of-word
