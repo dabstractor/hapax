@@ -945,6 +945,7 @@ export class IngestPipeline {
               properName: retryDraft.properName,
               casing: retryDraft.casing,
               rankGroup: retry,
+              ...(draft.path ? { path: true } : {}),
             };
             this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)
             continue;
@@ -990,6 +991,7 @@ export class IngestPipeline {
         properName: draft.properName,
         casing: draft.casing,
         rankGroup: result,
+        ...(draft.path ? { path: true } : {}),
       };
       this.#store.upsert(sighting); // upsert owns eviction (§06 h2.37)
     }

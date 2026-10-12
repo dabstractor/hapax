@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "Restore spec-pinned end-to-end behavior (BUG-001 series wiring + BUG-002 path display)",
-      "status": "Planned",
+      "status": "Ready",
       "description": "Both major bugs are cross-module wiring/regression defects where every unit test exercises pieces in isolation: BUG-001 (src/pi/index.ts:241-248 projects the enriched RunMember runs payload to bare keys, permanently disabling series-bigram enrichment — typed-word chain arming, series-first successor ordering, run-casing display, /acwords markers) and BUG-002 (path candidates display/insert their edge-trimmed key because store.ts upsert discards the verbatim display for casing-'lower' sightings and resolveCompletionCasing returns the trimmed key — losing leading '/', '../', '~' that spec 04 rule 4d and spec 09 integration item 7 pin). Fixes are confined, validated seams: the store already accepts RunMemberInput, and both UI paths render MatchResult.display faithfully. Each fix lands with mirrored-fixture updates and a new production-composition test layer (PRD recommendation) so the seam itself is exercised.",
       "milestones": [
         {
@@ -106,21 +106,21 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Path candidates display and insert verbatim edges (BUG-002)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Restore spec 04 rule 4d / spec 09 integration item 7 behavior: a path token's KEY is edge-trimmed for matching, but its DISPLAY preserves the original leading edge symbols ('/home/...', '../tools/build.mjs', '~/...'). The drafts already carry the verbatim display (segment.ts:795-806); the loss is at store.upsert's create branch (display discarded for casing-'lower' sightings) and resolveCompletionCasing's frequency branch (returns the trimmed key). Thread a path flag through Sighting, keep a verbatim pathDisplay on the record, and make the resolver return it — both UI paths then render/insert correctly with zero pi-layer changes.",
           "tasks": [
             {
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Preserve a verbatim path display: Sighting.path flag, Candidate.pathDisplay, resolver guard",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Thread draft.path through the Sighting build in ingest, seed and maintain a pathDisplay field on the store record, and make resolveCompletionCasing return it before any casing branch so paths always insert verbatim.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "Thread Sighting.path and store pathDisplay with a sticky-first merge policy",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug002-path-display.md §2/§8. CandidateDraft.path exists (src/core/segment.ts:739) but Sighting (src/core/types.ts:≈77-95) has no path field — draft.path dies at the ingest Sighting-build seam. store.ts upsert create branch: casing 'lower' → {capCount:0, lowerCount:1, capDisplay:\"\"} at :398 discards sighting.display. Candidate (types.ts:21-50) has NO display field by design ('completion-time resolution'); a pathDisplay FIELD on the record (not a #capForms-style side map) dies with eviction automatically and needs no serialization handling — none exists (RAM-only; reset()+replay rebuilds through normal upsert). Edge variants of one key merge (store.test.ts:200-220) → merge policy must be deterministic: STICKY-FIRST (first path sighting's display wins; never overwritten by later sightings) — matches 'recency never decides'. Corner: letter-initial paths can classify mid-cap; when both capDisplay and pathDisplay exist, pathDisplay wins (resolver order, S2).\n2. INPUT: CandidateDraft from expandCandidates path branch (segment.ts:795-806: key edge-trimmed lowercase, display=token.raw, path:true) — already correct and pinned by test/segment.test.ts:782-795 (draft-level only; unchanged by this work).\n3. LOGIC: (a) types.ts: add `path?: boolean` to Sighting (mirrors draft.path) and `pathDisplay?: string` to Candidate (optional, absent ≡ not-a-path — same style as structuralCapCount?). (b) src/pi/ingest.ts: pass draft.path through at the Sighting build site (one-line). (c) src/core/store.ts upsert: create branch — when sighting.path, seed pathDisplay: sighting.display alongside the lower-branch tallies; merge branch — never overwrite an existing pathDisplay (sticky-first); eviction/copy paths ({...c} in entries()) need no extra work. (d) TDD: extend test/store.test.ts path-merge describe (:200+): path sighting '/home/x/y' then bare 'home/x/y' then '../' variant → ONE entry, key 'home/x/y', pathDisplay === first display '/home/x/y'; non-path sightings leave pathDisplay undefined; the :209 pin `expect(c).not.toHaveProperty(\"display\")` stays true (pathDisplay is a different field) — extend it to also assert pathDisplay presence/absence. JSDoc rides. Mock nothing (pure core).\n4. OUTPUT: Store records carry pathDisplay iff the candidate ever arrived as a path sighting; consumed by P1.M2.T1.S2's resolver guard.\n5. DOCS: [Mode A] JSDoc on Sighting.path/Candidate.pathDisplay and upsert's tally switch documenting the sticky-first policy and why (edge-variant merge ambiguity). Record spec/06 record-shape drift (new field) for P2.M2.T2.S2 — do NOT edit spec/*.md.",
@@ -135,7 +135,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "resolveCompletionCasing pathDisplay-first guard + query-level regression battery",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M2.T1.S1"
@@ -155,14 +155,14 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "End-to-end verbatim path insertion through production composition",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Prove spec 09 integration item 7 end-to-end through the real index.ts factory: a path mentioned in conversation is offered on its first segment and Tab inserts the whole path WITH its leading edge symbols, on both display paths.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "index.test.ts e2e: ingest path mention → provider display + widget Tab insert keep the edges",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M2.T1.S2"

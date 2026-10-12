@@ -199,22 +199,105 @@ describe("path merge (rule 4d: key trimmed — edge variants are ONE entry)", ()
 
   it("edge-variant sightings of one path merge to one entry", () => {
     const s = new CandidateStore();
-    s.upsert(sighting({ key: KEY, display: `/${KEY}`, ordinal: 5 }));
-    s.upsert(sighting({ key: KEY, display: `${KEY}/`, ordinal: 9 }));
+    s.upsert(sighting({ key: KEY, display: `/${KEY}`, ordinal: 5, path: true }));
+    s.upsert(sighting({ key: KEY, display: `${KEY}/`, ordinal: 9, path: true }));
     expect(s.size).toBe(1); // leading-/ and trailing-/ map to ONE key
     const c = s.get(KEY)!;
     expect(c.sessionCount).toBe(2);
     expect(c.lastSeenOrdinal).toBe(9);
     expect(c.firstSeenOrdinal).toBe(5); // merge semantics keep the origin
     expect(c).not.toHaveProperty("display"); // completion-time resolution owns casing
+    // Sticky-first pathDisplay (BUG-002): the FIRST path sighting's
+    // edge-bearing display is seeded at create and never overwritten.
+    expect(c).toHaveProperty("pathDisplay", `/${KEY}`);
   });
 
   it("reverse insertion order still merges to one entry (trailing-/ first)", () => {
     const s = new CandidateStore();
-    s.upsert(sighting({ key: KEY, display: `${KEY}/`, ordinal: 3 }));
-    s.upsert(sighting({ key: KEY, display: `/${KEY}`, ordinal: 4 }));
+    s.upsert(sighting({ key: KEY, display: `${KEY}/`, ordinal: 3, path: true }));
+    s.upsert(sighting({ key: KEY, display: `/${KEY}`, ordinal: 4, path: true }));
     expect(s.size).toBe(1);
     expect(s.get(KEY)!.lastSeenOrdinal).toBe(4);
+  });
+
+  it("sticky-first pathDisplay across edge variants (BUG-002): the FIRST sighting's display wins", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "home/x/y", display: "/home/x/y", ordinal: 5, path: true }));
+    s.upsert(sighting({ key: "home/x/y", display: "home/x/y", ordinal: 9, path: true }));
+    s.upsert(sighting({ key: "home/x/y", display: "../x/y", ordinal: 11, path: true }));
+    expect(s.size).toBe(1); // edge variants merge into ONE entry
+    const c = s.get("home/x/y")!;
+    expect(c.pathDisplay).toBe("/home/x/y"); // first — never overwritten
+    expect(c.sessionCount).toBe(3);
+    expect(c.firstSeenOrdinal).toBe(5);
+    expect(c.lastSeenOrdinal).toBe(11);
+  });
+
+  it("sticky-first is order-deterministic, not symbol-preferential", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "home/x/y", display: "../x/y", ordinal: 5, path: true }));
+    s.upsert(sighting({ key: "home/x/y", display: "/home/x/y", ordinal: 9, path: true }));
+    expect(s.get("home/x/y")!.pathDisplay).toBe("../x/y");
+  });
+
+  it("non-path sightings leave pathDisplay undefined; a later path sighting never seeds it (create-only)", () => {
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "home/x/y", display: "home/x/y", ordinal: 5 }));
+    expect(s.get("home/x/y")).not.toHaveProperty("pathDisplay");
+    // The merge branch NEVER writes pathDisplay — create-only seeding.
+    // A word that first arrived as a word, then appears inside a path
+    // span, keeps no pathDisplay (it would insert bare; recorded for
+    // S2's drift notes — the resolver guard owns the decision there).
+    s.upsert(sighting({ key: "home/x/y", display: "/home/x/y", ordinal: 9, path: true }));
+    expect(s.get("home/x/y")).not.toHaveProperty("pathDisplay");
+  });
+
+  it("letter-initial path classifying mid-cap: capDisplay and pathDisplay coexist", () => {
+    // 'Home/User/x' classifies mid-cap (letter-initial path corner) —
+    // the create branch must seed pathDisplay in EVERY casing branch
+    // (pathDisplay outranks capDisplay at the resolver, P1.M2.T1.S2;
+    // here we pin that both fields survive on the record).
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({
+        key: "home/user/x",
+        display: "Home/User/x",
+        casing: "mid-cap",
+        ordinal: 3,
+        path: true,
+      }),
+    );
+    const c = s.get("home/user/x")!;
+    expect(c.capDisplay).toBe("Home/User/x");
+    expect(c.pathDisplay).toBe("Home/User/x");
+  });
+
+  it("lower-cased path sighting (the BUG-002 class) seeds pathDisplay alongside the zero tallies", () => {
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({
+        key: "home/x/y",
+        display: "/home/x/y",
+        casing: "lower",
+        path: true,
+      }),
+    );
+    // Exact-object (store-suite idiom): the 'lower' row discards
+    // sighting.display into the tallies — pathDisplay is the ONLY place
+    // the edge-bearing form survives.
+    expect(s.get("home/x/y")).toEqual({
+      key: "home/x/y",
+      capCount: 0,
+      lowerCount: 1,
+      capDisplay: "",
+      pathDisplay: "/home/x/y",
+      sessionCount: 1,
+      lastSeenOrdinal: 1,
+      firstSeenOrdinal: 1,
+      userTyped: false,
+      properName: false,
+      rankGroup: 2,
+    });
   });
 
   it("firstSeenOrdinal stays at the first sighting across edge variants", () => {

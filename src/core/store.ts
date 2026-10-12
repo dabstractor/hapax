@@ -399,6 +399,14 @@ export class CandidateStore {
       this.#map.set(sighting.key, {
         key: sighting.key,
         ...tallies,
+        // Sticky-first path display (BUG-002, rule 4d): the FIRST path
+        // sighting's edge-bearing form wins; later sightings never
+        // overwrite (edge variants of one trimmed key merge, and recency
+        // must never decide the insertion form). Seeded in EVERY casing
+        // branch via this spread — the letter-initial path corner
+        // ('Home/User/x') classifies mid-cap and needs pathDisplay too
+        // (it outranks capDisplay at the resolver, P1.M2.T1.S2).
+        ...(sighting.path ? { pathDisplay: sighting.display } : {}),
         sessionCount: 1,
         lastSeenOrdinal: sighting.ordinal,
         firstSeenOrdinal: sighting.ordinal,
@@ -428,6 +436,10 @@ export class CandidateStore {
     existing.lastSeenOrdinal = sighting.ordinal;
     existing.userTyped ||= sighting.fromUser; // sticky once true
     existing.properName ||= sighting.properName; // sticky once true
+    // pathDisplay, once set, is immutable (sticky-first, create-only
+    // seeding): the merge branch deliberately never writes it — later
+    // path sightings on an existing record leave the first form intact,
+    // and non-path sightings never set it.
     // A word first seen mid-frequency then seen rare keeps the better
     // (lower) group.
     existing.rankGroup = Math.min(existing.rankGroup, sighting.rankGroup) as RankGroup;

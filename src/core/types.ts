@@ -34,6 +34,13 @@ export interface Candidate {
    *  form. Only MID-CAP sightings compete (structural forms are purgeable
    *  evidence). Empty string when no valid capitalized sighting exists. */
   capDisplay: string;
+  /** Verbatim edge-bearing display (leading '/', '~', './', '../')
+   *  for path-class candidates (rule 4d): seeded by the first path
+   *  sighting, never overwritten. Absent ≡ the candidate never arrived
+   *  as a path sighting. Wins over capDisplay in completion-time
+   *  resolution when both exist (letter-initial paths can classify
+   *  mid-cap — P1.M2.T1.S2's resolver guard). */
+  pathDisplay?: string;
   /** INTERNAL (not spec'd): pending structural-cap contributions inside
    *  capCount, removed wholesale at the first lowercase sighting. Never
    *  serialized, never user-facing; undefined ≡ 0. */
@@ -86,6 +93,13 @@ export interface Sighting {
    *  walk (§04 h2.26). Required: every producer must classify. */
   casing: CasingClass;
   rankGroup: RankGroup;
+  /** true when this occurrence is a path-shaped candidate (rule 4d):
+   *  `display` carries the original edge symbols ('/…', '../…') while
+   *  `key` is the edge-trimmed lowercase form. The store seeds the
+   *  candidate's pathDisplay from the FIRST such sighting (sticky-first;
+   *  later sightings never overwrite — edge-variant merges must be
+   *  deterministic and recency never decides). Absent ≡ not a path. */
+  path?: boolean;
 }
 
 

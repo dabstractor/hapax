@@ -1496,7 +1496,9 @@ describe("index.ts e2e — series pipeline through the real factory (widget path
     buf.lines = [...buf.lines];
     buf.lines[buf.line] = row.slice(0, buf.col) + ch + row.slice(buf.col);
     buf.col += 1;
-    (editor.handleInput as (d: string) => unknown)(ch);
+    // editor is deliberately `unknown` at this helper's surface; the
+    // handleInput surface is the one structural member it relies on.
+    (editor as { handleInput: (d: string) => unknown }).handleInput(ch);
     for (let i = 0; i < 5; i++) await Promise.resolve(); // W1 microtask flush
   };
 
@@ -1557,7 +1559,7 @@ describe("index.ts e2e — series pipeline through the real factory (widget path
     // widgetStateOf's PUBLIC WidgetState omits hidden/items (they are the
     // internal view — insertHighlighted reads them through the same
     // structural cast; see test/widget.test.ts's harness).
-    const state = widgetStateOf(editor)! as {
+    const state = widgetStateOf(editor)! as unknown as {
       hidden: boolean;
       items: readonly { display: string }[];
     };
