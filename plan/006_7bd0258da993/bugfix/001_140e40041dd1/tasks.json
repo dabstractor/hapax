@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Series-bigram enrichment live through the production seam (BUG-001)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Wire the enriched runs payload at the single production feed in src/pi/index.ts (the only functional recordBigramRuns call site; session_tree rebuild and history restore reuse the same IngestPipeline instance and inherit the fix), un-shim the test pipelines that mirror the stale projection, and add index.ts-composition acceptance tests proving spec-pinned series behaviors (arming, ordering, run-casing display, /acwords markers) fire end-to-end.",
           "tasks": [
             {
@@ -59,7 +59,7 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Production-composition acceptance layer: series arming, ordering, run-casing display, /acwords markers (PRD recommendation)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Add the missing end-to-end test layer that composes index.ts's real factory (fakePi/fakeCtx from test/index.test.ts) instead of fabricated stores — the layer whose absence let BUG-001 ship — asserting the observable spec-pinned series behaviors on both display paths, plus the binding live TTY spot-check.",
               "subtasks": [
                 {
@@ -84,7 +84,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "Widget-path typed-arming e2e, /acwords '(series)' markers, and the live TTY spot-check",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S1"

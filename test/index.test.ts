@@ -46,7 +46,11 @@ import hapax, {
 } from "../src/pi/index.js";
 import type { AgentMessage } from "../src/pi/ingest.js";
 import { IngestPipeline } from "../src/pi/ingest.js";
-import { isWidgetWrapper, widgetOptsOf } from "../src/pi/widget.js";
+import {
+  isWidgetWrapper,
+  widgetOptsOf,
+  widgetStateOf,
+} from "../src/pi/widget.js";
 import { CandidateStore } from "../src/core/store.js";
 import { rankMatches } from "../src/core/query.js";
 import { writeDictFile } from "./helpers/dict-writer.js";
@@ -1406,5 +1410,191 @@ describe("index.ts e2e — series pipeline through the real factory (fallback pa
     // successor offer with prefix "".
     expect(r1).toBeNull();
     expect(r2?.prefix ?? "x").not.toBe("");
+  });
+});
+
+// ── index.ts e2e — series pipeline through the real factory (widget path) ──
+//
+// T2.S2 (bugfix 001_140e40041dd1) — the WIDGET branch of the production
+// composition. S1's describe above runs the FALLBACK path (no editor
+// factory → provider registration); whenever an editor factory is
+// present, index.ts takes the PRIMARY widget branch
+// (createWidgetEditorFactory — no provider is ever registered), which is
+// how hapax actually ships when pi's editor is compos-able. The PRD's
+// literal "The Fed" repro is 3-char shape-gate-dead before runs (see the
+// fallback describe's note) — "This Fed raised rates today" is the same
+// mechanics, buildable, and is the fixture here too.
+//
+// Typing uses the typeChar pattern from test/widget.test.ts: advance the
+// live buffer at the caret, press the char through the COMPOSED
+// editor's handleInput (enter-submit guard → widget proxy → inner), and
+// let the W1 microtask evaluate the NEW state — one char per tick;
+// typing bursts cancel in-flight queries.
+//
+// LIVE TTY EVIDENCE (spec/09 binding check — no mocks): tmux 3.7c
+// session, `pi -e <repo> --session-dir /tmp/hapax-tty-sessions` (this pi
+// build has no --no-session flag; a throwaway session dir gives the same
+// isolation). Seeded "This Fed raised rates today" + Enter, Ctrl+C to a
+// fresh prompt, then "T" "h" "i" "s" " " "F" sent one key per ~100 ms
+// (send-keys; no instrumentation was ever added — the behavior is
+// visible bare). capture-pane tail:
+//
+//     This Fed raised rates today
+//     (spinner) Working
+//     ------------------------------------------
+//     This F
+//     ------------------------------------------
+//     -> Fed                             session x1        INSERT
+//     glm-5.3 | high | 1.3% / 1.0M | MCP: 2 servers enabled
+//
+// The "-> Fed  session x1" chain-offer row IS the widget-path offer with
+// run casing, through the real pi + the real dict artifact. No spec/07
+// M2 drift at this granularity (arming + offer content match); finer
+// timing drift is P2.M2.T2.S2's to log.
+
+describe("index.ts e2e — series pipeline through the real factory (widget path)", () => {
+  /** Stateful inner editor factory — what pi hands over as
+   *  ctx.ui.getEditorComponent(). Factory-SHAPED (builds a fresh editor
+   *  per install) so index.ts's `!isWidgetWrapper(editorFactory)` branch
+   *  composes the widget around it; the buffer ref stays with the test
+   *  for the typeChar pattern. Members mirror the harness inner in
+   *  test/widget.test.ts (getLines/getCursor/setText/setCursorCol/
+   *  getText/render/handleInput). */
+  function statefulInnerEditor(): {
+    factory: () => Record<string, unknown>;
+    buf: { lines: string[]; line: number; col: number };
+  } {
+    const buf = { lines: [""] as string[], line: 0, col: 0 };
+    const factory = (): Record<string, unknown> => ({
+      handleInput: (d: string): string => d,
+      getLines: (): string[] => buf.lines,
+      getCursor: (): { line: number; col: number } => ({ line: buf.line, col: buf.col }),
+      setText: (t: string): void => {
+        buf.lines = t.split("\n");
+        buf.line = buf.lines.length - 1;
+        buf.col = (buf.lines[buf.lines.length - 1] ?? "").length; // parks at end
+      },
+      setCursorCol: (c: number): void => {
+        buf.col = c;
+      },
+      getText: (): string => buf.lines.join("\n"),
+      render: (): string[] => [buf.lines[buf.line] ?? ""],
+    });
+    return { factory, buf };
+  }
+
+  /** typeChar (test/widget.test.ts pattern): advance the live buffer at
+   *  the caret, press the char — forwarded → the W1 microtask evaluates
+   *  the NEW buffer — then flush the microtasks. One char per tick:
+   *  typing bursts cancel in-flight queries. */
+  const typeChar = async (
+    editor: unknown,
+    buf: { lines: string[]; line: number; col: number },
+    ch: string,
+  ): Promise<void> => {
+    const row = buf.lines[buf.line] ?? "";
+    buf.lines = [...buf.lines];
+    buf.lines[buf.line] = row.slice(0, buf.col) + ch + row.slice(buf.col);
+    buf.col += 1;
+    (editor.handleInput as (d: string) => unknown)(ch);
+    for (let i = 0; i < 5; i++) await Promise.resolve(); // W1 microtask flush
+  };
+
+  /** Widget-composed session: real factory + real ingest of the
+   *  capitalized-run corpus, gated on the FULL pipeline landing (the
+   *  /acwords successor row includes the series marker AND run casing —
+   *  the drain's runs tail lands after the word row, so mere presence
+   *  would race). Returns the composed editor, the live buffer, and the
+   *  production WidgetLayerOptions (chain access for the arming read). */
+  async function widgetSeriesSession(): Promise<{
+    editor: Record<string, unknown>;
+    buf: { lines: string[]; line: number; col: number };
+    chainState: () => { word: string } | null;
+    acwords: () => Promise<string>;
+  }> {
+    useDict();
+    enableDebug();
+    const ed = statefulInnerEditor();
+    const { handlers, ctx, registerCommand, setEditorComponent } = wired({
+      editorFactory: ed.factory,
+    });
+    startSession(handlers.get("session_start")!, ctx, "new");
+    await endMessage(
+      handlers.get("message_end")!,
+      ctx,
+      userMsg("This Fed raised rates today"),
+    );
+    const handler = acwordsHandler(registerCommand);
+    await vi.waitFor(
+      async () => {
+        const text = await dump(handler);
+        expect(text).toMatch(/this → Fed ×1 \(series\)/);
+      },
+      { timeout: 3000 },
+    );
+    // NO addAutocompleteProvider call exists on the widget branch — the
+    // display is the composed editor factory installed over ours.
+    const installed = setEditorComponent.mock.calls[0]![0] as (
+      tui: unknown,
+      theme: unknown,
+      keybindings: unknown,
+    ) => Record<string, unknown>;
+    const editor = installed({}, {}, {
+      matches: (data: string, action: string) =>
+        action === "tui.input.submit" && data === "\r",
+    });
+    const opts = widgetOptsOf(installed)!;
+    return {
+      editor,
+      buf: ed.buf,
+      chainState: () => opts.chain.state(),
+      acwords: () => dump(handler),
+    };
+  }
+
+  it("(a) typing 'This ' through the composed editor arms {word:'this'}; the next word-start tick paints the run-cased 'Fed' offer", async () => {
+    const { editor, buf, chainState } = await widgetSeriesSession();
+    // widgetStateOf's PUBLIC WidgetState omits hidden/items (they are the
+    // internal view — insertHighlighted reads them through the same
+    // structural cast; see test/widget.test.ts's harness).
+    const state = widgetStateOf(editor)! as {
+      hidden: boolean;
+      items: readonly { display: string }[];
+    };
+    // (No fresh-prompt flag assertion: a never-ticked editor's hidden flag
+    // is the false default — the meaningful observable is after real ticks.)
+
+    for (const ch of ["T", "h", "i", "s"]) await typeChar(editor, buf, ch);
+    // Mid-word: below-threshold/zero-match ticks keep the line closed.
+    expect(state.hidden).toBe(true);
+
+    // THE SPACE TICK: close-on-space AND typed-word arming (uppercase
+    // initial + a series successor exists + chain idle). Arming is
+    // pinned BEHAVIORALLY-INDEPENDENT of paint: read the chain state
+    // through the production opts (opts.chain IS index.ts's sessionChain).
+    await typeChar(editor, buf, " ");
+    expect(chainState()).toEqual({ word: "this" });
+
+    // THE OFFER: the armed consult branch paints at the NEXT word-start
+    // tick (today's landed timing — the arming site still closes: "never
+    // paint from the arming site"; the chain offer is INTENT so the
+    // hesitation gate never holds it). When P2.M1.T1.S1's space-tick
+    // paint lands, THIS assertion moves up to the space tick above —
+    // flip the comment, keep both expectations documented.
+    await typeChar(editor, buf, "F");
+    expect(state.hidden).toBe(false);
+    const displays = state.items.map((i) => i.display);
+    expect(displays).toEqual(["Fed"]); // run casing via nextDisplay (chain shims)
+    expect(displays.join(" ")).not.toMatch(/\bfed\b/); // never the bare key
+  });
+
+  it("(b) /acwords under the widget composition shows the (series) marker with run casing", async () => {
+    // The store is display-path-independent, but this session runs the
+    // WIDGET composition (editorFactory present) — the marker proof on
+    // the branch that actually ships (S1's case (a) ran the fallback).
+    const { acwords } = await widgetSeriesSession();
+    const text = await acwords();
+    expect(text).toMatch(/this → Fed ×1 \(series\)/); // marker + run casing
+    expect(text).not.toMatch(/this → fed ×/); // never the bare-key form
   });
 });
