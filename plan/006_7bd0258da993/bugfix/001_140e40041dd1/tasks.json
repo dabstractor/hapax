@@ -1,0 +1,251 @@
+{
+  "backlog": [
+    {
+      "type": "Phase",
+      "id": "P1",
+      "title": "Restore spec-pinned end-to-end behavior (BUG-001 series wiring + BUG-002 path display)",
+      "status": "Ready",
+      "description": "Both major bugs are cross-module wiring/regression defects where every unit test exercises pieces in isolation: BUG-001 (src/pi/index.ts:241-248 projects the enriched RunMember runs payload to bare keys, permanently disabling series-bigram enrichment — typed-word chain arming, series-first successor ordering, run-casing display, /acwords markers) and BUG-002 (path candidates display/insert their edge-trimmed key because store.ts upsert discards the verbatim display for casing-'lower' sightings and resolveCompletionCasing returns the trimmed key — losing leading '/', '../', '~' that spec 04 rule 4d and spec 09 integration item 7 pin). Fixes are confined, validated seams: the store already accepts RunMemberInput, and both UI paths render MatchResult.display faithfully. Each fix lands with mirrored-fixture updates and a new production-composition test layer (PRD recommendation) so the seam itself is exercised.",
+      "milestones": [
+        {
+          "type": "Milestone",
+          "id": "P1.M1",
+          "title": "Series-bigram enrichment live through the production seam (BUG-001)",
+          "status": "Planned",
+          "description": "Wire the enriched runs payload at the single production feed in src/pi/index.ts (the only functional recordBigramRuns call site; session_tree rebuild and history restore reuse the same IngestPipeline instance and inherit the fix), un-shim the test pipelines that mirror the stale projection, and add index.ts-composition acceptance tests proving spec-pinned series behaviors (arming, ordering, run-casing display, /acwords markers) fire end-to-end.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M1.T1",
+              "title": "Wire the enriched runs payload at the index.ts production seam and un-shim mirrored fixtures",
+              "status": "Planned",
+              "description": "Replace the transitional bare-key shim in session_start's IngestPipeline options with a direct pass-through of the runs payload, keeping the enableChaining conditional spread intact, and update the test fixtures that wire the same stale shim so the end-to-end seam is exercised with enriched data.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T1.S1",
+                  "title": "Replace the index.ts bare-key shim with the enriched runs pass-through",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.0", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: See plan/006_7bd0258da993/bugfix/001_140e40041dd1/architecture/bug001-series-pipeline.md §3 and system_context.md. The shim at src/pi/index.ts:241-248 reads `onAdmittedTokens: (runs) => sessionStore.recordBigramRuns(runs.map((r) => r.map((m) => m.key)))` under the comment block 'the shim stays until P1.M1.T2.S2' (:237-240 — that task is Complete). CandidateStore.recordBigramRuns (src/core/store.ts:735-744) ALREADY accepts `readonly (readonly (RunMemberInput | string)[])[]` and structurally accepts src/pi/ingest.ts's RunMember ({key, rawCasing, series?, chainOnly?}) — no store or ingest change needed.\n2. INPUT: The runs payload emitted once per message by IngestPipeline.processText (src/pi/ingest.ts:≈739-744, `this.#onAdmittedTokens?.(runs)`), whose members are RunMember objects carrying series marks from detectCapRuns.\n3. LOGIC: In src/pi/index.ts session_start, replace the projection with `onAdmittedTokens: (runs) => sessionStore.recordBigramRuns(runs)` — INSIDE the existing `...(config.enableChaining ? {...} : {})` spread (never move it out, or chaining-off sessions would record bigrams). Update the stale comment block (:237-249) to describe the enriched payload as live. Update ingest.ts's onAdmittedTokens JSDoc (:≈427-443) which still says the shim 'reproduces the pre-widening input byte-identically until P1.M1.T2.S2'. TDD: first extend test/index.test.ts:≈447-462 ('records adjacency runs...' spy test) to assert the spy receives ENRICHED members for a capitalized-run message (e.g. userMsg('Alpha Beta gamma') with dict-absent words → members like {key:'alpha',rawCasing:'Alpha',series:true} for the run pair; bare-string legacy feeders remain accepted by the store, so lowercase non-run members may stay objects with rawCasing and no series flag — assert RunMember shape, not strings). Note test/index.test.ts:462 currently pins `toEqual([[\"alpha\",\"beta\",\"gamma\"]])` and must flip to the enriched shape. No mocking beyond the existing fakePi/fakeCtx harness.\n4. OUTPUT: The production seam passes enriched RunMember runs; through a real 'The Fed raised rates' history the session store yields topSuccessors('the') entries with series:true and nextDisplay:'Fed'. Consumed by P1.M1.T1.S2, P1.M1.T2.S1, P1.M1.T2.S2, and the widget/provider consumers already shipped (provider.ts:604, widget.ts:1021, debug.ts:134-135).\n5. DOCS: [Mode A] JSDoc/comment updates ride with this change at index.ts:237-249 and ingest.ts:≈427-443 (remove the 'until P1.M1.T2.S2' transitional language). No README/config/API surface change here — README sync is P2.M2.T2.S1."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T1.S2",
+                  "title": "Un-shim the mirrored test pipelines and assert series fields through ingest",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": ["P1.M1.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.0", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug001-series-pipeline.md §5 tables every mirror. Shim mirrors to un-shim (pass `runs`/`lines` directly to recordBigramRuns): test/acceptance.test.ts makeChainPipeline (:737-742, used by the 'acceptance item 7 — chained completion' describe ≈813), test/adversarial-typing.test.ts:471-472, test/successors.test.ts makeSuccPipeline (:68-70), test/branch-purity.test.ts:309-310. Keep at least one legacy bare-string arm (test/bigrams.test.ts direct string[][] calls :16-41 and the flood test ≈238-240) — the store's string|RunMemberInput union is a pinned compat contract.\n2. INPUT: Enriched RunMember runs from the real IngestPipeline (P1.M1.T1.S1's seam), same payload these fixtures intercept via onAdmittedTokens.\n3. LOGIC: For each mirrored fixture, feed the un-projected payload and update assertions: with capitalized-run text ingested (e.g. 'National Renewable Energy Laboratory'), topSuccessors entries for run pairs must now carry series:true and nextDisplay; toEqual assertions that pinned bare {next,count} objects (e.g. acceptance.test.ts ≈822-827) must either include the new fields or switch to field-wise/partial matching — do not weaken count/order semantics. The PRD explicitly names acceptance.test.ts makeChainPipeline and adversarial-typing.test.ts:471; successors/branch-purity mirrors get the same treatment because they wire 'exactly like src/pi/index.ts's session_start' per their own comments. Mock nothing beyond what each harness already fakes (dictionary via helpers, no network).\n4. OUTPUT: Green suite where the ingest→store path is exercised with enriched payloads at four formerly-shimmed sites; regression coverage that a capitalized-run history produces series-marked successors THROUGH the pipeline (not just fabricated stores). Consumed by P1.M1.T2.S1's composition layer as the ingest-level baseline.\n5. DOCS: [Mode A] Update the stale 'index.ts's shim' comments at each fixture to state the payload passes through enriched. No user-facing/config/API change."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M1.T2",
+              "title": "Production-composition acceptance layer: series arming, ordering, run-casing display, /acwords markers (PRD recommendation)",
+              "status": "Planned",
+              "description": "Add the missing end-to-end test layer that composes index.ts's real factory (fakePi/fakeCtx from test/index.test.ts) instead of fabricated stores — the layer whose absence let BUG-001 ship — asserting the observable spec-pinned series behaviors on both display paths, plus the binding live TTY spot-check.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T2.S1",
+                  "title": "index.test.ts e2e: series marks, typed-word arming, and series-first ordering through the real factory",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": ["P1.M1.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.0", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug001-series-pipeline.md §6 documents the harness: test/index.test.ts imports the REAL default export, fakePi (:88-104), fakeCtx (:110-152 — default editorFactory undefined → fallback path; pass a factory for the widget branch), startSession (:169), endMessage (:177), settle() 420 ms (:≈205), useDict/writeConfig (:220/:249), dump/wordsSeenIn (:194/:203). Store/pipeline are observed through the registered provider and /acwords; no pipeline object is exported. spec anchors: spec/07 M2 'typing The offers Fed' + 'idle ──space closes a typed word whose first letter is UPPERCASE...──► armed(W)' (spec/07:690+); spec/06 'series successors rank above ordinary regardless of counts'.\n2. INPUT: The wired production seam from P1.M1.T1.S1 and the fixture updates from P1.M1.T1.S2.\n3. LOGIC: New describe in test/index.test.ts: session_start with a temp dict, endMessage(userMsg('The Fed raised rates today')) (dict-absent capitalized words), await settle(), then (a) via debug dump or the registered provider's closure-backed __hapaxLive() state, assert topSuccessors('the') contains {next:'fed', series:true, nextDisplay:'Fed'}; (b) drive the registered provider's getSuggestions at lines ['The '] cursor after the space — assert the chain armed (typed-word arming gate provider.ts:597-608) and the returned top item is 'Fed' (series-first, run casing); (c) an ordinary higher-count successor does not outrank the series successor (seed a second message with repeated ordinary 'the market' pairs; series 'the→fed' still tops). Mock only the pi shell (fakePi/fakeCtx) and dictionary file — that is the harness's existing isolation.\n4. OUTPUT: A passing production-seam suite proving series arming/ordering/display on the fallback path through index.ts composition; the template P1.M2.T2.S1 reuses for paths and P1.M1.T2.S2 extends to the widget path.\n5. DOCS: [Mode A] The new describe's banner comment cites spec 07 M2 / spec 06 series ranking and states its purpose (production-wiring layer — 'both majors survived because every suite builds its own store'). No user-facing change."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M1.T2.S2",
+                  "title": "Widget-path typed-arming e2e, /acwords '(series)' markers, and the live TTY spot-check",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": ["P1.M1.T2.S1"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.0", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug001-series-pipeline.md §6 + repo-governance-and-conventions.md §3. fakeCtx({editorFactory}) exercises the widget branch (index.ts:281-336 createWidgetEditorFactory); the widget typing harness pattern is makeInsertHarness + typeChar (test/widget.test.ts:≈860, :2000-2008 — advance the live buffer at the caret, press the char, the W1 microtask evaluates the NEW state). /acwords markers live at src/pi/debug.ts:134-135 (`${s.series ? \" (series)\" : \"\"}`). Live TTY technique (BINDING for UI-layer changes, spec/09 'Live verification technique'): pi --no-session in a tmux pane, tmux send-keys ONE char at a time with 0.08–0.12 s sleeps (bursts cancel in-flight queries), capture-pane asserts; instrumentation via appendFileSync behind an env var is sanctioned in src/pi/provider.ts, removed before commit.\n2. INPUT: P1.M1.T2.S1's composition suite and the enriched seam from P1.M1.T1.S1.\n3. LOGIC: (a) Extend the index.test.ts composition layer: fakeCtx with a widget editor factory; after ingesting 'The Fed raised rates today', type 'T','h','e',' ' through the composed editor one tick each — assert the chain state is {word:'the'} and (post-BUG-003-fix expectation noted below) the offer paints; at minimum assert arming fires and the successor set contains run-cased 'Fed' via chainShim semantics (nextDisplay). Timing expectation: before P2.M1.T1.S1 lands, the widget paints on the NEXT tick — write the assertion to match whichever of P1/P2 has landed; keep the arming assertion independent of paint timing. (b) /acwords e2e: enableDebug config, ingest a capitalized run, dump() output must show 'Fed ×1 (series)' with run casing (the marker that never renders under the shim). (c) Live TTY spot-check per the binding technique: ephemeral pi in tmux with hapax loaded, seed 'The Fed raised rates today' as a user message, Ctrl+C, then type 'The ' one key at a time and capture-pane: the 'Fed' offer must appear (widget path). Record the capture result in the test file comment or run notes. Mock nothing in the live check — it exists precisely to verify the real stack.\n4. OUTPUT: Widget-path e2e proof + /acwords marker proof + live verification evidence; completes the acceptance layer the PRD recommends.\n5. DOCS: [Mode A] Run-note/comment updates ride with the tests. If the live check surfaces drift vs spec 07 M2 wording, record it for P2.M2.T2.S2's drift report — do NOT edit spec/*.md (read-only for pipeline agents)."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Milestone",
+          "id": "P1.M2",
+          "title": "Path candidates display and insert verbatim edges (BUG-002)",
+          "status": "Planned",
+          "description": "Restore spec 04 rule 4d / spec 09 integration item 7 behavior: a path token's KEY is edge-trimmed for matching, but its DISPLAY preserves the original leading edge symbols ('/home/...', '../tools/build.mjs', '~/...'). The drafts already carry the verbatim display (segment.ts:795-806); the loss is at store.upsert's create branch (display discarded for casing-'lower' sightings) and resolveCompletionCasing's frequency branch (returns the trimmed key). Thread a path flag through Sighting, keep a verbatim pathDisplay on the record, and make the resolver return it — both UI paths then render/insert correctly with zero pi-layer changes.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P1.M2.T1",
+              "title": "Preserve a verbatim path display: Sighting.path flag, Candidate.pathDisplay, resolver guard",
+              "status": "Planned",
+              "description": "Thread draft.path through the Sighting build in ingest, seed and maintain a pathDisplay field on the store record, and make resolveCompletionCasing return it before any casing branch so paths always insert verbatim.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T1.S1",
+                  "title": "Thread Sighting.path and store pathDisplay with a sticky-first merge policy",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.1", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug002-path-display.md §2/§8. CandidateDraft.path exists (src/core/segment.ts:739) but Sighting (src/core/types.ts:≈77-95) has no path field — draft.path dies at the ingest Sighting-build seam. store.ts upsert create branch: casing 'lower' → {capCount:0, lowerCount:1, capDisplay:\"\"} at :398 discards sighting.display. Candidate (types.ts:21-50) has NO display field by design ('completion-time resolution'); a pathDisplay FIELD on the record (not a #capForms-style side map) dies with eviction automatically and needs no serialization handling — none exists (RAM-only; reset()+replay rebuilds through normal upsert). Edge variants of one key merge (store.test.ts:200-220) → merge policy must be deterministic: STICKY-FIRST (first path sighting's display wins; never overwritten by later sightings) — matches 'recency never decides'. Corner: letter-initial paths can classify mid-cap; when both capDisplay and pathDisplay exist, pathDisplay wins (resolver order, S2).\n2. INPUT: CandidateDraft from expandCandidates path branch (segment.ts:795-806: key edge-trimmed lowercase, display=token.raw, path:true) — already correct and pinned by test/segment.test.ts:782-795 (draft-level only; unchanged by this work).\n3. LOGIC: (a) types.ts: add `path?: boolean` to Sighting (mirrors draft.path) and `pathDisplay?: string` to Candidate (optional, absent ≡ not-a-path — same style as structuralCapCount?). (b) src/pi/ingest.ts: pass draft.path through at the Sighting build site (one-line). (c) src/core/store.ts upsert: create branch — when sighting.path, seed pathDisplay: sighting.display alongside the lower-branch tallies; merge branch — never overwrite an existing pathDisplay (sticky-first); eviction/copy paths ({...c} in entries()) need no extra work. (d) TDD: extend test/store.test.ts path-merge describe (:200+): path sighting '/home/x/y' then bare 'home/x/y' then '../' variant → ONE entry, key 'home/x/y', pathDisplay === first display '/home/x/y'; non-path sightings leave pathDisplay undefined; the :209 pin `expect(c).not.toHaveProperty(\"display\")` stays true (pathDisplay is a different field) — extend it to also assert pathDisplay presence/absence. JSDoc rides. Mock nothing (pure core).\n4. OUTPUT: Store records carry pathDisplay iff the candidate ever arrived as a path sighting; consumed by P1.M2.T1.S2's resolver guard.\n5. DOCS: [Mode A] JSDoc on Sighting.path/Candidate.pathDisplay and upsert's tally switch documenting the sticky-first policy and why (edge-variant merge ambiguity). Record spec/06 record-shape drift (new field) for P2.M2.T2.S2 — do NOT edit spec/*.md."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T1.S2",
+                  "title": "resolveCompletionCasing pathDisplay-first guard + query-level regression battery",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": ["P1.M2.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.1", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug002-path-display.md §3/§6. resolveCompletionCasing (src/core/query.ts:386-408) takes Pick<Candidate,'key'|'capCount'|'lowerCount'|'capDisplay'> — widen the Pick with 'pathDisplay'. Both construction sites pass rawFirst (anchored :616; tier-0 ≈:647-670) — unchanged. Design decision (documented, spec-consistent): pathDisplay wins ALWAYS, including a typed CAPITAL first letter — a leading '/', '~', '.' is not a letter, and spec/04 Case handling (:713-714 'paths and technical literals always insert verbatim') outranks the Shift-preserve letter-case rule; this supersedes the current battery comment/doc claiming a typed capital still capitalizes a path key (update that comment + pin).\n2. INPUT: Candidates carrying pathDisplay from P1.M2.T1.S1; existing casing battery helpers in test/query.test.ts (put(s,key,lower,cap,{display,casing}) / sighting({...}), describe at :1541+).\n3. LOGIC: Add the guard as the FIRST line of resolveCompletionCasing: `if (c.pathDisplay !== undefined) return c.pathDisplay;`. Update the function doc (paths insert verbatim regardless of fragment casing; frequency branch untouched for non-paths). TDD in test/query.test.ts: (a) regression — store built from a path sighting '/home/dustin/projects/hapax/src/core/query.ts': rankMatches(s,'ho')[0].display === '/home/dustin/projects/hapax/src/core/query.ts' (leading '/' kept) while .key stays trimmed; (b) '../tools/build.mjs' sighting → rankMatches(s,'to') display '../tools/build.mjs'; (c) '~' variant; (d) capital-fragment pin — rankMatches at 'Ho' (rawFirst uppercase) still returns the verbatim pathDisplay; (e) extend the :1576-1582 battery with the edge-bearing case; (f) non-path candidates with capDisplay behave exactly as before (pathDisplay undefined → guard inert — existing battery must pass unchanged). The store can be fabricated via sighting({key:'home/...', display:'/home/...', path:true}) for resolver-level cases. Mock nothing (pure core).\n4. OUTPUT: rankMatches returns edge-preserving display for path candidates on every branch; provider (provider.ts:668-671 value/label = m.display; liveKeyByValue already display-keyed with the arming comment anticipating edge-bearing displays) and widget insert (widget.ts:1390/1449 splices display) need ZERO changes. Consumed by P1.M2.T2.S1.\n5. DOCS: [Mode A] Update resolveCompletionCasing's doc block + the superseded battery comment; record the spec/04 h2.32 verbatim-precedence clarification as drift for P2.M2.T2.S2 — do NOT edit spec/*.md."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P1.M2.T2",
+              "title": "End-to-end verbatim path insertion through production composition",
+              "status": "Planned",
+              "description": "Prove spec 09 integration item 7 end-to-end through the real index.ts factory: a path mentioned in conversation is offered on its first segment and Tab inserts the whole path WITH its leading edge symbols, on both display paths.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P1.M2.T2.S1",
+                  "title": "index.test.ts e2e: ingest path mention → provider display + widget Tab insert keep the edges",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": ["P1.M2.T1.S2"],
+                  "prd_selectors": ["h2.0", "h2.2", "h2.2/h3.1", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug002-path-display.md §4 + repo-governance-and-conventions.md §3. Provider fallback path consumes MatchResult.display at provider.ts:668-671; widget Tab-insert splices display at widget.ts:1390/:1449 (span replacement is computed from the typed fragment, so a longer display is fine). Harness: P1.M1.T2.S1's fakePi/fakeCtx composition layer (spec 09 item 7: 'sr → src/core/query.ts, Tab inserts the whole path; an absolute path inserts with its leading /').\n2. INPUT: Enriched store behavior from P1.M2.T1.S1/.S2 (pathDisplay populated and surfaced by the resolver); the composition layer template from P1.M1.T2.S1.\n3. LOGIC: New cases in the index.test.ts composition describe: (a) fallback path — endMessage an assistant message mentioning '/home/dustin/projects/hapax/src/core/query.ts' and '../tools/build.mjs', settle, then the registered provider's getSuggestions at 'ho' must return display '/home/...' (edges kept) and at 'to' display '../tools/build.mjs'; apply via the provider's real applyCompletion (editor-sim.ts editorApplyCompletion deletion math) and assert the buffer contains the edge-bearing form. (b) widget path — fakeCtx({editorFactory}) composition: type 'ho', Tab → the editor buffer holds '/home/dustin/projects/hapax/src/core/query.ts' (the exact PRD reproduction). Keep one assertion that matching still happens on the trimmed key ('ho' matches though the key is 'home/...'). Mock only the pi shell + dict file, per the harness.\n4. OUTPUT: Production-seam proof of verbatim path insertion on both display paths — closes BUG-002 per the PRD's fix recommendation.\n5. DOCS: [Mode A] Test banner cites spec 09 integration item 7. README path-completion claims sync happens in P2.M2.T2.S1 (Mode B)."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "Phase",
+      "id": "P2",
+      "title": "Minor fixes and changeset hardening (BUG-003 widget timing, BUG-004 PIN + fallback battery, docs sync)",
+      "status": "Ready",
+      "description": "The two minor PRD items plus the mandatory changeset-level documentation sweep. BUG-003: the widget path's typed-word arming site deliberately never paints, so the spec 07 M2 zero-char offer lands one input event late — fix paints the (a)-offer at the arming tick with chain-intent semantics, verified live per the binding TTY technique, with the spec 07 visibility-step-3 conflict recorded as drift (spec/*.md is read-only for pipeline agents). BUG-004: deliver the P4.M1.T2.S1 PIN at provider.ts's applyCompletion consumption site (verified: pi-tui never re-requests after an apply) plus the missing fallback-path post-accept battery. The final task syncs README.md and compiles the spec-drift report for the reconciling interactive session.",
+      "milestones": [
+        {
+          "type": "Milestone",
+          "id": "P2.M1",
+          "title": "Widget typed-word arming paints the zero-char offer at the space tick (BUG-003)",
+          "status": "Planned",
+          "description": "Make the armed(W) zero-char successor offer visible at the word start itself on the widget path — at the trailing-space arming tick instead of one input event later — without violating the hesitation gate, double-painting, grant one-shot semantics, or the close-on-space contract for non-arming cases.",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P2.M1.T1",
+              "title": "Paint the zero-char offer at the arming tick (factor the (a)-offer helper)",
+              "status": "Planned",
+              "description": "Factor the armed-branch (a) zero-char offer body into a reusable helper and invoke it from the typed-word arming site after chain.arm + grant.reset, painting with chain-intent semantics when successors exist and falling through to today's closeWith otherwise; flip the two pinning tests and add the machine-level timing test; live-verify per the binding technique.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T1.S1",
+                  "title": "zeroCharOffer helper + arming-site paint + flip the timing pins",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": ["P1.M1.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.3", "h2.3/h3.2", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug003-004-widget-provider.md §1 (full arming-site quote widget.ts:984-1028; the (a) offer :889-906; paint ladder :931-956; chainShim :≈683-694; closeWith :713-716; W1 microtask tick :1597-1607). Key facts: at the space tick evaluate() sees the POST-keystroke buffer 'The ' (microtask deferral), so an arming-site paint lands in the same render frame; chain paints are INTENT (chainIntent bypasses the R5 hesitation gate — keep that character or fast typing silently holds the paint); sig-identical repain is idempotent (no double-paint); paint() clears closeAt/suppression (consistent whether or not closeWith ran first); grant.tick() BEFORE any paint per the armed branch's discipline — ''→'f' is not a new word so the one-shot survives; the line claim arms on the paint itself. NAME COLLISION WARNING: shipped code contains an UNRELATED 'BUG-003' label (2026-10 start-0 suppression fix, widget.ts ≈:640-660) — do not conflate in comments/commits. Spec tension: spec/07 visibility-machine step 3 (:336-337 'trailing space → hidden') is what the current code honors; spec/07 M2 armed(W) says 'offer the successors of W immediately' — record the step-3 armed-exception as drift, do NOT edit spec.\n2. INPUT: Enriched series data reachable through the production seam (P1.M1.T1.S1 — dependency for end-to-end reachability; the unit tests fabricate enriched stores directly via recordBigramRuns([{key,rawCasing,series:true},...]) as today, e.g. widget.test.ts seedTheFedStore :2391-2406).\n3. LOGIC: (a) Factor the (a)-branch body into a helper beside the consult (e.g. zeroCharOffer(word, now): boolean — build succ from deps.store.topSuccessors(word).slice(0, deps.config.maxSuggestions), map chainShim, set chainIntent = true, run the same first-paint/idempotent/debounce/parkSwap ladder, return whether it painted); the armed branch's (a) branch calls the same helper (no behavior change there). (b) At the arming site (:1013-1027): after deps.chain?.arm?.(...) + grant.reset(), grant.tick() then call the helper; if it painted, return state() WITHOUT closeWith(now); otherwise fall through to closeWith(now) exactly as today (zero successors / inert chain). (c) Update the widget.ts:1005-1007 comment that forbids exactly this ('never paint from the arming site') to describe the new contract. (d) TDD: flip the two pins — test/widget-visibility.test.ts close-on-space typed-arming visibility case (visible must be TRUE at the 'The ' tick) and test/widget.test.ts typed-arming battery assertions/comments (they may currently encode next-tick timing; the composed harness's restoreReady resolve made the settle-wake mask this — see research §1.2.3); add a machine-level test: fake timers, menuDelayMs high (e.g. 5000), editor 'The ' cursor 4, single onInput() → visible === true with the successor set (intent bypass proves no hesitation-gate hold), then an identical-buffer second tick does not duplicate/close (sig-identical idempotent), then typing 'F' narrows (branch (b)) without close+reopen. Mock: the existing fakeEditor/machine harness (widget-visibility.test.ts:59-100) and makeInsertHarness/typeChar (widget.test.ts:≈860/:2000-2008).\n4. OUTPUT: Spec 07 M2 'before the user types anything' timing on the widget path for typed-word arming; Tab-accept-originated arms unchanged (already correct); the fallback path intentionally unchanged (pi-tui owns the menu; no paint site of its own).\n5. DOCS: [Mode A] Comment updates at the arming site and helper ride with the code. The spec 07 step-3 armed-exception wording is compiled by P2.M2.T2.S2 as drift — never edit spec/*.md here."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M1.T1.S2",
+                  "title": "Live TTY verification of the space-tick paint (binding technique)",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P2.M1.T1.S1", "P1.M1.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.3", "h2.3/h3.2", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug003-004-widget-provider.md §1.2.3 + repo-governance-and-conventions.md §2. AGENTS.md: 'UI-layer changes need live TTY verification, not unit tests alone.' Technique (spec/09, binding): pi --no-session in a tmux pane (needs a real TTY; piping stdout exits silently); seed the store by submitting ONE short user message containing a capitalized run (e.g. 'The Fed raised rates today'), Ctrl+C the turn; drive keys via tmux send-keys ONE CHAR AT A TIME with 0.08–0.12 s sleeps (a whole-string burst cancels in-flight autocomplete queries — a known false-conclusion source); assert via tmux capture-pane; temporary appendFileSync instrumentation behind an env var in src/pi/provider.ts is sanctioned and MUST be removed before commit.\n2. INPUT: The P2.M1.T1.S1 widget fix + the P1.M1.T1.S1 production series wiring (typed-word arming must be live-reachable — the gate needs series successors in the real store).\n3. LOGIC: Run the live sequence: type 'T','h','e',' ' (paced); capture-pane immediately after the space keystroke (before any further key) — the 'Fed' offer line must be visible AT the space tick; then type 'F' — the narrowed offer persists (no flicker/close+reopen); Escape behaves (dismiss + forward, invariant 1). If the real-stack behavior diverges from the unit harness (e.g. the W1 microtask or render timing differs in a real TTY), STOP and record the divergence for the drift report rather than forcing the test — the live result is ground truth per spec 09.\n4. OUTPUT: A capture-pane-verified timing proof recorded in the run notes (test file comment or plan/006_7bd0258da993/bugfix/001_140e40041dd1/architecture/), plus any observed drift routed to P2.M2.T2.S2. Instrumentation (if used) provably removed (git diff clean of appendFileSync).\n5. DOCS: [Mode A] Run-note rides with the verification; drift items go to P2.M2.T2.S2."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "Milestone",
+          "id": "P2.M2",
+          "title": "Fallback-path PIN and post-accept battery (BUG-004) + changeset-level documentation sync",
+          "status": "Planned",
+          "description": "Deliver the missing P4.M1.T2.S1 artifacts: the PIN at provider.ts's applyCompletion consumption site recording the verified pi-tui no-re-request contract, and the fallback-path post-accept battery. Then the mandatory final documentation task: sync README.md's changeset-level claims and compile the spec-drift report (spec/*.md is read-only for pipeline agents — drift is recorded, an interactive session reconciles).",
+          "tasks": [
+            {
+              "type": "Task",
+              "id": "P2.M2.T1",
+              "title": "PIN the no-re-request contract at the consumption site + fallback post-accept battery",
+              "status": "Planned",
+              "description": "Complete task P4.M1.T2.S1's outstanding deliverables: a PIN comment inside provider.ts's applyCompletion override documenting that pi-tui issues no autocomplete re-request after an apply (fallback degrades to no extension re-offer — acceptable per spec 07's own conditional), plus a request-by-request fallback-path battery proving no self-request, clean post-accept state, and correct next-keystroke offers.",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T1.S1",
+                  "title": "provider.ts PIN comment for the no-re-request-after-apply contract",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": [],
+                  "prd_selectors": ["h2.0", "h2.3", "h2.3/h3.3", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug003-004-widget-provider.md §2. Verified evidence (current node_modules dist): pi-tui editor.js menu-accept Tab site ≈:538-552 (applyCompletion → cancelAutocomplete → return; NO requestAutocomplete) and forced single-item fast path ≈:1895-1906 (applyCompletion → requestRender → return; NO cancelAutocomplete — PRD's 'both call cancelAutocomplete' is imprecise; the load-bearing shared fact is neither re-requests). Existing PIN style template: provider.ts:≈313-331 (getSuggestions force-read PIN citing editor.js line + pi-tui version + 're-verify on upgrade'). Confirm the installed version from node_modules/@earendil-works/pi-tui/package.json before writing so the PIN cites it.\n2. INPUT: The verified contract above; the applyCompletion override at src/pi/provider.ts:679-735 (the consumption site where an apply's results are handled — chain re-arm + grant reset — and where a re-request would be observable).\n3. LOGIC: Add a PIN comment inside the applyCompletion override (before the delegated return): pi-tui issues NO request after an apply (cite BOTH call sites with line refs and the pi-tui version); therefore the fallback path's post-Tab extension offer (spec 07 'Post-Tab extension offer' fallback paragraph) and the zero-char chain offer surface only on the NEXT keystroke's request — the degradation spec 07 explicitly accepts; re-verify both call sites on any pi-tui upgrade. No behavior change — comment-only plus the matching spec-07 re-verify-list bullet drafted for the drift report. TDD not applicable to a comment; the battery in S2 pins the behavior the comment describes.\n4. OUTPUT: The PIN at the consumption site (grep 're-request|re-offer|post-applyCompletion' in src/pi/provider.ts now matches); a drafted fifth re-verify-list bullet ('no re-request after applyCompletion (both apply call sites...)'; update 'Four'→'Five' intro wording) delivered as drift content to P2.M2.T2.S2.\n5. DOCS: [Mode A] The PIN comment IS the doc; spec/07 h3.15 mirror is recorded as drift (P2.M2.T2.S2) because pipeline agents must not edit spec/*.md."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T1.S2",
+                  "title": "Fallback-path post-accept battery (provider + display layers)",
+                  "status": "Planned",
+                  "story_points": 2,
+                  "dependencies": ["P2.M2.T1.S1"],
+                  "prd_selectors": ["h2.0", "h2.3", "h2.3/h3.3", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug003-004-widget-provider.md §2.4. Harnesses: test/provider-live.test.ts (createHapaxProvider over a vi.fn() mock current; fabricated Sightings; one request = one getSuggestions call), test/chaining-gating.test.ts (:79-115 editingCurrent + suggest(p,lines,line,col,opts) — the closest request-by-request fallback harness), test/provider-display.test.ts (display layer under fake timers; emissions recorded as value sequences; editorApplyCompletion/prefixIsAnchorSafe from test/helpers/editor-sim.ts), adversarial-typing.test.ts Probe C (drives the chain through the provider's REAL applyCompletion with visible buffer splices). There is NO way (and no need) to make pi-tui re-request in these doubles — that is precisely the pinned contract.\n2. INPUT: The PIN from P2.M2.T1.S1; provider API: getSuggestions(lines,line,col,opts), applyCompletion(lines,cursorLine,cursorCol,item,prefix), __hapaxLive()/__hapaxKey() introspection; editorApplyCompletion for pi-tui's prefix.length deletion math.\n3. LOGIC: New battery (provider-live.test.ts style, chained via editingCurrent): seed a ladder store (implement/implements/implementation); getSuggestions at 'implem' (force:false) → accept the top item via the provider's REAL applyCompletion (arming side effect fires, buffer visibly spliced with editorApplyCompletion math); then assert (a) the provider NEVER self-requests (no getSuggestions activity without an explicit new call — document as the pin), (b) the NEXT explicit getSuggestions at the post-apply cursor (the next keystroke's request, chaining-gating's suggest() shape) returns the post-Tab extension offer set with a prefixIsAnchor-safe prefix, (c) clean state: chain armed at the FINAL accepted word, grant reset exactly once per arm, __hapaxLive()/__hapaxKey() consistent, no Tab-accept rest-of-word suppression armed (spec 07 h3.11: unconditional). Display-layer companion (provider-display.test.ts style, fake timers): after the apply, the display layer emits NOTHING until the next getSuggestions (no pending swap, no timer promotion — emissions sequence recorded empty). Mock: the vi.fn() current provider + fabricated stores only; no editor.\n4. OUTPUT: The h3.11 fallback-path battery the PRD found missing (today only the widget-path battery exists, widget.test.ts ≈:2556); a pi-tui upgrade that adds post-apply re-requests now trips a documented, pinned contract.\n5. DOCS: [Mode A] Battery banner cites spec 07 h3.11 fallback paragraph + the PIN location from P2.M2.T1.S1. No user-facing change."
+                }
+              ]
+            },
+            {
+              "type": "Task",
+              "id": "P2.M2.T2",
+              "title": "Sync changeset-level documentation",
+              "status": "Planned",
+              "description": "Final changeset-level sweep (Mode B): update README.md so its feature claims match the restored end-to-end behavior, and compile the spec-drift report enumerating every spec/*.md delta this changeset implies (spec is read-only for pipeline agents; the report is the reconciling interactive session's worklist).",
+              "subtasks": [
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T2.S1",
+                  "title": "README.md: sync series-chaining, path-completion, and display-path claims",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T2.S1", "P2.M1.T1.S1", "P2.M1.T1.S2", "P2.M2.T1.S1", "P2.M2.T1.S2"],
+                  "prd_selectors": ["h2.0", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: repo-governance-and-conventions.md §3. README.md (721 lines) sections affected: series chaining (:126, :177-204 'Chained Tab completion', :206-222 post-Tab extension ladder, :229-235 series bigrams — claims identical behavior on both display paths), path completion (Features bullets ≈:47-72, Usage :255), widget vs fallback (:9-16, :95-114), and the post-delta-note precedent (:22-30) for recording this fix round. README is editable by pipeline agents (only spec/*.md is frozen); spec/SPEC.md remains the source of truth — README never overrides it.\n2. INPUT: The completed fixes from all 11 dependency subtasks: series behaviors now live end-to-end (typed-word arming fires, series-first ordering, run-casing display, /acwords markers), paths insert verbatim edges on both paths, the widget zero-char offer paints at the space tick, and the fallback-path PIN/battery exist.\n3. LOGIC: Verify each README claim against actual behavior and update: (a) if any series/path wording overstated the shipped state before this changeset, correct it to describe the now-restored behavior (the claims were written for the intended design — after this changeset they should be TRUE, so likely only the post-delta note is needed); (b) add a dated post-delta note in the established style (:22-30 precedent) recording: series enrichment now wired at the production seam, path display verbatim edges, widget arming-tick paint, fallback PIN; (c) check the Debug section (:588) still matches /acwords output incl. (series) markers. Keep edits minimal and factual; `npm run check` unaffected (markdown only).\n4. OUTPUT: README.md consistent with shipped behavior, with a dated changeset note; consumed by the human/interactive session reviewing this changeset.\n5. DOCS: [Mode B] This IS the changeset-level docs task — no further doc work follows."
+                },
+                {
+                  "type": "Subtask",
+                  "id": "P2.M2.T2.S2",
+                  "title": "Compile the spec-drift report for the reconciling interactive session",
+                  "status": "Planned",
+                  "story_points": 1,
+                  "dependencies": ["P1.M1.T1.S1", "P1.M1.T1.S2", "P1.M1.T2.S1", "P1.M1.T2.S2", "P1.M2.T1.S1", "P1.M2.T1.S2", "P1.M2.T2.S1", "P2.M1.T1.S1", "P2.M1.T1.S2", "P2.M2.T1.S1", "P2.M2.T1.S2"],
+                  "prd_selectors": ["h2.0", "h2.4", "h2.5"],
+                  "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: system_context.md 'Binding governance' + repo-governance-and-conventions.md §1. spec/SPEC.md:14-27: implementation pipeline agents MUST NOT touch spec/*.md — record drift; a later interactive session reconciles (and the same policy makes that reconciliation MANDATORY for the interactive session: 'a change that ships code without the matching spec edit is incomplete'). Bugs 001/002 restore already-spec-pinned behavior (no spec delta); BUG-003 and BUG-004 imply spec deltas that must be compiled, not applied.\n2. INPUT: Drift items emitted by the dependency subtasks: (a) P2.M1.T1.* — spec/07 visibility-machine step 3 (:336-337 'trailing space → hidden') needs an armed-typed-word exception (proposed wording from the fix subtask; spec/07 M2 armed(W) 'immediately' is the governing requirement); (b) P2.M2.T1.S1 — spec/07 re-verify list ('pi-tui contract dependencies') gains a fifth bullet 'no re-request after applyCompletion (both apply call sites...)' and its 'Four'→'Five' intro; (c) P1.M2.T1.* — spec/06 candidate-record shape gains pathDisplay (sticky-first merge policy wording); spec/04 h2.32 resolver rules gain the verbatim-path precedence clarification (path display outranks the Shift-preserve rule; supersedes the old battery comment); (d) any live-TTY divergences from P2.M1.T1.S2.\n3. LOGIC: Write plan/006_7bd0258da993/bugfix/001_140e40041dd1/architecture/spec-drift.md: one section per spec file, each drift item with (file, section title, current text quote, proposed text, the code that now depends on it, and the originating subtask ID). Verify every proposed edit against the CURRENT working-tree spec text (spec files had concurrent edits land in commits 955de50/bb1e99b — line numbers may have shifted; quote by section title). Do NOT edit any spec/*.md file.\n4. OUTPUT: The complete, actionable reconciliation worklist; the interactive session applies it to bring spec and code into the agreement AGENTS.md requires.\n5. DOCS: [Mode B] This report is itself the doc deliverable; it closes the changeset's documentation obligations."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

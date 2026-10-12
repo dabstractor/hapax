@@ -1,0 +1,74 @@
+# Bug Fix Requirements
+
+## Overview
+Creative end-to-end PRD validation of hapax against spec/01–09. Ran the full shipped gauntlet first (tsc clean; vitest 40 files, 1286 passed / 1 skipped / 0 failed), then probed beyond the suite with ~15 purpose-built harnesses: real-dictionary ingest of adversarial corpora (secrets, unicode, paths, literals, chunk boundaries), query tier/threshold/ranking/plural-pruning/exact-equal/tier-0 arithmetic, occurrence-context admission (structural-cap vs mid-cap vs run-member, memo-hazard orderings), casing tallies and twin suppression, bigram window-break battery, capitalized-run series, live widget key-sequence simulations (ladder walk, Escape/boundary pass-through, carousel, line claim, suppression lapse, stock contexts, trigger mode, hesitation gate), the fallback provider (auto-open, close-on-space, forced single-item, trigger regexes, post-Tab offer), the full index.ts session lifecycle (resume, session_tree branch rebuild purity, shutdown/restart), config layer merge/clamp/reserved-char e2e, and pi-tui contract verification against the real dist editor source. Most spec-pinned behaviors are implemented and heavily tested. Two major cross-module bugs escaped the suite because every test exercises the pieces in isolation: (1) the production wiring in index.ts still projects the ingest runs payload to bare keys, permanently disabling the completed capitalized-series enrichment (typed-word chain arming, series-first ordering, run-casing display, /acwords markers) — the acceptance tests wire the same stale shim, so they enshrine the dead state; (2) path candidates complete with their edge-trimmed key, losing the leading '/' and '../' that spec 04 rule 4d and integration item 7 explicitly preserve — a regression the tally-migration commit acknowledged as temporary and never finished. Two minor items: the zero-char successor offer renders one keystroke late for typed-word arming on the widget path, and the P4.M1.T2.S1 fallback-path PIN/battery deliverables are absent despite the task being marked Complete. No security, persistence, crash, or never-hijack violations found: secrets are rejected per spec (the separator-bearing PAN residue is spec-accepted), no files are written outside the sanctioned /tmp debug dump, key handling and Tab semantics behave exactly as spec'd in every simulated sequence, and branch-hygiene/session lifecycle semantics held under adversarial replay. Note: concurrent (non-mine) uncommitted working-tree edits were observed during the hunt reconciling docs/spec comments (README perf row, spec 09 ordering text, test hygiene); they do not touch either major bug, and both bugs were re-verified against the current tree.
+
+
+## Critical Issues (Must Fix)
+Issues that prevent core functionality from working.
+
+None.
+
+
+## Major Issues (Should Fix)
+Issues that significantly impact user experience or functionality.
+
+### Issue 1: Series-bigram enrichment is stripped at the production wiring seam — typed-word chain arming, series-first successor ordering, and run-casing display never activate in a real session
+**Severity**: Major
+**ID**: BUG-001
+**Location**: src/pi/index.ts:243-246
+
+**Description**:
+The store's recordBigramRuns() accepts enriched RunMember payloads ({key, rawCasing, series}) and correctly marks series bigrams with nextDisplay run casing; the provider and widget correctly consume Successor.series/nextDisplay. But the ONLY production feed — src/pi/index.ts:243-246 — still passes the legacy transitional shim: onAdmittedTokens: (runs) => sessionStore.recordBigramRuns(runs.map((r) => r.map((m) => m.key))), which projects every run member to a bare lowercase string. recordBigramRuns only marks a pair as series when BOTH members are enriched objects with series === true (src/core/store.ts recordBigramRuns isSeries check), so in production no bigram is ever series-marked and nextDisplay is never set. Consequences, all spec-pinned behaviors that are dead end-to-end: (1) Typed capitalized-word chain arming never fires — provider.ts:604 and widget.ts:1021 gate arming on topSuccessors(word).some((s) => s.series), which is always false, so per spec 07 h2.53 / goals 11-13 ('typing The offers Fed', 'idle ──space closes a typed word whose first letter is UPPERCASE and whose lowercase key has series successors──► armed(W)') never happens on either display path. (2) Series-first successor ordering (spec 06 h3.6/h3.7, 07 h2.53: 'series successors rank above ordinary successors regardless of counts') never applies — a higher-count ordinary successor outranks a series successor. (3) Run-casing display for chain-only members (spec 04 Capitalized runs: 'remembering the run casing of both words for offer display') is dead — a chain-only top-band successor (never stored as a word) displays/inserts its lowercase key via the `|| s.next` fallback. (4) /acwords '(series)' markers (spec 08, debug.ts:134-135) never render. The completed backlog tasks P1.M1.T2.S2, P1.M2.T2.S1 and P1.M2.T2.S2 all depend on this wire, and index.ts's own comment (:239) says the shim stays only 'until P1.M1.T2.S2' — which is marked Complete. Every test fabricates the enriched store directly (e.g. test/widget.test.ts seedTheFedStore calls recordBigramRuns([{key,rawCasing,series:true},...]) itself; test/acceptance.test.ts makeChainPipeline uses the same bare-key shim as index.ts and its assertions show topSuccessors entries WITHOUT series fields), so no end-to-end test exercises the production seam. Verified live through the real index.ts factory with a 'The Fed raised rates today' history: typing 'The ' leaves the chain state null and no offer paints; with the enriched payload wired, the chain arms and the zero-char offer 'Fed' paints.
+
+**Steps to Reproduce**:
+1) New CandidateStore + IngestPipeline({store, dictionary: shipped dict, onAdmittedTokens: (runs) => store.recordBigramRuns(runs.map(r => r.map(m => m.key)))}) — exactly what src/pi/index.ts:243-246 wires. 2) p.onMessageEnd({role:'user', content:'The Fed raised rates today'}); await p.flush(). 3) store.topSuccessors('the') returns [{next:'fed',count:1}] — no series flag, no nextDisplay. 4) Feeding the unprojected `runs` payload instead yields [{next:'fed',count:1,series:true,nextDisplay:'Fed'}]. 5) Through the real widget composition (createWidgetEditorFactory) typing 'The ' arms nothing with the shim wiring (chain state null, line hidden) and arms {word:'the'} + paints 'Fed' with the enriched wiring. Fix: pass the enriched runs payload in index.ts (sessionStore.recordBigramRuns(runs)) and update the test fixtures (acceptance.test.ts makeChainPipeline, adversarial-typing.test.ts:471) that mirror the stale shim.
+
+### Issue 2: Path candidates display/insert their edge-trimmed key — the leading '/', '../' and '~' are lost on completion
+**Severity**: Major
+**ID**: BUG-002
+**Location**: src/core/query.ts:resolveCompletionCasing (frequency branch returns c.key; no path handling) with src/core/store.ts upsert (display dropped for lower-casing sightings)
+
+**Description**:
+Spec 04 rule 4d pins that a path token's KEY is edge-trimmed but its DISPLAY preserves the original leading edge symbols ('/home/... inserts with its leading slash, ../tools/build.mjs with its ../'; spec 04 Case handling: 'paths and technical literals always insert verbatim'; spec 09 integration item 7: 'an absolute path inserts with its leading /'). segment.ts's expandCandidates still builds path drafts with display = token.raw (edges preserved) and a path:true flag. But the casing-tally migration (commit 7b28849, which deleted Candidate.display) made the store drop the sighting display for every lower-casing sighting (store.ts upsert create branch: casing 'lower' → capCount 0, lowerCount 1, capDisplay ""), and paths always classify as 'lower' (raw[0] is '/', '.', or '~' — never an uppercase letter). query.ts's resolveCompletionCasing then returns the trimmed KEY on the frequency branch, and nothing downstream consumes the draft's path flag for display. Result: Tab-inserting an absolute or ../-relative path strips its leading edge symbols on BOTH display paths. The migration commit message itself admits the regression ('absolute paths surface as their trimmed key for the moment ... the edge-decorated insertion form belongs to the upcoming display subtask') — that subtask never landed. The segment-level test (test/segment.test.ts:782 'key trims the leading /, display keeps it') only pins the DRAFT, so the store→query drop went uncaught.
+
+**Steps to Reproduce**:
+1) Ingest an assistant message mentioning '/home/dustin/projects/hapax/src/core/query.ts' and '../tools/build.mjs' through IngestPipeline with the shipped dictionary. 2) Store holds keys 'home/dustin/projects/hapax/src/core/query.ts' (capDisplay "") and 'tools/build.mjs'. 3) rankMatches(store, 'ho') returns display 'home/dustin/projects/hapax/src/core/query.ts' — no leading slash; rankMatches(store, 'to') returns 'tools/build.mjs' — no '../'. 4) On the widget path: type 'ho', press Tab — the editor buffer becomes 'home/dustin/projects/hapax/src/core/query.ts' (verified via a createWidgetEditorFactory simulation). Spec 09 item 7 requires '/home/...' to insert WITH the leading slash.
+
+
+## Minor Issues (Nice to Fix)
+Small improvements or polish items.
+
+### Issue 1: Zero-char successor offer paints one input event late for typed-word arming on the widget path
+**Severity**: Minor
+**ID**: BUG-003
+**Location**: src/pi/widget.ts (trailing-space typed-word arming site in evaluate(), R3 close branch)
+
+**Description**:
+Spec 07 M2 state machine: 'armed(W): word start (cursor at the empty next word, ZERO typed chars) → offer the successors of W immediately ... the top series successor is the top result before the user types anything.' On the widget path, when the chain arms from TYPED-word arming (the close-on-space site), the arming happens inside the trailing-space close branch which deliberately never paints (widget.ts: 'Arm + STILL closeWith(now) ... the armed branch's zero-char offer answers the NEXT word-start tick — never paint from the arming site'). So after typing 'The ' the user sees nothing; the offer appears only on the NEXT input event (e.g. after typing 'F', as a filtered offer). For Tab-accept-originated arms the timing is correct (the arm runs after the post-Tab evaluation, so the separating space's tick hits the armed branch and paints immediately), so this affects only the typed-word arming flow — which is currently unreachable in production anyway due to BUG-001 (series gate dead). The provider/fallback path cannot do better (pi-tui only requests on keystrokes), but the widget path evaluates on its own input clock and could paint at the arming tick.
+
+**Steps to Reproduce**:
+With an enriched (series-wired) store containing the bigram the→fed: compose the widget over a simulated editor, type 'T','h','e',' ' (one tick each). After the space tick the chain state is {word:'the'} but machine.getState().visible === false and currentSet is empty; the offer only paints after the next input event (typing 'F' shows Fed). Spec expects the offer visible at the word start itself (after the space, before any further typing).
+
+### Issue 2: P4.M1.T2.S1 fallback-path deliverables missing though marked Complete: no PIN of the verified 'no re-request after applyCompletion' contract and no fallback-path post-accept battery
+**Severity**: Minor
+**ID**: BUG-004
+**Location**: src/pi/provider.ts (missing PIN/degradation documentation at the display-provider consumption site)
+
+**Description**:
+Spec 07 h3.11's fallback-path paragraph requires: 'the offer rides the same post-applyCompletion re-request ... if pi-tui does not re-request after an apply, the fallback path degrades to no re-offer — verify at implementation and PIN at the consumption site.' Task P4.M1.T2.S1 (marked Complete in the backlog) additionally required documenting the degradation and a fallback battery for post-accept no-suppression. Verification against the real pi-tui editor (node_modules/@earendil-works/pi-tui/dist/components/editor.js ~:545 and ~:1906) shows BOTH apply paths call cancelAutocomplete() and return without re-requesting — so the fallback path today degrades to no extension offer (acceptable per spec), but provider.ts contains no PIN or consumption-site comment recording this contract (grep for 're-request'/'re-offer'/post-applyCompletion finds nothing), and no fallback-path post-accept battery exists (the h3.11 battery lives only in test/widget.test.ts). Risk: a pi-tui upgrade that adds a post-apply re-request would silently change fallback-path behavior with no pinned contract to re-verify (spec 07 h3.15's re-verify list is the intended home).
+
+**Steps to Reproduce**:
+1) Read node_modules/@earendil-works/pi-tui/dist/components/editor.js at the two applyCompletion call sites (menu-accept Tab and the force&&explicitTab single-item fast path): both set state, call cancelAutocomplete(), and return — no requestAutocomplete call. 2) grep -n 're-request\|re-offer\|post-applyCompletion' src/pi/provider.ts → no matches (no PIN). 3) grep the test suite for a fallback-path post-Tab/post-accept battery → only test/widget.test.ts has the h3.11 battery (widget path).
+
+## Testing Summary
+- Total bugs found: 4
+- Critical: 0
+- Major: 2
+- Minor: 2
+
+## Recommendations
+- Fix BUG-001 by passing the enriched runs payload in src/pi/index.ts (sessionStore.recordBigramRuns(runs)) and updating the mirrored test wirings (test/acceptance.test.ts makeChainPipeline, test/adversarial-typing.test.ts) so the end-to-end seam is exercised, then add one index.ts-level test that a capitalized-run history yields topSuccessors entries with series:true + nextDisplay and that typing 'The ' arms the chain on the widget.
+- Fix BUG-002 by preserving a verbatim display form for path-class candidates (e.g. store the raw-edge display alongside the tallies for path drafts — the CandidateDraft.path flag already exists — and have resolveCompletionCasing/query return it on the lowercase branch), and add a query-level regression test that rankMatches over an ingested '/home/...' path displays/inserts with the leading slash and '../' paths with their '../'.
+- Add the P4.M1.T2.S1 PIN to provider.ts documenting the verified pi-tui contract (no autocomplete re-request after applyCompletion; fallback degrades to no extension offer) and mirror it in the spec 07 h3.15 re-verify list plus a small fallback-path post-accept test.
+- Consider an end-to-end 'production wiring' test layer that composes index.ts's session_start with a fake ctx and asserts observable behaviors (series arming, path display) rather than fabricating stores — both majors survived precisely because every suite builds its own store.
