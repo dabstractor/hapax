@@ -1242,7 +1242,7 @@ describe("1-char ambient open (live-editor threshold clamp)", () => {
 // ── Typed-word arming × visibility interplay (spec 07 h2.53, P1.M2.T2.S2) ───
 
 describe("close-on-space typed-arming × visibility (P1.M2.T2.S2)", () => {
-  it("'The ' arms through an explicit-dismissal suppression, and the next tick's chain offer paints (intent bypass)", async () => {
+  it("'The ' arms through an explicit-dismissal suppression, and the offer paints AT the arming tick (intent bypass)", async () => {
     // A stateful chain double: arm() through the REAL seam must flip
     // state() — a fixed-null state() would make the armed branch dead.
     let word: string | null = null;
@@ -1270,21 +1270,119 @@ describe("close-on-space typed-arming × visibility (P1.M2.T2.S2)", () => {
     machine.onDismissed(true);
     expect(machine.getState().suppressUntilWordStart).toBe(true);
 
-    // The space closes "The": match-null close flavor → TYPED-WORD
+    // The space tick ARMS and PAINTS the zero-char offer in the SAME
+    // tick (bug-hunt BUG-003): match-null close flavor → TYPED-WORD
     // ARMING under the suppression (arming is independent of it), and
-    // the line still closes.
+    // the chain offer paints THROUGH the suppression in the same render
+    // frame (chain offers are intent — the R4 bypass; the arming site
+    // paints instead of closeWith), series run casing via nextDisplay.
+    // The spec-07 step-3 "trailing space → hidden" tension is recorded
+    // for P2.M2.T2.S2's drift report.
     editor.set("The ", 4);
     machine.onInput();
     expect(chain.arm).toHaveBeenCalledWith("the"); // armed while suppressed
-    expect(machine.getState().visible).toBe(false); // arm-and-close
+    expect(machine.getState().visible).toBe(true); // arm-and-PAINT, same tick
+    expect(machine.getState().currentSet.map((i) => i.display)).toEqual([
+      "Fed",
+    ]);
 
-    // Next word-start tick: the chain offer paints THROUGH the
-    // suppression (chain offers are intent — the R4 bypass), series run
-    // casing via nextDisplay.
+    // Identical-buffer second tick: sig-identical idempotent refresh —
+    // still visible, same set, no close, no duplicate paint (the armed
+    // branch's (a) consult re-answers; the offer does not flicker).
     machine.onInput();
     const st = machine.getState();
     expect(st.visible).toBe(true);
     expect(st.currentSet.map((i) => i.display)).toEqual(["Fed"]);
     expect(machine.painted().map((m) => m.key)).toEqual(["fed"]);
+  });
+});
+
+// ── zero-char offer at the typed-arming tick (bug-hunt BUG-003) ─────────────
+
+describe("zero-char offer at the typed-arming tick (bug-hunt BUG-003)", () => {
+  it("menuDelayMs 5000: the 'The ' space tick paints the series-first offer in the SAME tick (chain intent bypasses hesitation); identical ticks stay idempotent; 'F' narrows without close+reopen", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      // Stateful chain double (same shape as the suppression test
+      // above): arm() through the REAL seam must flip state().
+      let word: string | null = null;
+      const chain = {
+        state: vi.fn((): { word: string } | null =>
+          word === null ? null : { word },
+        ),
+        arm: vi.fn((w: string) => {
+          word = w;
+        }),
+        reset: vi.fn(() => {
+          word = null;
+        }),
+      } as unknown as ChainMachine;
+      // seedTheFedStore-equivalent (widget.test.ts): the→market ×5
+      // ordinary + the the→Fed series pair — series still leads, run
+      // casing via nextDisplay; market's display resolves from its
+      // stored capDisplay.
+      const store = new CandidateStore();
+      store.upsert({
+        key: "market",
+        display: "Market",
+        ordinal: 1,
+        fromUser: false,
+        properName: true,
+        casing: "mid-cap",
+        rankGroup: 0,
+      });
+      for (let i = 0; i < 5; i++) store.recordBigramRuns([["the", "market"]]);
+      store.recordBigramRuns([
+        [
+          { key: "the", rawCasing: "The", series: true },
+          { key: "fed", rawCasing: "Fed", series: true },
+        ],
+      ]);
+      const { machine, editor } = await build({
+        store,
+        chain,
+        config: { menuDelayMs: 5000 }, // R5 armed high: only intent paints
+      });
+
+      // STEP 1 — the space tick paints. The arming site is an INTENT
+      // paint (chainIntent), so the 5-second hesitation window does not
+      // hold it despite the prior-tick gap: the offer exists before the
+      // user types anything (spec 07 M2 armed(W)). Series first, run
+      // casing; no closeWith fired (the space tick IS the offer).
+      editor.set("The ", 4);
+      machine.onInput();
+      expect(chain.arm).toHaveBeenCalledWith("the");
+      expect(machine.getState().visible).toBe(true);
+      expect(machine.getState().currentSet.map((i) => i.display)).toEqual([
+        "Fed",
+        "Market",
+      ]);
+
+      // STEP 2 — identical-buffer second tick: sig-identical idempotent
+      // refresh — still visible, same set, no close, no duplicate paint.
+      machine.onInput();
+      expect(machine.getState().visible).toBe(true);
+      expect(machine.getState().currentSet.map((i) => i.display)).toEqual([
+        "Fed",
+        "Market",
+      ]);
+      expect(machine.painted().map((m) => m.key)).toEqual(["fed", "market"]);
+
+      // STEP 3 — typing 'F' narrows via (b) membership filtering. Inside
+      // the R6 swap window the narrowed set PARKS (flicker hysteresis —
+      // narrowing never closes+reopens); the line never closes and
+      // currentSet never goes empty across the transition.
+      editor.set("The F", 5);
+      machine.onInput();
+      expect(machine.getState().visible).toBe(true);
+      expect(machine.getState().currentSet.length).toBeGreaterThan(0);
+      // The parked swap lands at the window edge (fake timers).
+      await vi.advanceTimersByTimeAsync(100); // debounceMs default
+      const st = machine.getState();
+      expect(st.visible).toBe(true);
+      expect(st.currentSet.map((i) => i.display)).toEqual(["Fed"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

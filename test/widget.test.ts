@@ -2406,7 +2406,7 @@ const seedTheFedStore = (): CandidateStore => {
 };
 
 describe("widget typed-word arming + series-first offers (spec 07 h2.53, P1.M2.T2.S2)", () => {
-  it("'The ' arms the chain and still closes; the NEXT word-start tick offers [Fed, Market] — series first in run casing", async () => {
+  it("'The ' arms the chain and paints [Fed, Market] AT the arming tick — series first in run casing", async () => {
     const chain = statefulChain();
     const grant: ChainGrantTracker = { tick: vi.fn(() => false), reset: vi.fn() };
     const h = makeInsertHarness({ lines: ["The "], line: 0, col: 4 }, {
@@ -2419,12 +2419,14 @@ describe("widget typed-word arming + series-first offers (spec 07 h2.53, P1.M2.T
     await flushPaint();
     expect(chain.arm).toHaveBeenCalledWith("the"); // armed by typing…
     expect(grant.reset).toHaveBeenCalled(); // …with a fresh one-shot grant
-    // Series-first offer: the arming tick closes (arm-and-close — pinned
-    // deterministically at the machine level in widget-visibility.test.ts),
-    // and by the end of the flush the armed zero-char offer has painted —
-    // Fed (run casing) before Market, whether the offer landed on this
-    // tick or the settle-wake's re-evaluation (W1 ordering is not the
-    // contract here; the SET is).
+    // Series-first offer, painted AT the arming tick (bug-hunt BUG-003):
+    // the space tick IS the word start — the W1 microtask evaluates the
+    // post-keystroke buffer ("The ") in the same render frame, the
+    // arming site arms + ticks the grant + paints the offer, and the
+    // line does NOT close (no closeWith when the offer painted). Same-
+    // tick visibility is the pinned contract (machine-level pins:
+    // widget-visibility.test.ts); Fed (run casing) before Market.
+    expect(h.machine.getState().visible).toBe(true); // SAME-TICK paint
     expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
       "Fed",
       "Market",
@@ -2438,9 +2440,9 @@ describe("widget typed-word arming + series-first offers (spec 07 h2.53, P1.M2.T
       store: seedTheFedStore(),
       config: cfg({ maxSuggestions: 1 }),
     });
-    h.press("x"); // arm tick ("The ")
+    h.press("x"); // arm tick ("The ") — arms AND paints (bug-hunt BUG-003)
     await flushPaint();
-    h.press("x"); // offer tick
+    h.press("x"); // identical-buffer tick — idempotent refresh
     await flushPaint();
     expect(chain.state()).toEqual({ word: "the" });
     expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
@@ -2504,7 +2506,7 @@ describe("widget typed-word arming + series-first offers (spec 07 h2.53, P1.M2.T
     await flushPaint();
     expect(chain.arm).toHaveBeenCalledWith("the"); // consult, never store.get
     expect(store.get("fed")).toBeUndefined(); // chain-only: no word entry
-    h.press("x"); // offer tick
+    h.press("x"); // identical-buffer tick — idempotent refresh
     await flushPaint();
     expect(h.machine.getState().currentSet.map((i) => i.display)).toEqual([
       "Fed", // nextDisplay run casing even with no word entry to consult
@@ -2517,7 +2519,7 @@ describe("widget typed-word arming + series-first offers (spec 07 h2.53, P1.M2.T
       chain,
       store: seedTheFedStore(),
     });
-    h.press("x"); // arm tick
+    h.press("x"); // arm tick — arms AND paints (bug-hunt BUG-003)
     await flushPaint();
     expect(chain.state()).toEqual({ word: "the" });
     // The user types the offered word through: buffer "The Fed" — frag

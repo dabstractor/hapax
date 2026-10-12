@@ -207,7 +207,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T1.S1",
                   "title": "zeroCharOffer helper + arming-site paint + flip the timing pins",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1"

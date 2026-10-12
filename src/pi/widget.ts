@@ -758,6 +758,61 @@ export function createVisibilityMachine(
     }, debounceMs);
   };
 
+  /** Zero-char successor offer (bug-hunt BUG-003, plan 006): the armed
+   *  branch's (a) body — series-first successor build + the R6/R7 paint
+   *  ladder — factored so TWO call sites share it verbatim: the armed
+   *  branch's (a) case (cursor at an empty word start; behavior
+   *  unchanged) and the typed-word ARMING site in the R3 close branch
+   *  (the space tick paints the offer in the same render frame — spec 07
+   *  M2 armed(W): "the top series successor is the top result before the
+   *  user types anything").
+   *
+   *  Sets chainIntent (R5 intent — a chain paint bypasses hesitation).
+   *  This character is LOAD-BEARING at the arming site: the site sits in
+   *  the R3 close branch, below the R5 normal-path paint, and a paint
+   *  without intent would be silently held by menuDelayMs during fast
+   *  typing. It paints through paint() (suppression bypass, R4 — chain
+   *  offers are intent), so both sites get the exact armed-branch
+   *  behavior.
+   *
+   *  Returns:
+   *   - "painted" — the set is on screen (first paint, idempotent
+   *     refresh, or elapsed-window change);
+   *   - "parked"  — the line is open, the set differs, and the R6 swap
+   *     window holds it (pendingSet armed; it lands at the window edge);
+   *   - "empty"   — zero successors: NOTHING was touched (no paint, no
+   *     park — the menu never renders with zero candidates). The armed
+   *     branch treats this as its (c) disqualification; the arming site
+   *     falls through to closeWith exactly as before the fix. */
+  const zeroCharOffer = (
+    word: string,
+    now: number,
+  ): "painted" | "parked" | "empty" => {
+    const succ = deps.store
+      .topSuccessors(word)
+      .slice(0, deps.config.maxSuggestions);
+    if (succ.length === 0) return "empty"; // never paint an empty set
+    const items = succ.map(chainShim);
+    chainIntent = true; // R5 intent: a chain paint bypasses hesitation
+    const sig = items.map((m) => m.display).join("\u0000");
+    // Same ladder as the armed branch: first paint / idempotent refresh /
+    // elapsed debounce / parkSwap. Suppression bypass is chain-intent (R4).
+    if (!visible) {
+      paint(items, sig, now);
+      return "painted";
+    }
+    if (sig === displayedSig) {
+      paint(items, sig, now);
+      return "painted";
+    }
+    if (now - lastPaintAt >= debounceMs) {
+      paint(items, sig, now);
+      return "painted";
+    }
+    parkSwap(items);
+    return "parked"; // lands at the window edge — not painted this tick
+  };
+
   /** Rule 2 — re-evaluate on a gate wake (settle or deadline). NOT a
    *  keystroke: the input clock is untouched; the decision simply runs
    *  again against the LIVE editor state (its repaint surfaces at the
@@ -896,14 +951,16 @@ export function createVisibilityMachine(
           // set IS the rank order (series items in run casing via
           // chainShim), never re-sorted here. The cap applies to the
           // COMBINED series+ordinary list, so a full cap never pushes
-          // series entries out of the offered top-N. One chain items
-          // set at the composition site below — never mixed with the
-          // ambient query.
-          succ.push(
-            ...deps.store
-              .topSuccessors(armed.word)
-              .slice(0, deps.config.maxSuggestions),
-          );
+          // series entries out of the offered top-N. The offer body
+          // (successor build + paint ladder) is the shared
+          // zeroCharOffer helper (bug-hunt BUG-003, plan 006): the
+          // typed-word ARMING site in the R3 close branch below paints
+          // the same offer at the space tick itself — one chain items
+          // set, never mixed with the ambient query.
+          if (zeroCharOffer(armed.word, now) !== "empty") return state();
+          // "empty" = zero successors (evicted since the arm) → the
+          // (c) disqualification below, byte-for-byte the pre-refactor
+          // path (chain reset + normal-path fall-through).
         } else {
           // (b) Typed fragment at a WORD START (BUG-005 guard, provider
           // parity): a fragment glued to the trigger char or punctuation
@@ -929,6 +986,8 @@ export function createVisibilityMachine(
         }
   
         if (succ.length > 0) {
+          // Paint ladder — (b)-only since the zero-char case moved into
+          // zeroCharOffer. Same ladder, same order semantics.
           const items = succ.map(chainShim);
           chainIntent = true; // R5 intent: a chain paint bypasses hesitation
           const sig = items.map((m) => m.display).join("\u0000");
@@ -1002,14 +1061,18 @@ export function createVisibilityMachine(
       //     under the flag, and an already-armed chain never re-arms
       //     (the armed branch runs before this site anyway; this guard
       //     is cheap safety).
-      // Arm + STILL closeWith(now): the space closes the line (this
-      // branch's contract); the armed branch's zero-char offer answers
-      // the NEXT word-start tick — never paint from the arming site.
-      // grant.reset() beside the arm (an arm is an arm — identical to
-      // the Tab-insert arm site's fresh-grant discipline). No
-      // Tab-accept suppression exists anywhere on this path (spec 07
-      // h3.11 retired it); Tab deferral (h3.10) lives upstream of
-      // evaluate and is untouched.
+      // Arm + PAINT the zero-char offer in the SAME tick (bug-hunt
+      // BUG-003, plan 006): the space tick arms the chain, ticks the
+      // fresh grant, and offers the successors immediately — spec 07 M2
+      // armed(W) "before the user types anything" — returning WITHOUT
+      // closeWith when the offer painted. Zero successors / an R6-window
+      // park still closeWith(now) — the pre-fix fallback, unchanged (a
+      // parked offer behind a closing line is not a spec state; the
+      // menu never renders with zero candidates). grant.reset() beside
+      // the arm (an arm is an arm — identical to the Tab-insert arm
+      // site's fresh-grant discipline). No Tab-accept suppression
+      // exists anywhere on this path (spec 07 h3.11 retired it); Tab
+      // deferral (h3.10) lives upstream of evaluate and is untouched.
       if (/[ \t]$/.test(before) && !before.includes("@") && !before.includes("/")) {
         const typed = before.match(/([A-Za-z][A-Za-z0-9_-]*)[ \t]$/)?.[1];
         if (
@@ -1022,6 +1085,22 @@ export function createVisibilityMachine(
         ) {
           deps.chain?.arm?.(typed.toLowerCase());
           grant.reset(); // fresh one-shot grant — an arm is an arm
+          // BUG-003 fix (bug-hunt plan 006 — UNRELATED to the start-0
+          // suppression BUG-003 near the top of this closure): the space
+          // tick IS the word start (the W1 microtask evaluates the
+          // POST-keystroke buffer), so the zero-char successor offer
+          // paints HERE, in this render frame. Tick BEFORE any paint
+          // (armed-branch discipline): the first post-reset tick sets
+          // seen=1 and never spends (''→'f' is not a new word), so the
+          // one-shot grant survives into the offered word — its return
+          // value is ignored here because a spend is impossible on it.
+          // Spec-07 visibility step 3 ("trailing space → hidden")
+          // tension is recorded for P2.M2.T2.S2's drift report (Mode A
+          // — no spec edit in this item).
+          grant.tick(""); // first post-reset tick: parity, never a spend
+          if (zeroCharOffer(typed.toLowerCase(), now) === "painted") {
+            return state(); // painted in this render frame — no closeWith
+          }
         }
       }
       closeWith(now);
