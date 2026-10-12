@@ -1278,6 +1278,9 @@ describe("close-on-space typed-arming × visibility (P1.M2.T2.S2)", () => {
     // paints instead of closeWith), series run casing via nextDisplay.
     // The spec-07 step-3 "trailing space → hidden" tension is recorded
     // for P2.M2.T2.S2's drift report.
+    // Live-TTY proof of these timing pins (space-tick paint, F narrowing,
+    // Escape forward): plan/006_7bd0258da993/bugfix/001_140e40041dd1/architecture/live-tty-bug003-run-notes.md
+    // (spec/09 binding technique — two fresh-pane runs, capture A/B/C).
     editor.set("The ", 4);
     machine.onInput();
     expect(chain.arm).toHaveBeenCalledWith("the"); // armed while suppressed

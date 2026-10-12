@@ -193,14 +193,14 @@
           "type": "Milestone",
           "id": "P2.M1",
           "title": "Widget typed-word arming paints the zero-char offer at the space tick (BUG-003)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Make the armed(W) zero-char successor offer visible at the word start itself on the widget path — at the trailing-space arming tick instead of one input event later — without violating the hesitation gate, double-painting, grant one-shot semantics, or the close-on-space contract for non-arming cases.",
           "tasks": [
             {
               "type": "Task",
               "id": "P2.M1.T1",
               "title": "Paint the zero-char offer at the arming tick (factor the (a)-offer helper)",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Factor the armed-branch (a) zero-char offer body into a reusable helper and invoke it from the typed-word arming site after chain.arm + grant.reset, painting with chain-intent semantics when successors exist and falling through to today's closeWith otherwise; flip the two pinning tests and add the machine-level timing test; live-verify per the binding technique.",
               "subtasks": [
                 {
@@ -224,7 +224,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T1.S2",
                   "title": "Live TTY verification of the space-tick paint (binding technique)",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T1.S1",
@@ -254,14 +254,14 @@
               "type": "Task",
               "id": "P2.M2.T1",
               "title": "PIN the no-re-request contract at the consumption site + fallback post-accept battery",
-              "status": "Planned",
+              "status": "Researching",
               "description": "Complete task P4.M1.T2.S1's outstanding deliverables: a PIN comment inside provider.ts's applyCompletion override documenting that pi-tui issues no autocomplete re-request after an apply (fallback degrades to no extension re-offer — acceptable per spec 07's own conditional), plus a request-by-request fallback-path battery proving no self-request, clean post-accept state, and correct next-keystroke offers.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M2.T1.S1",
                   "title": "provider.ts PIN comment for the no-re-request-after-apply contract",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug003-004-widget-provider.md §2. Verified evidence (current node_modules dist): pi-tui editor.js menu-accept Tab site ≈:538-552 (applyCompletion → cancelAutocomplete → return; NO requestAutocomplete) and forced single-item fast path ≈:1895-1906 (applyCompletion → requestRender → return; NO cancelAutocomplete — PRD's 'both call cancelAutocomplete' is imprecise; the load-bearing shared fact is neither re-requests). Existing PIN style template: provider.ts:≈313-331 (getSuggestions force-read PIN citing editor.js line + pi-tui version + 're-verify on upgrade'). Confirm the installed version from node_modules/@earendil-works/pi-tui/package.json before writing so the PIN cites it.\n2. INPUT: The verified contract above; the applyCompletion override at src/pi/provider.ts:679-735 (the consumption site where an apply's results are handled — chain re-arm + grant reset — and where a re-request would be observable).\n3. LOGIC: Add a PIN comment inside the applyCompletion override (before the delegated return): pi-tui issues NO request after an apply (cite BOTH call sites with line refs and the pi-tui version); therefore the fallback path's post-Tab extension offer (spec 07 'Post-Tab extension offer' fallback paragraph) and the zero-char chain offer surface only on the NEXT keystroke's request — the degradation spec 07 explicitly accepts; re-verify both call sites on any pi-tui upgrade. No behavior change — comment-only plus the matching spec-07 re-verify-list bullet drafted for the drift report. TDD not applicable to a comment; the battery in S2 pins the behavior the comment describes.\n4. OUTPUT: The PIN at the consumption site (grep 're-request|re-offer|post-applyCompletion' in src/pi/provider.ts now matches); a drafted fifth re-verify-list bullet ('no re-request after applyCompletion (both apply call sites...)'; update 'Four'→'Five' intro wording) delivered as drift content to P2.M2.T2.S2.\n5. DOCS: [Mode A] The PIN comment IS the doc; spec/07 h3.15 mirror is recorded as drift (P2.M2.T2.S2) because pipeline agents must not edit spec/*.md.",
@@ -276,7 +276,7 @@
                   "type": "Subtask",
                   "id": "P2.M2.T1.S2",
                   "title": "Fallback-path post-accept battery (provider + display layers)",
-                  "status": "Planned",
+                  "status": "Researching",
                   "story_points": 2,
                   "dependencies": [
                     "P2.M2.T1.S1"
