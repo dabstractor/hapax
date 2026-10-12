@@ -1,393 +1,492 @@
-# PRP — P3.M1.T1.S2: Verify Tab-deferral conformance against the updated PRD (07 h3.10/h3.14 + 09 h2.59); pin the deferral state in widget tests
+# PRP — P4.M1.T1.S2: Ladder recursion, sibling-fork backspace recovery, fresh-generation battery (spec 09 widget bullet)
+
+---
 
 ## Goal
 
-**Feature Goal**: Audit the ALREADY-SHIPPED Tab-deferral implementation (P3.M1.T1.S1) against
-the three PRD hunks that were promoted mid-session from a mitigation note to normative spec
-text, pin the now-explicit 09 h2.59 test bullet in `test/widget.test.ts` key-handling
-coverage if any part of it is not already pinned there, and fix forward ONLY on mismatch.
+**Feature Goal**: Implement the normative "Post-Tab extension offer" bullet from
+spec 09 h2.59 (widget.test.ts) VERBATIM as a test battery — ladder recursion
+(`implem` → Tab → `implement` → offer → Tab → … until the empty offer dismisses
+WITHOUT suppression), sibling-fork backspace recovery, fresh-generation semantics,
+menuDelayMs intent-show bypass, final-armed-word chain arming (spec 07 h2.53
+amendment), trigger-char parity, Space self-close of the residual menu flash, and
+Enter-still-submits — pinning the seam change + offer evaluation that
+P4.M1.T1.S1 lands.
 
-**Deliverable**: (1) A written conformance verdict — one verdict line per audited PRD clause
-(a)–(d) plus the h3.14 parenthetical, with file:line evidence — recorded at
-`plan/006_7bd0258da993/P3M1T1S2/VERDICT.md` (this run's own artifact; do not edit any other
-file under `plan/`). (2) If (and only if) the audit finds a mismatch: the minimal code/test
-edit that brings the artifact into conformance, with green gauntlet. (3) No changes at all
-when everything conforms — "no diff" is a fully valid outcome for this task.
+**Deliverable**: One new describe block appended to `test/widget.test.ts` (the
+spec 09 battery, ~12 tests, names citing spec 09 h2.59 / 07 h3.11), reusing the
+existing module-level doubles. NO new files. NO spec edits. NO production-code
+changes — UNLESS the battery exposes a defect in S1's seam, in which case the fix
+stays inside the S1 contract (see Implementation Blueprint, Task 0/Task 7).
 
-**Success Definition**: Every audit dimension below has an explicit CONFORMANT / MISMATCH
-verdict backed by file:line evidence; any mismatch is fixed; `npm run check` and `npm test`
-are green (including `test/widget.test.ts`, `test/defer-pi-menu.repro.test.ts`, and
-`test/editor-enter.test.ts` untouched-or-strengthened); VERDICT.md exists and is complete.
+**Success Definition**: The full battery is green; `test/defer-pi-menu.repro.test.ts`
+and `test/widget-visibility.test.ts` stay green UNTOUCHED; `npm run check` +
+`npm test` green — the output P3.M1.T2.S2's gauntlet consumes en route to the
+P3.M1.T2.S3 scenario (iv) live smoke.
+
+**NOTE on item-text references**: the work-item description cites "P3.M1.T1.S1" as
+the landed seam input and "P4.M1.T2.S2/S3" as output consumers — both are stale
+references. Per the task tree and the parallel-execution context: seam input =
+**P4.M1.T1.S1**; gauntlet = **P3.M1.T2.S2**; live smoke = **P3.M1.T2.S3** (iv).
+P4.M1.T2.S1 (fallback path) is a sibling, not an input. The deferral-state pinning
+belongs to P3.M1.T1.S2, not this item.
 
 ## User Persona (if applicable)
 
-**Target User**: The Mode B documentation tasks (P3.M1.T2.S2/S3/S4) and future maintainers —
-they consume this verdict as ground truth for the README's Tab-deferral blurb, the live-smoke
-hesitation-race variant, and the M1-DoD drift report.
+**Target User**: the pi coding-agent user typing prompts with hapax installed.
 
-**Use Case**: T2.S4's drift report must be able to state "code matches the normative spec
-text at 07 h3.10/h3.14 and the 09 h2.59 test bullet is pinned" without re-auditing.
+**Use Case**: Repeated-Tab ladders through stored vocabulary
+(`implem` → Tab → Tab → Tab…), recovering from a sibling-fork dead-end
+(`implements` when `implementation` was wanted) with ONE backspace instead of
+deleting the whole word.
 
-**Pain Points Addressed**: The PRD text changed AFTER S1 shipped; without this audit nobody
-has verified the landed artifacts against the exact normative wording, and a silent
-divergence would surface during documentation (Mode B) instead of now.
+**User Journey**: Type `implem`; Tab inserts `implement`; the extension offer
+`implements | implementation` renders instantly; Tab inserts the top; when the
+fork dead-ends (`implements` has no extensions) the line closes silently; ONE
+backspace returns to `implement` and the offer re-renders; arrow→ or typing `a`
+disambiguates toward `implementation`.
+
+**Pain Points Addressed**: The owner-reported live wedge — mid-word recovery
+after a Tab demanded deleting the ENTIRE word (suppression seam); the battery
+pins the fix (spec 07 h3.11) so it can never silently regress.
 
 ## Why
 
-- The mid-session PRD delta turned S1's shipped mitigation into normative spec text: 07 h3.10
-  "Tab inserts the highlighted word" now ends "— UNLESS the inner editor's own autocomplete
-  menu is open (`isShowingAutocomplete`): the Tab forwards verbatim and pi's menu accepts its
-  item; deferral keys on the menu's actual open state, never on context classification (the
-  hesitation race can re-arm the widget line while pi's menu is open)"; 07 h3.14's
-  parenthetical gained "except while pi's own menu is open, when the widget defers the Tab
-  verbatim"; 09 h2.59's widget.test.ts key-handling bullet now requires "Tab with pi's own
-  menu open (`isShowingAutocomplete() === true`) forwards verbatim — never inserts a hapax
-  word over an open stock menu (P3.M1.T1.S1)".
-- S1's contract anticipated all three hunks, so the EXPECTED outcome is full conformance with
-  zero code change. This task converts that expectation into verified fact and makes the
-  verdict durable for downstream tasks.
-- Repo policy (AGENTS.md): spec and code must stay in agreement. The spec side already
-  landed; this task closes the loop on the code side by proving (or restoring) agreement.
+- Spec 09 h2.59's widget bullet is the CONTRACT for P4.M1.T1.S1's seam change —
+  without this battery the seam change ships unpinned (an implementation
+  regression would be invisible).
+- The ladder is the entire point of the 2026-10 progressive-completion ranking
+  (04: shortest-first + exact-equal exclusion); the battery proves the ranking
+  and the visibility machine compose as h3.11 specifies.
+- Downstream: P3.M1.T2.S2's full gauntlet counts this battery green;
+  P3.M1.T2.S3 scenario (iv) live-verifies the same behavior in a real TTY.
 
 ## What
 
-An audit with four mandated dimensions plus one prose check, each resolved to a verdict:
+Test-only work. The battery (all driven through the existing widget key-handling
+doubles — `makeInsertHarness` + real seeded store, NOT `show()`-driven where
+arming/painted records matter):
 
-### Audit dimension (a) — pre-check placement, order, and verbatim forward
-
-Verify in `src/pi/widget.ts` `widgetHandleInput` (the Tab-deferral block sits at
-approximately lines 1698–1726; find it by grepping `P3.M1.T1.S1`):
-
-- The pre-check fires only when `decision.action === "tab-insert"` (the pure decision
-  table's verdict for a visible, non-empty line — see `decideWidgetKey`, pinned pure at
-  test/widget.test.ts:1301+).
-- The pre-check reads `innerRecord.isShowingAutocomplete?.() === true` — the menu's ACTUAL
-  open state read FORWARD through the enter-submit proxy (the proxy's get trap binds member
-  functions to the real inner editor; precedent: `src/pi/editor.ts:111-115`). Note the
-  deliberate ordering: `decideWidgetKey` (a PURE table, no side effects, no editor state)
-  runs first and is VETOED by the deferral; the PRD's "before any insert/suppress decision
-  executes" is satisfied because the veto precedes every EFFECTFUL branch — verify no
-  insert, suppress, dismissal, tick, arming, or state mutation executes before the
-  `return forwardInput(data)` in the deferral arm.
-- The forward is VERBATIM: `forwardInput(data)` delegates through the enter-submit guard's
-  `handleInput` (never the raw inner), passing the exact input bytes, so pi's own menu
-  accepts its highlighted item.
-- A forwarded deferral Tab ticks the shared input clock exactly ONCE (the guard's
-  `onKeystroke` seam fires on delegation; the widget layer's own consumed-key tick block is
-  NOT reached). Pinned by the widget.test.ts deferral test's
-  `expect(h.onKeystroke).toHaveBeenCalledTimes(1)`.
-- Defensive posture: a missing member or throwing probe falls through to the normal
-  tab-insert path (try/catch around the probe) — pinned by two widget.test.ts cases
-  (probe-absent inert; throwing probe falls through, insert still lands).
-
-### Audit dimension (b) — keyed on actual open state, never classification; hesitation race covered
-
-- Confirm the deferral predicate contains NO context-classification logic (no
-  `classifyStockContext` / prefix sniffing): the ONLY key is the boolean return of
-  `isShowingAutocomplete()`.
-- Confirm the hesitation race — `menuDelayMs` re-arming the widget line OVER pi's already
-  open menu — remains covered by the regression suite: `test/defer-pi-menu.repro.test.ts`
-  case 3 ("async race (menuDelayMs 400, fake timers)") asserts BOTH preconditions of the
-  accepting Tab (`isShowingAutocomplete() === true` AND `state.hidden === false`) before
-  asserting the forward (`pi.applied`). The suite must stay green and must not be weakened.
-- Understand and record WHY classification keying is forbidden (spec 07 h3.10): the
-  forced-file and slash-argument surfaces are exactly the contexts classification does NOT
-  model, and the race makes any static context guess stale mid-keystroke.
-
-### Audit dimension (c) — 09 h2.59 bullet pinned in test/widget.test.ts key-handling coverage
-
-The bullet: "Tab with pi's own menu open (`isShowingAutocomplete() === true`) forwards
-verbatim — never inserts a hapax word over an open stock menu (P3.M1.T1.S1)". Verify the
-pin inside `test/widget.test.ts` (currently the describe block "widget key handling — Tab
-inserts the highlighted word (spec §07 h2.46 rule 0, S2)", deferral tests at approximately
-lines 1144–1205, using the `makeInsertHarness` knobs `piMenuOpen` / `piMenuProbeThrows`):
-
-- "forwards verbatim" half: the test asserts the inner receives the Tab bytes exactly once
-  (`expect(out).toBe("inner:\t")`, `expect(h.innerCalls).toEqual(["\t"])`).
-- "never inserts a hapax word over an open stock menu" half: asserted via the double as NO
-  `setText`/caret edit plus line-stays-visible, no dismissal/suppression (`h.calls` equals
-  exactly one delegation, `state.hidden === false`, `dismissedCalls === 0`,
-  `suppressUntilWordStart === false`). The "pi's menu accepts its item" half is only
-  observable against the REAL pi-tui Editor and is correctly covered by the repro suite —
-  that division of labor (double pins the deferral STATE; repro pins the END-TO-END accept)
-  is itself part of the conformance verdict.
-- If ANY half of the bullet is not actually pinned (read the assertions, don't trust the
-  test name), add the missing assertion(s) or a dedicated case IN THIS describe block,
-  following the existing harness knobs. Do not relocate the pin to the repro file.
-
-### Audit dimension (d) — contrast case and Enter-submits guard green and untouched
-
-- The contrast case — pure slash typing (`/mo`, no space) defers via CONTEXT CLASSIFICATION
-  (the widget line never arms in stock contexts; a different mechanism from (b)) — stays
-  covered by repro case 4 and green.
-- The Enter-submits guard (`src/pi/editor.ts`) is untouched by the deferral work: its own
-  `isShowingAutocomplete` read (line ~111–115) is a sibling use of the same probe, its suite
-  `test/editor-enter.test.ts` stays green. The audit confirms no edit to `editor.ts` is
-  needed (grep the S1 diff surface: only `src/pi/widget.ts` should carry the deferral).
-
-### Prose check — 07 h3.14 parenthetical
-
-"(FALLBACK PATH ONLY — on the widget path Tab is consumed by the editor proxy before this
-editor branch can run (except while pi's own menu is open, when the widget defers the Tab
-verbatim …))". Verify the structure holds: a consumed tab-insert RETURNS without delegating
-(pi-tui's `editor.js` Tab branch is unreachable on the widget path), and the deferral arm is
-the sole exception that forwards. No code change is expected from this check — it validates
-that the h3.14 parenthetical describes reality.
+1. **Tab-accept arms NO suppression** — after a consumed Tab, the line either
+   shows the extension offer or closes; `suppressUntilWordStart === false` always.
+2. **Ladder recursion** — `implem` → Tab inserts `implement` → offer renders with
+   exact-equal exclusion + shortest-first ordering (`implements | implementation`)
+   → Tab inserts top → recursion until the empty offer dismisses WITHOUT
+   suppression.
+3. **Sibling-fork backspace recovery** — after the empty-offer dismiss, ONE
+   backspace re-queries (fragment `implement`) and the offer re-renders.
+4. **Escape/boundary on an offer suppresses rest-of-word** (seam retained — only
+   Tab-accept left the seam).
+5. **Fresh generation** — the offer resets `highlightIndex` to 0 and
+   `interacted` to false; boundary pass-through (un-entered ↑/← forwards verbatim
+   AND dismisses+suppresses on the same press) is live on the offer.
+6. **menuDelayMs bypass (intent show)** — under a large `menuDelayMs` + fake
+   timers, the offer paints in the Tab keypress with ZERO timer advancement.
+7. **Extension accepts arm the chain on the FINAL accepted word** (spec 07 h2.53
+   amendment — never armed at the first rung).
+8. **Trigger-char completions take the same rule** (`#implem` → Tab → offer
+   evaluates on the inserted word).
+9. **Residual menu-flash self-closes on Space** (owner-accepted cost, h3.11).
+10. **Enter immediately after a Tab completion still SUBMITS** — never accepts
+    the offer.
+11. Never-mutate (v1 regression pin) + one-clock-tick-per-keypress hold across
+    the ladder.
 
 ### Success Criteria
 
-- [ ] VERDICT.md at `plan/006_7bd0258da993/P3M1T1S2/VERDICT.md` with per-clause verdicts + file:line evidence
-- [ ] Audit dimensions (a)–(d) + h3.14 prose check each resolved CONFORMANT or MISMATCH→fixed
-- [ ] If no mismatch: zero source-file edits (comment/citation churn is NOT a mismatch — see fix-forward protocol)
-- [ ] `npm run check` green; `npm test` green (full suite, includes the repro suite)
-- [ ] `test/defer-pi-menu.repro.test.ts` and `test/editor-enter.test.ts` pass unweakened (no deleted/relaxed assertions)
+- [ ] All ~12 battery tests green; every spec 09 h2.59 bullet sentence has ≥1 test.
+- [ ] `test/defer-pi-menu.repro.test.ts` green VERBATIM (untouched file).
+- [ ] `test/widget-visibility.test.ts` green UNTOUCHED.
+- [ ] `npm run check` and `npm test` green.
+- [ ] Any production fix forced by a red test stays within S1's mechanism and is
+      documented in the test that forced it.
 
 ## All Needed Context
 
 ### Context Completeness Check
 
-If someone knew nothing about this codebase: this PRP gives the exact code sites (with
-approximate line anchors + grep keys), the exact PRD clauses (quoted), the test inventory
-per dimension, and the decision rule for fix-forward. An agent with only this PRP + repo
-access can complete the audit mechanically. ✓
+"If someone knew nothing about this codebase, would they have everything needed
+to implement this successfully?" — Yes: every test below is spelled out with its
+exact fixture, keystroke sequence, buffer hand-mutations, and assertions; the
+harness idioms (including the fake-inner-does-not-apply-keys trap) are quoted;
+the S1 contract (what will already be landed) is summarized with its mechanism;
+ladder determinism is derived fragment-by-fragment so the implementer can trust
+the expected sets. Verified against HEAD `a618343`; line numbers drift — navigate
+by quoted text.
 
 ### Documentation & References
 
 ```yaml
-# MUST READ - the normative text being audited against (already landed; READ-ONLY)
-- file: spec/07-completion-ui.md
-  why: h3.10 "Widget key handling" — final bullet "Tab inserts the highlighted word" ends
-        with the UNLESS-deferral clause (line ~242); h3.14 parenthetical "(FALLBACK PATH
-        ONLY … except while pi's own menu is open …)". This is the normative target.
-  pattern: quote the exact clause in VERDICT.md next to its evidence
-  gotcha: the deferral text lives in h3.10's LAST bullet, not in h2.46/h2.50 — older
-          comments in the code cite "h2.46 + h2.51" (coarse citations from S1, written
-          before the hunks landed). Coarse-but-not-false citations are NOT a mismatch.
-
+# MUST READ - Include these in your context window
 - file: spec/09-testing-and-acceptance.md
-  why: h2.59 "Unit tests (per module)" → widget.test.ts key-handling bullet (line ~191)
-        contains the mandated pin text "(isShowingAutocomplete() === true) forwards
-        verbatim — never inserts a hapax word over an open stock menu (P3.M1.T1.S1)".
-  pattern: audit test/widget.test.ts against this bullet's TWO claims (forwards verbatim;
-        never inserts over an open stock menu)
-  gotcha: "isShowingAutocomplete() === true" in the bullet is the probe contract — the
-          harness knob must drive the METHOD's boolean return, not a stubbed classification
+  why: h2.59 widget.test.ts bullet "Post-Tab extension offer (2026-10, spec 07)"
+    is the VERBATIM contract for this battery — every sentence maps to a test
+    below. h2.61 live-verification technique (binding for UI changes; the
+    formal gate is P3.M1.T2.S3, a sanity pass is recommended).
+  pattern: the bullet's exact ordering — no-suppression, ladder, backspace
+    recovery, Escape/boundary seam, fresh generation, menuDelayMs bypass,
+    final-armed-word.
+  gotcha: the battery is NORMATIVE for S1 — if a test is red, the production
+    code is wrong, not the test (unless the fixture is demonstrably bad).
 
-- file: spec/SPEC.md
-  why: Design invariants (never-hijack; Tab only completes) — the deferral is an exception
-        surface inside the sanctioned Tab capture; confirm the audit framing respects them.
-  pattern: cite invariant 1/2 in VERDICT.md's framing paragraph
-  gotcha: the spec is ALREADY updated — this task never edits spec/*.md
+- file: spec/07-completion-ui.md
+  why: h3.11 "Post-Tab extension offer" (the full rule incl. fork ruling +
+    residual cost), h2.53 M2 chained completion (the final-armed-word amendment
+    is its last bullet), h3.10 key handling (pass-through/Escape taxonomy),
+    h3.12 visibility machine (R3 trailing-space close, R4 disqualification,
+    R5 hesitation, R7 fresh-reopen).
+  pattern: h3.11's ladder example and fork ruling; h2.53's parenthetical
+    "implem → Tab → implement → Tab leaves armed(implementation), not
+    armed(implement)".
+  gotcha: h2.53's literal example predates the fork ruling — with BOTH
+    'implements' and 'implementation' stored, shortest-first makes the second
+    accept 'implements'. The NORM is "armed at the FINAL accepted word"; pin
+    BOTH variants (Task 4, tests 7-8). Do NOT re-rank to match the example.
 
-# MUST READ - the landed implementation under audit
-- file: src/pi/widget.ts
-  why: widgetHandleInput's Tab-deferral pre-check (grep "P3.M1.T1.S1"; ~lines 1698-1726):
-        veto on decision.action === "tab-insert" + isShowingAutocomplete?.() === true →
-        forwardInput(data). Also forwardInput's definition (~line 1659) and innerRecord
-        (~line 1641) — reads forward THROUGH the enter-submit proxy.
-  pattern: the pre-check's documented placement contract — "after decideWidgetKey … before
-        any insert/suppress/tick/arming executes: a forwarded deferral ticks the clock
-        exactly once (guard seam) and mutates nothing"
-  gotcha: decideWidgetKey running FIRST is correct (pure, side-effect-free table); the PRD
-          ordering clause governs effectful branches, not the pure decision. Also note the
-          claim-release call at the top of widgetHandleInput fires only on isSubmitKey —
-          Tab is never a submit key, so it cannot interfere with the deferral.
+- file: plan/006_7bd0258da993/P4M1T1S1/PRP.md
+  why: The CONTRACT for what will already be landed when this item starts —
+    insertHighlighted's tail becomes state.hide() + visibility.onDismissed(false);
+    the Tab-insert branch gains `applyVisibility(machine.onInput());
+    requestRender();` BETWEEN the `if (!consumed) return forwardInput(data);`
+    line and the enableChaining arm block; the seam comment lists only Escape /
+    boundary / Enter-submit.
+  pattern: S1's "Implementation Patterns & Key Details" walks the mechanism
+    (onDismissed(false) = closeWith(now) → closeAt stamp → R7 fresh-reopen →
+    immediate, hesitation-bypassed paint; exact-equal exclusion already in
+    src/core/query.ts ~:592).
+  gotcha: S1 also updates widget.test.ts (:960-971, :1089-area) and adds its own
+    provisional battery — APPEND this battery at END of file and DEDUPE (keep
+    an S1 test that already covers a bullet; add only missing cases; the union
+    must be the complete bullet).
 
-- file: src/pi/editor.ts
-  why: the enter-submit guard that forwardInput routes through; the original
-        isShowingAutocomplete duck-typed probe (lines ~111-115); isSubmitKey export reused
-        by the widget layer; onKeystroke = the shared input clock seam (one tick per
-        delegated keypress).
-  pattern: proxy composition (never instance mutation) — the v1 recursion-crash lesson
-  gotcha: dimension (d) requires editor.ts UNTOUCHED — the deferral must live only in
-          widget.ts
-
-# MUST READ - the regression suite (real pi-tui Editor)
-- file: test/defer-pi-menu.repro.test.ts
-  why: S1's hardend repro — 4 cases: (1) forced file surface 'load the te' microtask race;
-        (2) argument-completion menu '/model te'; (3) menuDelayMs 400 fake-timer HESITATION
-        RACE (both preconditions asserted before the accepting Tab); (4) pure-slash '/mo'
-        CONTRAST case. Drives the real Editor with a provider double mimicking
-        CombinedAutocompleteProvider's unmodeled surfaces.
-  pattern: real-async timing harness (flush microtask loop; vi.useFakeTimers for case 3)
-  gotcha: do not "simplify" the microtask/fake-timer choreography — the races are the point
-
-# MUST READ - the pin location for dimension (c)
 - file: test/widget.test.ts
-  why: key-handling describe blocks; makeInsertHarness (~line 833+) with the S1 OPT-IN
-        knobs piMenuOpen / piMenuProbeThrows (absent by default so legacy doubles are
-        unchanged); the deferral pin tests (~lines 1144-1205) inside the describe at
-        ~line 959 "widget key handling — Tab inserts the highlighted word".
-  pattern: recording inner double + calls log + never-mutate set trap; assertions pin the
-        EXACT interaction sequence (calls array) and post-state (hidden, suppression,
-        interacted, onKeystroke count)
-  gotcha: assertions must be READ, not inferred from test names — the audit's job is to
-          check the two bullet claims are actually pinned
+  why: The doubles this battery MUST use (item contract: "Mocking: the existing
+    widget key-handling doubles") + the assertion idioms.
+  pattern: makeInsertHarness (~:852) — composed editor + fake buffer (buf is
+    hand-mutatable + exposed) + press/show/requestRender/onKeystroke/setHits;
+    spiedChain (~:1421) = {state: vi.fn(()=>null), arm: vi.fn(), reset: vi.fn()}
+    (state null keeps the armed-chain consult INERT → pure query offers; arm
+    call args are the assertion surface); seedStore (~:1428) — REAL CandidateStore
+    via upsert, NO bigrams; flushPaint (~:1455) — 5 microtask turns flushing the
+    W1 deferred machine tick after a FORWARDED keypress; the machine-painted
+    Tab pattern at :1462-1491 (forwarded char + flushPaint to paint, then press
+    "\t"); the Tab assertions at :960-975; Enter describe at :1200;
+    never-mutate describe at :1250; typed-word arming describe at :2174 (real
+    createChainMachine usage).
+  gotcha: (1) show() writes state.set DIRECTLY — machine.painted() stays empty;
+    any test needing REAL painted records (arming, offer-rec capture) MUST paint
+    through a forwarded keystroke + flushPaint. (2) The fake inner does NOT
+    apply typed/backspace keys to buf — simulate buffer state by hand-mutating
+    h.buf.lines / h.buf.col BEFORE the press (established idiom). (3) A real
+    chain machine is createChainMachine() from src/pi/provider.ts; chain.state()
+    returns the armed word or null.
 
-- file: test/editor-enter.test.ts
-  why: dimension (d) — the Enter-submits guard suite (cancel-then-delegate, never-mutate,
-        proxy forwarding, thenable guard, onKeystroke hook) must stay green and untouched.
-  pattern: guard-level double harness
+- file: test/widget-visibility.test.ts
+  why: Machine-level battery that must stay green UNTOUCHED (close /
+    disqualification / suppression-lapse); also the reference for R7 behavior
+    ("a fresh close (<200 ms) reopens through the gate", :423) and chain-offer
+    hesitation bypass (consult test (8), :761) — the mechanism that makes the
+    offer paint immediately under menuDelayMs.
+  gotcha: do NOT add S2 tests here — the 09 bullet lives in widget.test.ts.
+
+- file: test/defer-pi-menu.repro.test.ts
+  why: P3.M1.T1.S1's regression suite (Tab defers to pi's open stock menu) —
+    the "contrast — unaffected" adjacent suite from the item contract. Must stay
+    green VERBATIM; never edit it.
+  gotcha: its harness seeds piMenuOpen via makeInsertHarness's opt-in knob.
+
+- file: src/pi/widget.ts
+  why: Read-only reference for what S1 landed: insertHighlighted tail (~:1462),
+    the Tab-insert branch (~:1670-1818), the arm site, createVisibilityMachine's
+    evaluate (lapse → R1 stock contexts → chain consult → match → R2 → query →
+    R4-R7). getState() fields: visible, currentSet, suppressUntilWordStart.
+  gotcha: WidgetState.set resets highlightIndex 0 + interacted false on every
+    result-set change — the fresh-generation contract is free; assert it anyway.
+
+- file: src/core/query.ts
+  why: Read-only PROOF the expected offer sets are right: exact-equal exclusion
+    `if (k === lower) continue;` (~:592 anchored; ~:646 tier-0 parity) + tier-3
+    prefix matching + shortest-key-first ranking.
+  gotcha: "implementation".startsWith("implements") === false — fragment
+    "implements" yields ZERO matches when only implement/implements/
+    implementation are stored. That emptiness is the ladder's terminal rung.
 ```
 
 ### Current Codebase tree (relevant excerpt)
 
 ```bash
-src/pi/widget.ts          # widget display + key layer; Tab-deferral pre-check (~L1698-1726)
-src/pi/editor.ts          # Enter-submits guard proxy; isShowingAutocomplete probe precedent
-test/widget.test.ts       # PRIMARY pin target (dimension c) — key-handling describes
-test/defer-pi-menu.repro.test.ts  # real-Editor regression suite (dimensions b + d)
-test/editor-enter.test.ts # Enter-guard suite (dimension d)
-spec/07-completion-ui.md  # h3.10 (~L242) + h3.14 — normative deferral text (READ-ONLY)
-spec/09-testing-and-acceptance.md # h2.59 (~L191) — mandated test bullet (READ-ONLY)
-plan/006_7bd0258da993/P3M1T1S2/   # THIS run's directory: PRP.md lives here; VERDICT.md goes here
+src/pi/widget.ts              # S1's seam change lands here (read-only for S2)
+src/core/query.ts             # exact-equal exclusion (read-only)
+test/widget.test.ts           # 2299 lines — APPEND the battery here
+test/widget-visibility.test.ts# stays green, untouched
+test/defer-pi-menu.repro.test.ts  # stays green, untouched
 ```
 
-### Desired Codebase tree with files to be added
+### Desired Codebase tree with files to be added and responsibility of file
 
 ```bash
-plan/006_7bd0258da993/P3M1T1S2/VERDICT.md   # NEW — the conformance verdict (only new file)
-# src/, test/ — NO new files. Edits only under the fix-forward protocol below.
+# NO new files.
+test/widget.test.ts           # + one describe block (the spec 09 battery, end of file)
+# (src/pi/widget.ts ONLY if a battery test exposes an S1 defect — minimal fix)
 ```
 
 ### Known Gotchas of our codebase & Library Quirks
 
-```text
-# CRITICAL: this is an AUDIT with a conditional fix arm. The expected outcome is ZERO
-# code change. Rewriting already-conformant code is a FAILURE mode of this task, not a
-# success — it invalidates S1's landed-and-green state and creates drift for Mode B.
+```typescript
+// CRITICAL: the fake inner editor does NOT apply keys to the buffer. Typed
+// state is simulated by hand-mutating h.buf.lines / h.buf.col BEFORE the
+// press; a FORWARDED press (e.g. "x" or "\x7f") then ticks the machine via
+// the W1 microtask (flushPaint), which reads the LIVE (hand-set) buffer.
+// The Tab insert itself is REAL (setText mutates buf) — post-Tab buffer
+// state needs NO hand-mutation.
 
-# The pure-table-first ordering: decideWidgetKey runs BEFORE the deferral veto BY DESIGN
-# (keeps the pure decision table free of editor state; it is side-effect-free). The PRD's
-# "BEFORE any insert/suppress decision executes" is about effectful branches. Do NOT
-# "fix" this ordering.
+// CRITICAL: paint through the machine, not show(). Any test whose Tab must
+// capture a real record (arming, offer recursion — Tab2 reads painted()[0])
+// needs machine.painted() populated: forwarded char + flushPaint first.
+// show()-driven accepts are "vacuously never-arming" (test comment ~:937).
 
-# Citation drift ≠ mismatch: widget.ts's deferral JSDoc and the repro header cite
-# "spec 07 h2.46 + h2.51" (pre-dating the normative h3.10/h3.14 hunks). Per this item's
-# DOCS contract ("JSDoc … extend only if the audit changes code"), leave comments alone
-# unless a code edit lands in that exact block.
+// CRITICAL: spiedChain().state() returns null → the machine's chain-consult
+// branch is INERT → every ladder offer is the pure QUERY result. With a REAL
+// chain machine (createChainMachine), seedStore records NO bigrams → the
+// consult's topSuccessors is empty → branch (5) reset+fall-through → still a
+// query offer, then the arm site re-arms. Deterministic either way.
 
-# The repro suite drives the REAL @earendil-works/pi-tui Editor (~0.84.4): async
-# requestAutocomplete → getSuggestions resolution and fake timers are load-bearing.
-# pi's menu opens only after the Promise resolves — hence the flush loops.
+// GOTCHA: vi.useFakeTimers freezes time → closeAt === now → the R7
+// fresh-reopen window (<200 ms) is ALWAYS satisfied → the offer paints with
+// ZERO timer advancement. That is exactly the intent-show proof; do not
+// advance timers before asserting the offer.
 
-# isShowingAutocomplete is duck-typed (structural cast, no types enforce it). The probe's
-# defensive fall-through (missing/throwing member → normal insert path) is deliberate and
-# pinned — do not "harden" it into a throw.
+// GOTCHA: rankMatches tier-3 = exact prefix, shortest key first, sessionCount
+// only reorders same-tier. seedStore gives every entry count 1 → ordering is
+// length-then-byte-lex: implement(9) < implements(10) < implementation(14).
 
-# Never mutate the inner editor instance (v1 recursion crash, editor.ts header). Any fix
-# must preserve proxy composition. The never-mutate set-trap in makeInsertHarness pins this.
+// GOTCHA: fragment floors — "implem"(6) and "implement"(9) are well above
+// the 3-char fragment floor; store-seeded keys bypass admission entirely
+// (upsert is store-level).
 
-# Spec maintenance policy: spec/*.md is READ-ONLY for this task (the hunks already
-# landed). If a genuine contradiction between code and spec is found that CANNOT be
-# resolved by a code fix, STOP and report the contradiction — do not edit the spec.
+// GOTCHA: the never-mutate proxy trap (setHits) throws on ANY inner mutation
+// attempt — assert h.setHits() === 0 after the multi-Tab ladder.
+
+// GOTCHA: onKeystroke ticks EXACTLY ONCE per keypress (consumed Tab ticks in
+// the widget layer; forwarded keys tick via the guard seam) — a 2-Tab ladder
+// + 1 backspace + 1 space = 4 presses = 4 ticks. Assert in one battery test.
 ```
 
 ## Implementation Blueprint
 
 ### Data models and structure
 
-None — no production data models change. The only structured artifact is VERDICT.md
-(markdown; format below).
+None. Test-only. No types, no config, no store changes.
 
 ### Implementation Tasks (ordered by dependencies)
 
 ```yaml
-Task 1: READ the normative targets
-  - READ: spec/07-completion-ui.md h3.10 final bullet (grep "isShowingAutocomplete") and the
-    h3.14 parenthetical; spec/09-testing-and-acceptance.md h2.59 widget.test.ts key-handling
-    bullet (grep "isShowingAutocomplete").
-  - READ: src/pi/widget.ts widgetHandleInput Tab-deferral block (grep "P3.M1.T1.S1"),
-    forwardInput (~L1659), innerRecord (~L1641); src/pi/editor.ts guard handleInput.
-  - READ: test/defer-pi-menu.repro.test.ts (all 4 cases); test/widget.test.ts
-    makeInsertHarness + the deferral tests (~L1144-1205) + the Tab describe (~L959).
-  - PURPOSE: build the evidence map BEFORE judging; every verdict needs file:line evidence.
+Task 0: VERIFY the S1 seam is landed (read-only sanity)
+  - READ src/pi/widget.ts: insertHighlighted's success tail must read
+    state.hide() + visibility.onDismissed(false) (NOT true); the Tab-insert
+    branch must call applyVisibility(machine.onInput()) + requestRender()
+    between the `if (!consumed) return forwardInput(data);` line and the
+    enableChaining arm block.
+  - RUN: npx vitest run test/widget.test.ts — S1's updated :960-971/:1089
+    assertions + its provisional battery must already be green. If S1 is NOT
+    landed, STOP and report (do not implement S1 yourself).
 
-Task 2: AUDIT dimension (a) — pre-check placement + verbatim forward
-  - WALK: widgetHandleInput control flow: claim-release (submit key only) → decideWidgetKey
-    (pure) → deferral veto (tab-insert + isShowingAutocomplete() === true → forwardInput) →
-    forward/enter-submit/boundary branches → consumed-key tick block → navigate/tab-insert.
-  - VERIFY: the deferral return precedes EVERY effectful branch; the forward passes the
-    verbatim data through the guard (never the raw inner); exactly one clock tick on the
-    forwarded deferral (guard seam); probe is defensive.
-  - EVIDENCE: cite widget.ts lines + the widget.test.ts assertions that pin each property.
+Task 1: ADD test/widget.test.ts — the battery describe (END of file, ~:2299)
+  - NAMING: describe("widget key handling — Post-Tab extension offer battery
+    (spec 09 h2.59 / 07 h3.11)", ...). Test names cite the bullet sentence.
+  - PLACEMENT: append after the last describe (typed-word arming, :2174-2299);
+    S1 edits mid-file in parallel — end-append avoids conflicts.
+  - FIXTURE (shared by most tests):
+      const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 },
+        { chain: spiedChain(),
+          store: seedStore([
+            ["implement", "implement"],
+            ["implements", "implements"],
+            ["implementation", "implementation"],
+          ]) });
+      h.press("x");            // forwarded char ticks the machine (W1)
+      await flushPaint();      // machine paints query("implem") → top "implement"
 
-Task 3: AUDIT dimension (b) — open-state keying + hesitation race
-  - VERIFY: the predicate reads ONLY the boolean method result (no classification anywhere
-    in the deferral block); repro case 3 asserts both preconditions (menu open AND hapax
-    line visible) before the accepting Tab, under fake timers with menuDelayMs 400.
-  - EVIDENCE: widget.ts predicate lines + repro case 3's expect() sequence.
+Task 2: Battery tests 1-3 — no-suppression + the ladder + fork recovery
+  - TEST 1 "Tab-accept arms NO suppression (the first rung)":
+    after the fixture, sanity machine.getState().visible === true and
+    painted()[0].key === "implement"; press "\t" → assert:
+    h.buf.lines ["implement"]; innerCalls []; machine.getState().visible TRUE;
+    currentSet displays ["implements", "implementation"] (exact-equal excluded
+    "implement"; shortest-first); suppressUntilWordStart FALSE;
+    state.highlightIndex 0; state.interacted false; requestRender called.
+  - TEST 2 "the ladder recurses to the EMPTY offer which dismisses WITHOUT
+    suppression": continue from test 1's state (second press "\t"): buf
+    ["implements"]; visible FALSE (query("implements") is empty —
+    "implementation" is not a prefix extension); suppressUntilWordStart FALSE
+    (disqualification close, NOT suppression); chain.arm last call arg
+    "implements". Optional 3-rung variant: seed ["implement","implements",
+    "implementable","implementation"] and walk one more rung.
+  - TEST 3 "sibling-fork recovery: backspace after the empty-offer dismiss
+    re-queries": from test 2's end state — h.buf.lines = ["implement"];
+    h.buf.col = 9; press "\x7f" (forwards verbatim — assert innerCalls
+    ["\x7f"]); await flushPaint() → machine visible again, currentSet
+    displays ["implements", "implementation"], suppressUntilWordStart FALSE.
+    Optional tail: type "a" (buf ["implementa"], press "a", flushPaint) →
+    narrows to ["implementation"] (h3.11 "type-ahead disambiguates").
 
-Task 4: AUDIT dimension (c) — h2.59 pin in widget.test.ts
-  - VERIFY against the bullet's two claims by READING assertions:
-    1. forwards verbatim (out === "inner:\t"; innerCalls === ["\t"]) — double-level.
-    2. never inserts over an open stock menu (calls === exactly one inner delegation — no
-       setText/caret; line stays visible; no suppression; no dismissal) — double-level.
-       Plus the repro's end-to-end accept (pi.applied) — real-Editor level.
-  - IF a claim is unpinned: ADD the missing assertion(s) or case in the same describe
-    block using the existing piMenuOpen knob. NAMING: mirror the existing test-name style
-    (claim, not mechanism). PLACEMENT: inside the "Tab inserts the highlighted word"
-    describe (~L959) — the h2.59 bullet places this pin in KEY-HANDLING coverage.
+Task 3: Battery tests 4-5 — seam retained + fresh generation
+  - TEST 4 "Escape on the offer is an explicit dismissal (rest-of-word
+    suppressed, seam retained)": from test 1's state (offer visible,
+    UN-ENTERED) press "\x1b" → Escape forwards VERBATIM (un-entered) AND
+    dismisses+suppresses: innerCalls ["\x1b"], visible false,
+    suppressUntilWordStart TRUE; then buf ["implementation"] (hand-set),
+    press "x", flushPaint → STAYS hidden (rest-of-word suppression).
+  - TEST 5 "boundary pass-through on the offer (fresh generation is live)":
+    from test 1's state press the ↑/← byte(s) the existing boundary tests at
+    :543 use → forwards verbatim AND dismisses+suppresses on the same press
+    (assert like :551-571), proving interacted === false on the offer. Also
+    the highlight-reset half of "fresh generation": BEFORE the Tab, press
+    the RIGHT arrow once (highlightIndex 1, interacted true — mirror
+    :519/:622 idioms), THEN Tab inserts items[1] ("implements") — use the
+    3-rung store variant so a non-empty offer exists post-Tab: assert
+    highlightIndex 0, interacted false (set() reset the generation).
 
-Task 5: AUDIT dimension (d) + h3.14 prose check
-  - RUN: npx vitest --run test/defer-pi-menu.repro.test.ts test/editor-enter.test.ts —
-    both green; diff-check that editor.ts carries no deferral edit (git status/diff if
-    the tree is dirty from your own edits only, else grep for stray edits).
-  - CHECK h3.14: consumed tab-insert returns WITHOUT delegating (grep the tab-insert
-    execution arm); the deferral arm is the sole Tab-forwarding exception.
+Task 4: Battery tests 6-9 — menuDelayMs bypass + final-armed-word + trigger
+  - TEST 6 "menuDelayMs bypass (intent show)": vi.useFakeTimers; harness over
+    { config: cfg({ menuDelayMs: 5000 }), store: ladderStore }; paint the
+    pre-Tab set via forwarded char + flushPaint + advanceTimersByTime(5000)
+    (or show(["implement", ...]) — acceptable here: no arming assertion in
+    this test); press "\t" → the offer (query("implement") set) is VISIBLE
+    IMMEDIATELY — assert with ZERO further timer advancement.
+  - TEST 7 "extension accepts arm the chain on the FINAL accepted word
+    (h2.53) — fork variant": spiedChain; the 2-Tab ladder → arm call SEQUENCE
+    exactly ["implement", "implements"]; the LAST call is "implements" —
+    never a stale "implement". Real-machine variant: over { chain:
+    createChainMachine() } imported from src/pi/provider.ts (pattern: the
+    :2174 describe) → after the ladder chain.state() === "implements".
+  - TEST 8 "h2.53 literal variant": seedStore([["implement","implement"],
+    ["implementation","implementation"]]) (no "implements") → 2-Tab ladder
+    ends arm("implementation") — the spec's parenthetical example verbatim.
+  - TEST 9 "trigger-char completion (#implem → Tab) takes the same rule":
+    harness lines ["#implem"], col 7; forwarded char + flushPaint (trigger
+    mode query paints; top "implement"); press "\t" → buf ["implement"]
+    (trigger consumed), offer renders ["implements", "implementation"],
+    no suppression, arm at "implement" (trigger completions arm — h2.53).
 
-Task 6: FIX-FORWARD only on MISMATCH (see protocol) — otherwise SKIP
-  - SCOPE: the minimal edit that resolves the mismatch, in the same file/style as S1.
-  - CONSTRAINTS: never key deferral on classification; never weaken the repro suite; never
-    mutate the inner instance; never edit spec/*.md; extend JSDoc only in the edited block.
+Task 5: Battery tests 10-12 — Space self-close + Enter-submits + invariants
+  - TEST 10 "residual menu-flash self-closes on Space": from test 1's state
+    (offer visible, buf ["implement"]) — h.buf.lines = ["implement "];
+    h.buf.col = 10; press " " → forwarded verbatim; flushPaint → visible
+    FALSE (R3 trailing-space close), suppressUntilWordStart FALSE.
+  - TEST 11 "Enter immediately after a Tab completion still SUBMITS (never
+    accepts the offer)": from test 1's state press "\r" → mirrors the Enter
+    describe (:1200) assertions: innerCalls ["\r"] (delegated exactly once),
+    buf STILL ["implement"] (never "implements"/"implementation" — the offer
+    was NOT accepted), state hidden; suppression per the existing Enter
+    test's taxonomy assertion (Enter-submit is a seam member — follow
+    whatever :1200 asserts; the buffer + delegation assertions are the
+    load-bearing ones here).
+  - TEST 12 "invariants across the ladder: never-mutate + one tick per
+    press": run the 2-Tab + backspace + space sequence; assert
+    h.setHits() === 0 and h.onKeystroke toHaveBeenCalledTimes(4) (one tick
+    per keypress: consumed Tabs tick in the widget layer, forwarded keys via
+    the guard seam — never both).
 
-Task 7: WRITE plan/006_7bd0258da993/P3M1T1S2/VERDICT.md
-  - FORMAT: title; one-line overall verdict (CONFORMANT / CONFORMANT AFTER FIX /
-    CONTRADICTION-REPORTED); a table or per-clause sections for (a) placement+verbatim
-    forward, (b) open-state keying + hesitation race, (c) h2.59 pin (double-level +
-    repro-level), (d) contrast case + Enter guard, (h3.14) prose check — each with verdict
-    + file:line evidence; a "Changes made" section (explicitly "none" when conformant);
-    a "Notes for Mode B" section (T2.S2 gauntlet counts, T2.S3 live-smoke hesitation-race
-    variant is backed by repro case 3, T2.S4 DoD drift-report input).
-  - THIS IS THE PRIMARY DELIVERABLE. It must be readable standalone by an agent that never
-    saw this session.
+Task 6: DEDUPE against S1's provisional battery + run the gauntlet
+  - If an S1-added test already covers a bullet sentence exactly, keep ONE
+    (prefer the more complete; merge assertions). The UNION must cover every
+    bullet sentence — do not delete coverage while deduping.
+  - npx vitest run test/widget.test.ts test/widget-visibility.test.ts
+    test/defer-pi-menu.repro.test.ts  → all green.
+  - npm run check && npm test → green (this is P3.M1.T2.S2's input).
 
-Task 8: VALIDATE
-  - RUN: npm run check && npm test — both green.
-  - IF any pre-existing unrelated test flakes: investigate once, rerun; do not mask.
+Task 7 (CONTINGENCY — only if a battery test is RED against S1's code):
+  - Diagnose: is the fixture wrong (fix the test) or the seam wrong (fix
+    widget.ts)? The battery is normative; a correct fixture exposing red
+    means S1's implementation deviates from its PRP contract.
+  - Fix ONLY within the S1 mechanism: onDismissed(false) close + synchronous
+    machine.onInput() + eval-BEFORE-arm ordering (re-read S1's PRP "Known
+    Gotchas": ordering, no second clock tick, no microtask routing). No new
+    machine API, no intent flag, no re-ranking. Document the deviation in a
+    short comment on the forcing test.
+  - Re-run the FULL suite (widget-visibility + defer-pi-menu must stay green).
+
+Task 8: RECOMMENDED live sanity (formal gate is P3.M1.T2.S3's, not yours)
+  - tmux + pi --no-session; seed "implement implementation implements" via
+    one submitted message; send-keys ONE CHAR AT A TIME (0.08-0.12 s sleeps —
+    bursts cancel in-flight queries); walk 'implem' → Tab → Tab; backspace;
+    capture-pane to confirm the offer/close/recovery sequence matches the
+    battery. UI-layer change law (spec 09 h2.61) is formally discharged by
+    P3.M1.T2.S3 scenario (iv) — record any discrepancy as a note; do not
+    expand scope.
 ```
 
 ### Implementation Patterns & Key Details
 
-```text
-# The fix-forward DECISION RULE (what counts as a mismatch):
-#   MISMATCH (fix) — a behavioral gap: a PRD clause the code does not satisfy (e.g. the
-#     veto could fire after a suppression already executed; the forward is not verbatim;
-#     the predicate consults classification; an h2.59 claim with NO pinning assertion).
-#   NOT a mismatch (leave alone) — coarse spec citations in comments (h2.46/h2.51 vs the
-#     newer h3.10/h3.14 anchors); stylistic preferences; test-name wording; missing
-#     coverage that the PRD does not mandate.
-#
-# The audit must be EVIDENCE-BASED: read the actual expect() calls in the deferral tests;
-# do not accept a test's NAME as proof of its ASSERTIONS.
+```typescript
+// THE CANONICAL LADDER TEST (the battery's spine — others vary on it):
+it("the ladder: implem → Tab → offer (implements | implementation) → Tab → \
+the EMPTY offer dismisses WITHOUT suppression (spec 09 h2.59 / 07 h3.11)", async () => {
+  const chain = spiedChain();
+  const h = makeInsertHarness({ lines: ["implem"], line: 0, col: 6 }, {
+    chain,
+    store: seedStore([
+      ["implement", "implement"],
+      ["implements", "implements"],
+      ["implementation", "implementation"],
+    ]),
+  });
+  h.press("x");                 // forwarded tick — machine reads buffer "implem"
+  await flushPaint();           // paints query("implem"): top "implement" (tier 3, shortest)
+  expect(h.machine.painted()[0]?.key).toBe("implement"); // fixture sanity
+
+  h.press("\t");                // RUNG 1 — synchronous, no timer advancement
+  expect(h.buf.lines).toEqual(["implement"]);
+  expect(h.machine.getState().visible).toBe(true);            // the extension offer
+  expect(h.machine.getState().currentSet.map((i) => i.display))
+    .toEqual(["implements", "implementation"]);  // exact-equal out; shortest-first
+  expect(h.machine.getState().suppressUntilWordStart).toBe(false); // NO suppression
+  expect(h.state.highlightIndex).toBe(0);        // fresh generation…
+  expect(h.state.interacted).toBe(false);        // …reset + un-entered
+
+  h.press("\t");                // RUNG 2 — accepts the offer top ("implements")
+  expect(h.buf.lines).toEqual(["implements"]);
+  expect(h.machine.getState().visible).toBe(false);   // query("implements") = []
+  expect(h.machine.getState().suppressUntilWordStart).toBe(false); // close, not seam
+  expect((chain.arm as Mock).mock.calls.at(-1)?.[0]).toBe("implements"); // FINAL word
+});
+
+// THE FORK-RECOVERY TAIL (append inside the same or a sibling test):
+  h.buf.lines = ["implement"];  // hand-mutate — the fake inner applies no keys
+  h.buf.col = 9;
+  h.press("\x7f");              // backspace forwards verbatim (line hidden)
+  expect(h.innerCalls).toEqual(["\x7f"]);
+  await flushPaint();           // W1 tick reads "implement" → offer re-renders
+  expect(h.machine.getState().visible).toBe(true);
+  expect(h.machine.getState().currentSet.map((i) => i.display))
+    .toEqual(["implements", "implementation"]);
+  expect(h.machine.getState().suppressUntilWordStart).toBe(false);
+
+// WHY the expected sets are RIGHT (do not "fix" them in review):
+// - query("implem")  → tier-3 prefix of all three keys; length order:
+//   implement(9) < implements(10) < implementation(14); counts all 1.
+// - query("implement") → exact-equal exclusion drops "implement"
+//   (src/core/query.ts `if (k === lower) continue;`); "implements" and
+//   "implementation" are tier-3 prefix matches → [implements | implementation].
+// - query("implements") → exact-equal drops "implements";
+//   "implementation".startsWith("implements") === FALSE ('a' ≠ 's' at
+//   index 8) → ZERO matches → R4 disqualification close (no suppression).
+// - The offer paints immediately under fake timers because closeAt === now
+//   (time frozen) → R7 fresh-reopen window always satisfied.
 ```
 
 ### Integration Points
 
 ```yaml
-TESTS:  # no new integration surfaces; validation only
-  - primary: npx vitest --run test/widget.test.ts test/defer-pi-menu.repro.test.ts test/editor-enter.test.ts
-  - full:    npm test  (vitest --run, picks up every *.test.ts incl. the .repro suite)
-  - types:   npm run check  (tsc --noEmit)
-
-DOCS:
-  - plan/006_7bd0258da993/P3M1T1S2/VERDICT.md  # the ONE new file (this run's artifact)
-  - NO spec edits, NO README edits (README is P3.M1.T2.S1's task), NO JSDoc churn
-
-DOWNSTREAM CONSUMERS (do not break their inputs):
-  - P3.M1.T2.S2 (gauntlet): expects a green full suite with repro included
-  - P3.M1.T2.S3 (live smoke): gains the hesitation-race variant — backed by repro case 3
-  - P3.M1.T2.S4 (DoD + drift report): consumes this VERDICT.md verbatim
+NONE — no config, no store, no provider, no index.ts, no spec edits.
+Sibling contracts:
+- P4.M1.T1.S1 (input): its PRP is the contract; verify landed (Task 0).
+- P4.M1.T2.S1 (fallback path): do NOT touch src/pi/provider.ts or its tests.
+- P3.M1.T1.S2 (deferral pinning): do NOT claim its work; defer-pi-menu stays
+  green verbatim.
+- P3.M1.T2.S2 (output consumer): expects npm run check + npm test green.
+- P3.M1.T2.S3 (formal live smoke, scenario iv): verifies this behavior live.
 ```
 
 ## Validation Loop
@@ -395,79 +494,115 @@ DOWNSTREAM CONSUMERS (do not break their inputs):
 ### Level 1: Syntax & Style (Immediate Feedback)
 
 ```bash
-npm run check   # tsc --noEmit — zero errors (only relevant if a fix landed)
-# Expected: clean. If errors exist, read output and fix before proceeding.
+npm run check        # tsc — zero errors (test files are typechecked too)
+# Expected: clean. Type errors in the new describe mean wrong double shapes —
+# re-read the spiedChain/seedStore signatures quoted above.
 ```
 
 ### Level 2: Unit Tests (Component Validation)
 
 ```bash
-# The audit's subject suites, run first and individually:
-npx vitest --run test/widget.test.ts
-npx vitest --run test/defer-pi-menu.repro.test.ts   # all 4 cases incl. hesitation race + contrast
-npx vitest --run test/editor-enter.test.ts          # Enter-submits guard (dimension d)
-
-# Full suite (the real gate — no suite may regress):
-npm test
-# Expected: ALL green. The repro suite's 4 cases and widget.test.ts's Tab describes are
-# the conformance evidence — a failure here means the audit found a real mismatch (or a
-# fix broke something); resolve before writing the final verdict.
+npx vitest run test/widget.test.ts                # the battery — all green
+npx vitest run test/widget-visibility.test.ts     # untouched, stays green
+npx vitest run test/defer-pi-menu.repro.test.ts   # untouched, stays green
+npm test                                          # full suite
+# Expected: all green. A red battery test: Task 7 contingency (diagnose
+# fixture vs seam — the battery is normative; never weaken an assertion to
+# pass; never delete coverage while deduping).
 ```
 
-### Level 3: Integration Testing (System Validation)
+### Level 3: Integration Testing (Live TTY — recommended sanity; formal gate is P3.M1.T2.S3)
 
-Not applicable — no runtime/service surface changes. (Live TTY smoke of the deferral is
-P3.M1.T2.S3's binding task, fed by this verdict; do not attempt it here.)
+```bash
+# spec/09 h2.61 technique (pi needs a real TTY; piping stdout exits silently):
+tmux new-session -d -s hapax 'pi --no-session'
+# Seed vocabulary: submit one short user message: "implement implementation implements"
+tmux send-keys -t hapax 'implement implementation implements' Enter; sleep 2
+tmux send-keys -t hapax C-c          # end the turn
+# Walk the ladder ONE CHAR AT A TIME (0.08-0.12 s sleeps between keys):
+tmux send-keys -t hapax 'i' 'm' 'p' 'l' 'e' 'm'   # with per-key sleeps
+tmux capture-pane -t hapax -p                     # pre-Tab offer visible
+tmux send-keys -t hapax Tab; tmux capture-pane -t hapax -p   # implement + offer
+tmux send-keys -t hapax Tab; tmux capture-pane -t hapax -p   # implements + close
+tmux send-keys -t hapax BSpace; tmux capture-pane -t hapax -p # offer re-renders
+# Discrepancies vs the battery → note in the report; the BINDING live gate
+# (scenario iv) is P3.M1.T2.S3's deliverable, not this item's.
+```
 
 ### Level 4: Creative & Domain-Specific Validation
 
 ```bash
-# Self-check the audit quality:
-# 1. Every verdict row cites at least one file:line (code) and, where applicable, the
-#    exact expect() that pins it (test).
-# 2. VERDICT.md quotes each PRD clause it audits (so it stands alone).
-# 3. "Changes made: none" is present iff no mismatch was found.
-# 4. git status shows at most: VERDICT.md (new), and the minimal fix files if any.
+# Not applicable: test-only change; no network/persistence/telemetry paths
+# touched; no performance surface changed (the offer's one synchronous query
+# is S1's concern and is within the spec 02 h2.18 budget by construction).
 ```
 
 ## Final Validation Checklist
 
 ### Technical Validation
 
-- [ ] `npm run check` green
-- [ ] `npm test` green (full suite, includes defer-pi-menu.repro.test.ts)
-- [ ] Targeted suites individually green: widget, defer-pi-menu, editor-enter
-- [ ] No assertion in the repro suite or editor-enter suite deleted/relaxed
+- [ ] `npm run check` clean
+- [ ] `npm test` green (full suite)
+- [ ] `test/defer-pi-menu.repro.test.ts` green VERBATIM (file untouched)
+- [ ] `test/widget-visibility.test.ts` green UNTOUCHED
+- [ ] No changes outside test/widget.test.ts (+ contingency-only src/pi/widget.ts)
 
-### Feature Validation
+### Feature Validation (every spec 09 h2.59 bullet sentence has a green test)
 
-- [ ] All audit dimensions (a)–(d) + h3.14 prose check resolved with file:line evidence
-- [ ] h2.59 bullet's two claims verified as pinned in widget.test.ts key-handling coverage
-- [ ] Fix-forward applied ONLY on genuine mismatch (or explicitly skipped with "none")
-- [ ] VERDICT.md written at plan/006_7bd0258da993/P3M1T1S2/VERDICT.md, standalone-readable,
-      with a Notes-for-Mode-B section (T2.S2/S3/S4 inputs)
+- [ ] Tab-accept arms NO suppression (offer AND close cases)
+- [ ] Ladder: exact-equal exclusion + shortest-first offer; recursion to the
+      empty offer; empty offer dismisses WITHOUT suppression
+- [ ] Backspace after the empty-offer dismiss re-queries → offer re-renders
+- [ ] Escape/boundary on an offer suppresses rest-of-word (seam retained)
+- [ ] Fresh generation: highlight reset + pass-through live (un-entered)
+- [ ] menuDelayMs bypass (intent show; zero timer advancement)
+- [ ] Extension accepts arm the chain on the FINAL accepted word (fork variant
+      + h2.53 literal variant)
+- [ ] Trigger-char completion (#implem → Tab) takes the same rule
+- [ ] Residual menu-flash self-closes on Space
+- [ ] Enter immediately after a Tab completion still submits (never accepts)
+- [ ] Never-mutate + one-tick-per-keypress hold across the ladder
 
 ### Code Quality Validation
 
-- [ ] Any fix follows S1's existing style (defensive probe, proxy composition, calls-log
-      assertion pattern) and lands in the same file/block
-- [ ] No spec/*.md edits; no plan/ edits outside this run's P3M1T1S2 directory
-- [ ] No comment/JSDoc churn in untouched code
+- [ ] Test names cite spec 09 (h2.59) and spec 07 (h3.11/h2.53) sections
+- [ ] Battery uses the existing doubles (makeInsertHarness / seedStore /
+      spiedChain / flushPaint / cfg) — no new harness machinery
+- [ ] Machine-painted (not show()-driven) wherever arming/painted() matters
+- [ ] No assertion weakened to achieve green; any S1 deviation documented
 
 ### Documentation & Deployment
 
-- [ ] VERDICT.md is the durable record; no other docs touched
+- [ ] None needed: test-only; no env vars, no config surface, no spec drift
+      (spec half landed in 6799367; S1 ships the code half; this pins it)
 
 ---
 
 ## Anti-Patterns to Avoid
 
-- ❌ Don't rewrite or "improve" already-conformant code — the expected outcome is NO code diff
-- ❌ Don't treat a test's NAME as proof — read its assertions (that is the audit)
-- ❌ Don't "fix" the pure-table-first ordering (decideWidgetKey before the veto is by design)
-- ❌ Don't key (or add) any classification logic to the deferral — menu open state only
-- ❌ Don't touch spec/*.md — the hunks already landed; this task verifies code against them
-- ❌ Don't weaken/simplify the repro suite's timing choreography (microtask + fake timers)
-- ❌ Don't edit editor.ts — the guard is dimension (d)'s untouched-by-construction artifact
-- ❌ Don't skip validation because "it's just an audit" — the green suite IS the evidence
-- ❌ Don't chase comment-citation updates (h2.46→h3.10) unless a code edit lands there anyway
+- ❌ Don't drive arming/offer tests with show() — painted() stays empty; the
+  offer recursion and chain arming are vacuous. Paint via forwarded key +
+  flushPaint.
+- ❌ Don't hand-mutate the buffer where the Tab insert already did it — the
+  insert is REAL (setText); only typed/backspace/space effects need hand-set buf.
+- ❌ Don't re-rank or reorder expected offer sets to match a failing run — the
+  expected sets are derived (exact-equal + shortest-first); a mismatch is a
+  seam bug (Task 7), not a fixture bug.
+- ❌ Don't interpret h2.53's "armed(implementation)" literally when BOTH
+  siblings are stored — shortest-first (fork ruling) makes the final word
+  "implements"; the amendment's norm is arm-at-FINAL-accepted-word. Pin both.
+- ❌ Don't add tests to widget-visibility.test.ts or touch defer-pi-menu —
+  the 09 bullet lives in widget.test.ts; the adjacent suites are contrast pins.
+- ❌ Don't advance fake timers before asserting the offer's immediacy — the
+  zero-advancement assert IS the menuDelayMs-bypass proof.
+- ❌ Don't spawn production changes beyond S1's mechanism if tests go red —
+  no new machine API, no intent flags, no provider.ts edits.
+- ❌ Don't skip dedupe against S1's provisional battery, and don't delete
+  coverage while deduping — the union must be the complete bullet.
+
+---
+
+**Confidence Score: 9/10** — the battery is fully specified with deterministic
+fixtures derived from the query core's actual rules; the one residual risk is
+S1's parallel implementation differing from its PRP contract, which Task 0's
+verification gate and Task 7's bounded contingency cover.
