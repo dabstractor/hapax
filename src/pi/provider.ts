@@ -733,6 +733,27 @@ export function createHapaxProvider(
         }
         // Not in the map (path completion / stale value) → never arms.
       }
+      // NO RE-REQUEST AFTER APPLY (BUG-004 PIN; spec/07 h3.11 fallback
+      // paragraph + h3.15 re-verify list): pi-tui issues NO autocomplete
+      // request after applying a completion — all THREE apply sites in
+      // components/editor.js (verified against @earendil-works/pi-tui
+      // ~0.84.4) apply, settle the menu, and return:
+      //   :545  tui.input.tab menu-accept    → apply → cancelAutocomplete
+      //                                        → onChange → return
+      //   :560  tui.select.confirm           → apply → cancelAutocomplete
+      //                                        → submit ("/"-prefix) or
+      //                                        onChange + return
+      //   :1906 force && explicitTab && items.length === 1
+      //                                        → apply → onChange →
+      //                                        requestRender → return
+      // (the :1906 fast path does NOT cancelAutocomplete — the load-
+      // bearing shared fact is that none of the three re-requests.)
+      // CONSEQUENCE, accepted by spec/07 ("Post-Tab extension offer"):
+      // the fallback path's post-Tab extension offer and the zero-char
+      // chain offer surface only on the NEXT keystroke's request — pi-tui
+      // requests on keystrokes only. RE-VERIFY all three call sites on
+      // any pi-tui upgrade; if an upgrade adds a post-apply re-request,
+      // the fallback offer timing (and S2's post-accept battery) changes.
       return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
     },
 
