@@ -1265,3 +1265,146 @@ describe("session_tree — branch-hygiene rebuild (spec 05 h2.37 / P2.M1.T2.S1)"
     expect(await dump(acwords)).toBe(frozen); // byte-identical store
   });
 });
+
+// ── index.ts e2e — series pipeline through the real factory (fallback path) ──
+//
+// BUG-001 production-composition acceptance. Every suite above builds its
+// own store; the index.ts seam itself was never exercised. This layer
+// composes the REAL hapax factory (session_start) with fakePi/fakeCtx on
+// the FALLBACK path and observes exclusively through (1) the registered
+// provider — addAutocompleteProvider captures the FACTORY
+// ((current) => provider), composed over a contract-shaped current — and
+// (2) the /acwords dump. No fabricated store, no pipeline object (none is
+// exported), no CandidateStore.prototype spies (the shared-prototype
+// caveat above makes them flaky here).
+//
+// Spec anchors: spec 07 M2 — "typing The offers Fed"; the typed-word
+// arming state line "idle ──space closes a typed word whose first letter
+// is UPPERCASE and whose lowercase key has series successors──►armed(W)";
+// spec 06 — "series successors rank above ordinary regardless of counts".
+//
+// P1.M1.T2.S2 extends this structure to the widget path + live TTY; the
+// BUG-002 path-display e2e copies it. Ingest-level series fixtures live
+// in the T1.S2 suites — this layer is one step up (real composition).
+
+describe("index.ts e2e — series pipeline through the real factory (fallback path)", () => {
+  /** Fresh AbortController per call — getSuggestions options are never
+   *  shared across calls. */
+  const sig = (): { signal: AbortSignal } => ({
+    signal: new AbortController().signal,
+  });
+
+  /** Compose the REAL extension over a temp dict ({the: q200}) with debug
+   *  on (so /acwords observation works), replay `msgs` through the real
+   *  message_end seam, and poll the dump until ingest has landed (the
+   *  300 ms debounce + fire-and-forget drains make fixed sleeps flaky —
+   *  same polling discipline as the restore-replay cases above). */
+  async function seriesSession(msgs: string[], until?: RegExp) {
+    useDict();
+    enableDebug();
+    const { handlers, ctx, registerCommand, addAutocompleteProvider } =
+      wired();
+    startSession(handlers.get("session_start")!, ctx, "new");
+    for (const m of msgs) {
+      await endMessage(handlers.get("message_end")!, ctx, userMsg(m));
+    }
+    const handler = acwordsHandler(registerCommand);
+    // Poll until the `until` evidence appears in the dump — a word's own
+    // row lands BEFORE the drain's runs tail (the slice-yield boundary
+    // sits between them), so gating on mere presence would race the
+    // successor-index write. When `until` is absent, words-seen is the
+    // gate (negative-control case).
+    await vi.waitFor(
+      async () => {
+        const text = await dump(handler);
+        if (until) expect(text).toMatch(until);
+        else expect(wordsSeenIn(text)).toBeGreaterThan(0);
+      },
+      { timeout: 3000 },
+    );
+    return { ctx, registerCommand, addAutocompleteProvider, dumpHandler: handler };
+  }
+
+  /** The registered value is a FACTORY over `current` — compose it with
+   *  a contract-shaped current (delegation-safe). */
+  const composeProvider = (add: Mock): AutocompleteProvider =>
+    (add.mock.calls[0]![0] as (c: AutocompleteProvider) => AutocompleteProvider)(
+      currentFake(),
+    );
+
+  it("(a) capitalized-run history yields a series-marked successor with run casing (via /acwords)", async () => {
+    // "This Fed" is a detected capitalized run (both members ≥ the 4-char
+    // shape floor — note the spec's literal "The" is 3 chars and dies at
+    // the shape gate BEFORE runs; This/Fed is the same mechanics, buildable).
+    // "This" eagerly admits (dictionary-absent structural-cap) → the
+    // SERIES pair is dump-visible through the successor-index sample:
+    // "  this → Fed ×1 (series)" — the (series) marker AND the run-casing
+    // nextDisplay ("Fed") are the two observable enrichment bits (debug.ts
+    // successorsSection row format, pinned verbatim).
+    const { dumpHandler } = await seriesSession(
+      ["This Fed raised rates today"],
+      /this → Fed ×1 \(series\)/, // gate on the FULL pipeline landing
+    );
+    const text = await dump(dumpHandler);
+    expect(text).toMatch(/this → Fed ×1 \(series\)/);
+  });
+
+  it("(b) typing 'This ' arms on the space tick; the next word-start query offers 'Fed' in run casing", async () => {
+    // The spec's literal "typing The offers Fed" journey, on the ≥4-char
+    // buildable instance: "This" is sentence-initial structural-cap, the
+    // cap run This→Fed records the series pair, and typing "This " (the
+    // space tick) arms via the typed-word gate.
+    const { addAutocompleteProvider } = await seriesSession(
+      ["This Fed raised rates today"],
+      /this → Fed ×1 \(series\)/, // gate on the FULL pipeline landing
+    );
+    const p = composeProvider(addAutocompleteProvider);
+
+    // Space tick: close-on-space returns null (spec 07 h2.51) AND arms —
+    // the typed-word gate (uppercase first letter, series successor
+    // exists, chain idle). Arming is pinned BEHAVIORALLY — no chain
+    // export exists: the identical next word-start query is answered by
+    // the armed branch's zero-char offer.
+    const atSpace = await p.getSuggestions(["This "], 0, 5, sig());
+    expect(atSpace).toBeNull();
+
+    const offer = await p.getSuggestions(["This "], 0, 5, sig());
+    expect(offer).not.toBeNull();
+    expect(offer!.prefix).toBe(""); // zero typed chars of the NEXT word
+    expect(offer!.items[0]!.value).toBe("Fed"); // run casing (nextDisplay)
+    expect(offer!.items.map((i) => i.value)).not.toContain("this");
+  });
+
+  it("(c) a series successor outranks an ordinary successor with higher counts (spec 06 series-first)", async () => {
+    const { addAutocompleteProvider } = await seriesSession(
+      [
+        "The Federal Reserve raised rates", // federal → Reserve (series ×1)
+        "the federal budget expanded", // federal → budget (ordinary)
+        "the federal budget expanded", // budget ×2
+        "the federal budget expanded", // budget ×3 — ordinary, STILL outranked
+      ],
+      /Federal → Reserve ×1 \(series\), budget ×3/, // the FULL row: both pairs in, series-first in the dump itself
+    );
+    const p = composeProvider(addAutocompleteProvider);
+    await p.getSuggestions(["Federal "], 0, 8, sig()); // arms on the space tick
+    const offer = await p.getSuggestions(["Federal "], 0, 8, sig());
+    // successorBefore is SERIES FIRST — the ×1 series pair tops the ×3
+    // ordinary successor regardless of counts.
+    expect(offer!.items[0]!.value).toBe("Reserve"); // run casing (nextDisplay)
+    expect(offer!.items.map((i) => i.value)).toContain("budget"); // present, below
+  });
+
+  it("(d) ordinary capitalized typing with no series successor never arms", async () => {
+    const { addAutocompleteProvider } = await seriesSession([
+      "alpha beta gamma",
+    ]);
+    const p = composeProvider(addAutocompleteProvider);
+    const r1 = await p.getSuggestions(["Alpha "], 0, 6, sig());
+    const r2 = await p.getSuggestions(["Alpha "], 0, 6, sig());
+    // No series successor for 'alpha' → the typed-word gate never arms →
+    // both calls are plain close-on-space (null) — never a zero-char
+    // successor offer with prefix "".
+    expect(r1).toBeNull();
+    expect(r2?.prefix ?? "x").not.toBe("");
+  });
+});

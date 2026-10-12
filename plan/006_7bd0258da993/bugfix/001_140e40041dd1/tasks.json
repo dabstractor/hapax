@@ -11,7 +11,7 @@
           "type": "Milestone",
           "id": "P1.M1",
           "title": "Series-bigram enrichment live through the production seam (BUG-001)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Wire the enriched runs payload at the single production feed in src/pi/index.ts (the only functional recordBigramRuns call site; session_tree rebuild and history restore reuse the same IngestPipeline instance and inherit the fix), un-shim the test pipelines that mirror the stale projection, and add index.ts-composition acceptance tests proving spec-pinned series behaviors (arming, ordering, run-casing display, /acwords markers) fire end-to-end.",
           "tasks": [
             {
@@ -59,14 +59,14 @@
               "type": "Task",
               "id": "P1.M1.T2",
               "title": "Production-composition acceptance layer: series arming, ordering, run-casing display, /acwords markers (PRD recommendation)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Add the missing end-to-end test layer that composes index.ts's real factory (fakePi/fakeCtx from test/index.test.ts) instead of fabricated stores — the layer whose absence let BUG-001 ship — asserting the observable spec-pinned series behaviors on both display paths, plus the binding live TTY spot-check.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M1.T2.S1",
                   "title": "index.test.ts e2e: series marks, typed-word arming, and series-first ordering through the real factory",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -84,7 +84,7 @@
                   "type": "Subtask",
                   "id": "P1.M1.T2.S2",
                   "title": "Widget-path typed-arming e2e, /acwords '(series)' markers, and the live TTY spot-check",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T2.S1"
@@ -120,7 +120,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S1",
                   "title": "Thread Sighting.path and store pathDisplay with a sticky-first merge policy",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [],
                   "context_scope": "CONTRACT DEFINITION:\n1. RESEARCH NOTE: bug002-path-display.md §2/§8. CandidateDraft.path exists (src/core/segment.ts:739) but Sighting (src/core/types.ts:≈77-95) has no path field — draft.path dies at the ingest Sighting-build seam. store.ts upsert create branch: casing 'lower' → {capCount:0, lowerCount:1, capDisplay:\"\"} at :398 discards sighting.display. Candidate (types.ts:21-50) has NO display field by design ('completion-time resolution'); a pathDisplay FIELD on the record (not a #capForms-style side map) dies with eviction automatically and needs no serialization handling — none exists (RAM-only; reset()+replay rebuilds through normal upsert). Edge variants of one key merge (store.test.ts:200-220) → merge policy must be deterministic: STICKY-FIRST (first path sighting's display wins; never overwritten by later sightings) — matches 'recency never decides'. Corner: letter-initial paths can classify mid-cap; when both capDisplay and pathDisplay exist, pathDisplay wins (resolver order, S2).\n2. INPUT: CandidateDraft from expandCandidates path branch (segment.ts:795-806: key edge-trimmed lowercase, display=token.raw, path:true) — already correct and pinned by test/segment.test.ts:782-795 (draft-level only; unchanged by this work).\n3. LOGIC: (a) types.ts: add `path?: boolean` to Sighting (mirrors draft.path) and `pathDisplay?: string` to Candidate (optional, absent ≡ not-a-path — same style as structuralCapCount?). (b) src/pi/ingest.ts: pass draft.path through at the Sighting build site (one-line). (c) src/core/store.ts upsert: create branch — when sighting.path, seed pathDisplay: sighting.display alongside the lower-branch tallies; merge branch — never overwrite an existing pathDisplay (sticky-first); eviction/copy paths ({...c} in entries()) need no extra work. (d) TDD: extend test/store.test.ts path-merge describe (:200+): path sighting '/home/x/y' then bare 'home/x/y' then '../' variant → ONE entry, key 'home/x/y', pathDisplay === first display '/home/x/y'; non-path sightings leave pathDisplay undefined; the :209 pin `expect(c).not.toHaveProperty(\"display\")` stays true (pathDisplay is a different field) — extend it to also assert pathDisplay presence/absence. JSDoc rides. Mock nothing (pure core).\n4. OUTPUT: Store records carry pathDisplay iff the candidate ever arrived as a path sighting; consumed by P1.M2.T1.S2's resolver guard.\n5. DOCS: [Mode A] JSDoc on Sighting.path/Candidate.pathDisplay and upsert's tally switch documenting the sticky-first policy and why (edge-variant merge ambiguity). Record spec/06 record-shape drift (new field) for P2.M2.T2.S2 — do NOT edit spec/*.md.",
