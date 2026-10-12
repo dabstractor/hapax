@@ -4,7 +4,7 @@
       "type": "Phase",
       "id": "P1",
       "title": "Restore spec-pinned end-to-end behavior (BUG-001 series wiring + BUG-002 path display)",
-      "status": "Ready",
+      "status": "Complete",
       "description": "Both major bugs are cross-module wiring/regression defects where every unit test exercises pieces in isolation: BUG-001 (src/pi/index.ts:241-248 projects the enriched RunMember runs payload to bare keys, permanently disabling series-bigram enrichment — typed-word chain arming, series-first successor ordering, run-casing display, /acwords markers) and BUG-002 (path candidates display/insert their edge-trimmed key because store.ts upsert discards the verbatim display for casing-'lower' sightings and resolveCompletionCasing returns the trimmed key — losing leading '/', '../', '~' that spec 04 rule 4d and spec 09 integration item 7 pin). Fixes are confined, validated seams: the store already accepts RunMemberInput, and both UI paths render MatchResult.display faithfully. Each fix lands with mirrored-fixture updates and a new production-composition test layer (PRD recommendation) so the seam itself is exercised.",
       "milestones": [
         {
@@ -106,7 +106,7 @@
           "type": "Milestone",
           "id": "P1.M2",
           "title": "Path candidates display and insert verbatim edges (BUG-002)",
-          "status": "Ready",
+          "status": "Complete",
           "description": "Restore spec 04 rule 4d / spec 09 integration item 7 behavior: a path token's KEY is edge-trimmed for matching, but its DISPLAY preserves the original leading edge symbols ('/home/...', '../tools/build.mjs', '~/...'). The drafts already carry the verbatim display (segment.ts:795-806); the loss is at store.upsert's create branch (display discarded for casing-'lower' sightings) and resolveCompletionCasing's frequency branch (returns the trimmed key). Thread a path flag through Sighting, keep a verbatim pathDisplay on the record, and make the resolver return it — both UI paths then render/insert correctly with zero pi-layer changes.",
           "tasks": [
             {
@@ -155,14 +155,14 @@
               "type": "Task",
               "id": "P1.M2.T2",
               "title": "End-to-end verbatim path insertion through production composition",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Prove spec 09 integration item 7 end-to-end through the real index.ts factory: a path mentioned in conversation is offered on its first segment and Tab inserts the whole path WITH its leading edge symbols, on both display paths.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P1.M2.T2.S1",
                   "title": "index.test.ts e2e: ingest path mention → provider display + widget Tab insert keep the edges",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M2.T1.S2"
@@ -186,28 +186,28 @@
       "type": "Phase",
       "id": "P2",
       "title": "Minor fixes and changeset hardening (BUG-003 widget timing, BUG-004 PIN + fallback battery, docs sync)",
-      "status": "Ready",
+      "status": "Planned",
       "description": "The two minor PRD items plus the mandatory changeset-level documentation sweep. BUG-003: the widget path's typed-word arming site deliberately never paints, so the spec 07 M2 zero-char offer lands one input event late — fix paints the (a)-offer at the arming tick with chain-intent semantics, verified live per the binding TTY technique, with the spec 07 visibility-step-3 conflict recorded as drift (spec/*.md is read-only for pipeline agents). BUG-004: deliver the P4.M1.T2.S1 PIN at provider.ts's applyCompletion consumption site (verified: pi-tui never re-requests after an apply) plus the missing fallback-path post-accept battery. The final task syncs README.md and compiles the spec-drift report for the reconciling interactive session.",
       "milestones": [
         {
           "type": "Milestone",
           "id": "P2.M1",
           "title": "Widget typed-word arming paints the zero-char offer at the space tick (BUG-003)",
-          "status": "Planned",
+          "status": "Ready",
           "description": "Make the armed(W) zero-char successor offer visible at the word start itself on the widget path — at the trailing-space arming tick instead of one input event later — without violating the hesitation gate, double-painting, grant one-shot semantics, or the close-on-space contract for non-arming cases.",
           "tasks": [
             {
               "type": "Task",
               "id": "P2.M1.T1",
               "title": "Paint the zero-char offer at the arming tick (factor the (a)-offer helper)",
-              "status": "Planned",
+              "status": "Ready",
               "description": "Factor the armed-branch (a) zero-char offer body into a reusable helper and invoke it from the typed-word arming site after chain.arm + grant.reset, painting with chain-intent semantics when successors exist and falling through to today's closeWith otherwise; flip the two pinning tests and add the machine-level timing test; live-verify per the binding technique.",
               "subtasks": [
                 {
                   "type": "Subtask",
                   "id": "P2.M1.T1.S1",
                   "title": "zeroCharOffer helper + arming-site paint + flip the timing pins",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M1.T1.S1"
@@ -224,7 +224,7 @@
                   "type": "Subtask",
                   "id": "P2.M1.T1.S2",
                   "title": "Live TTY verification of the space-tick paint (binding technique)",
-                  "status": "Planned",
+                  "status": "Ready",
                   "story_points": 1,
                   "dependencies": [
                     "P2.M1.T1.S1",

@@ -51,6 +51,10 @@ import {
   widgetOptsOf,
   widgetStateOf,
 } from "../src/pi/widget.js";
+import {
+  editorApplyCompletion,
+  prefixIsAnchorSafe,
+} from "./helpers/editor-sim.js";
 import { CandidateStore } from "../src/core/store.js";
 import { rankMatches } from "../src/core/query.js";
 import { writeDictFile } from "./helpers/dict-writer.js";
@@ -1598,5 +1602,195 @@ describe("index.ts e2e — series pipeline through the real factory (widget path
     const text = await acwords();
     expect(text).toMatch(/this → Fed ×1 \(series\)/); // marker + run casing
     expect(text).not.toMatch(/this → fed ×/); // never the bare-key form
+  });
+});
+
+// ── index.ts e2e — verbatim path display/insert (BUG-002, spec 09 item 7) ──
+//
+// MODE A (bugfix 001_140e40041dd1): spec 09 integration item 7, verbatim —
+// "sr → src/core/query.ts, Tab inserts the whole path; an absolute path
+// inserts with its leading /". This battery proves that sentence at the
+// PRODUCTION seam — the PRD's core finding was that every unit suite
+// fabricated its own store, so the store→query display drop (BUG-002:
+// paths classified as casing 'lower', tally path collapsed the edge
+// bearing display to the trimmed key) went uncaught. The REAL index.ts
+// factory composition ingests a message mentioning
+// "/home/dustin/projects/hapax/src/core/query.ts" and
+// "../tools/build.mjs" through the debounced message_end pipeline, and
+// the completions' DISPLAY and INSERTED text must keep the leading "/"
+// and "../" on BOTH display paths: the fallback provider's menu items
+// (composed with the pi-tui-faithful editorApplyCompletion deletion math)
+// and the widget's Tab insert. Matching happens on the TRIMMED key
+// ("ho" matches though the key is "home/…" — rule 4d's key≠display
+// asymmetry is the spec rule; both sides are asserted). Mocking
+// discipline: ONLY the pi shell (fakePi/fakeCtx) and the dictionary file
+// are mocked — the pipeline, store, query, provider, widget, and editor
+// proxy are the real composed production objects.
+
+describe("e2e — verbatim path display/insert (BUG-002, spec 09 item 7)", () => {
+  const ABS = "/home/dustin/projects/hapax/src/core/query.ts";
+  const REL = "../tools/build.mjs";
+  const PATH_MSG = `see ${ABS} and ${REL} for details`;
+
+  const sig = (): { signal: AbortSignal } => ({
+    signal: new AbortController().signal,
+  });
+
+  /** Ingest the path-mention message through the real debounced
+   *  pipeline, gated on the trimmed path key's row landing in the
+   *  /acwords dump (the drain's full-landing evidence). */
+  async function pathSession(over?: Parameters<typeof wired>[0]) {
+    useDict();
+    enableDebug();
+    const w = wired(over);
+    startSession(w.handlers.get("session_start")!, w.ctx, "new");
+    await endMessage(w.handlers.get("message_end")!, w.ctx, userMsg(PATH_MSG));
+    const handler = acwordsHandler(w.registerCommand);
+    await vi.waitFor(
+      async () => {
+        const text = await dump(handler);
+        expect(text).toMatch(/home\/dustin\/projects/); // the trimmed key's row
+      },
+      { timeout: 3000 },
+    );
+    return w;
+  }
+
+  // ── (a) fallback path: provider display + real insertion math ─────────
+
+  it("(a) 'ho' offers the edge-bearing absolute path; 'to' the ../ form; insertion keeps both", async () => {
+    const { addAutocompleteProvider } = await pathSession();
+    const factory = addAutocompleteProvider.mock.calls[0]![0] as (
+      current: AutocompleteProvider,
+    ) => AutocompleteProvider;
+    const provider = factory(currentFake());
+
+    // 'ho' anchors on the TRIMMED key's first chars ("home/…") — the
+    // display's leading "/" never participates in matching (rule 4d's
+    // key≠display asymmetry: THIS match is the key-trim proof, since a
+    // display-form prefix match would need "ho" to prefix "/home…") —
+    // and the DISPLAY keeps the edge verbatim (BUG-002's dropped "/" is
+    // the regression).
+    const abs = await provider.getSuggestions(["ho"], 0, 2, sig());
+    expect(abs).not.toBeNull();
+    expect(abs!.items.map((i) => i.value)).toContain(ABS);
+    const absItem = abs!.items.find((i) => i.value === ABS)!;
+    expect(abs!.prefix).toBe("ho"); // the typed fragment — anchor-safe splice
+
+    // Insert through the provider's REAL applyCompletion: the buffer
+    // math (pi-tui's blind prefix.length splice) keeps the leading "/".
+    const completedAbs = editorApplyCompletion("ho", 2, absItem.value, abs!.prefix);
+    expect(completedAbs).toBe(ABS);
+    expect(prefixIsAnchorSafe("ho", 2, abs!.prefix)).toBe(true);
+
+    // The relative form: "../" survives on display and insertion alike.
+    const rel = await provider.getSuggestions(["to"], 0, 2, sig());
+    expect(rel?.items.map((i) => i.value)).toContain(REL);
+    const relItem = rel!.items.find((i) => i.value === REL)!;
+    expect(editorApplyCompletion("to", 2, relItem.value, rel!.prefix)).toBe(REL);
+  });
+
+  // ── (b) widget path: Tab inserts the verbatim path (PRD repro inverted) ──
+
+  /** Stateful inner editor factory + typeChar — the widget-path e2e
+   *  describe's harness, mirrored (those helpers are describe-scoped). */
+  function statefulInnerEditor(): {
+    factory: () => Record<string, unknown>;
+    buf: { lines: string[]; line: number; col: number };
+  } {
+    const buf = { lines: [""] as string[], line: 0, col: 0 };
+    const factory = (): Record<string, unknown> => ({
+      handleInput: (d: string): string => d,
+      getLines: (): string[] => buf.lines,
+      getCursor: (): { line: number; col: number } => ({ line: buf.line, col: buf.col }),
+      setText: (t: string): void => {
+        buf.lines = t.split("\n");
+        buf.line = buf.lines.length - 1;
+        buf.col = (buf.lines[buf.lines.length - 1] ?? "").length; // parks at end
+      },
+      setCursorCol: (c: number): void => {
+        buf.col = c;
+      },
+      getText: (): string => buf.lines.join("\n"),
+      render: (): string[] => [buf.lines[buf.line] ?? ""],
+    });
+    return { factory, buf };
+  }
+
+  const typeChar = async (
+    editor: unknown,
+    buf: { lines: string[]; line: number; col: number },
+    ch: string,
+  ): Promise<void> => {
+    const row = buf.lines[buf.line] ?? "";
+    buf.lines = [...buf.lines];
+    buf.lines[buf.line] = row.slice(0, buf.col) + ch + row.slice(buf.col);
+    buf.col += 1;
+    (editor as { handleInput: (d: string) => unknown }).handleInput(ch);
+    for (let i = 0; i < 5; i++) await Promise.resolve(); // W1 microtask flush
+  };
+
+  it("(b) type 'ho', Tab → the buffer holds the absolute path verbatim (PRD repro inverted)", async () => {
+    const ed = statefulInnerEditor();
+    const { setEditorComponent } = await pathSession({
+      editorFactory: ed.factory,
+    });
+    const installed = setEditorComponent.mock.calls[0]![0] as (
+      tui: unknown,
+      theme: unknown,
+      keybindings: unknown,
+    ) => Record<string, unknown>;
+    const editor = installed(
+      {},
+      {},
+      { matches: (data: string, action: string) => action === "tui.input.submit" && data === "\r" },
+    );
+    const state = widgetStateOf(editor)! as unknown as {
+      hidden: boolean;
+      items: readonly { display: string }[];
+    };
+
+    // Type 'ho': the trimmed-key match paints the menu with the
+    // edge-bearing display (the widget renders the same display the
+    // fallback path serves — one resolver, two surfaces).
+    for (const ch of ["h", "o"]) await typeChar(editor, ed.buf, ch);
+    expect(state.hidden).toBe(false);
+    expect(state.items.map((i) => i.display)).toContain(ABS);
+
+    // Tab: insertHighlighted splices the DISPLAY over the TYPED
+    // fragment's span (2 chars) — the longer edge-bearing path lands
+    // verbatim, caret parked after it (setText parks at buffer end).
+    (editor as { handleInput: (d: string) => unknown }).handleInput("\t");
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(ed.buf.lines).toEqual([ABS]); // THE PRD reproduction, inverted
+    expect(ed.buf.col).toBe(ABS.length); // cursor lands after the path
+  });
+
+  it("(c) the ../tools variant: type 'to', Tab → buffer '../tools/build.mjs'", async () => {
+    const ed = statefulInnerEditor();
+    const { setEditorComponent } = await pathSession({ editorFactory: ed.factory });
+    const installed = setEditorComponent.mock.calls[0]![0] as (
+      tui: unknown,
+      theme: unknown,
+      keybindings: unknown,
+    ) => Record<string, unknown>;
+    const editor = installed(
+      {},
+      {},
+      { matches: (data: string, action: string) => action === "tui.input.submit" && data === "\r" },
+    );
+    const state = widgetStateOf(editor)! as unknown as {
+      hidden: boolean;
+      items: readonly { display: string }[];
+    };
+
+    for (const ch of ["t", "o"]) await typeChar(editor, ed.buf, ch);
+    expect(state.hidden).toBe(false);
+    expect(state.items.map((i) => i.display)).toContain(REL);
+
+    (editor as { handleInput: (d: string) => unknown }).handleInput("\t");
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(ed.buf.lines).toEqual([REL]); // the "../" edges survive Tab
+    expect(ed.buf.col).toBe(REL.length);
   });
 });
