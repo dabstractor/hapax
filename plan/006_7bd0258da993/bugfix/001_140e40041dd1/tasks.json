@@ -303,7 +303,7 @@
                   "type": "Subtask",
                   "id": "P2.M2.T2.S1",
                   "title": "README.md: sync series-chaining, path-completion, and display-path claims",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 1,
                   "dependencies": [
                     "P1.M1.T1.S1",

@@ -23,7 +23,15 @@ the 2026-09-30 widget-path bugfix post-delta note (four defects found and
 fixed: chained Tab completion armed on the widget primary display,
 duplicate-free ingest of trailing-`_` literals, dismissal suppression
 bounded to its own message, and tokens carried whole across 64 KB slice
-boundaries); the M3 DoD
+boundaries), together with the 2026-10-12 bugfix-002 post-delta note
+(four defects found and fixed: series enrichment missing at the
+production seam — typed-word chain arming, series-first successor
+ordering, and run-casing display now live; path completions dropping
+their leading `/`/`../` edges — now displayed and inserted verbatim on
+both display paths; the widget zero-char chain offer painting a tick
+late — now painted at the arming space tick; and a post-apply
+re-request on the fallback path — now pinned by contract with a
+post-accept battery); the M3 DoD
 append lands with the DoD re-verification sweep. The scripted zero-typing
 chain proof is the item-7 section of
 [`test/fixtures/sessions/RESULTS.md`](test/fixtures/sessions/RESULTS.md)
@@ -50,7 +58,10 @@ keep it current; this README is a summary).
   only then: one full-store pass matches the fragment (≥ 3 chars) as a
   single contiguous run anywhere in the key (`esk` → `zendesk`,
   `query` → `src/core/query.ts` — path filenames, which the
-  first-char-anchored tiers can't serve), scored `85 − 40·runStart/len`,
+  first-char-anchored tiers can't serve; a path's stored key is trimmed
+  of its leading `/`/`~`/`..` for matching, but the candidate displays
+  and inserts that edge verbatim, spec 04 rule 4d), scored
+  `85 − 40·runStart/len`,
   threshold-gated, sorted below tier 1. Under the trigger char (`#`)
   the gates relax (spec 04/07): tier-0 runs are ALWAYS consulted — no
   zero-result precondition (`#query` completes `src/core/query.ts`
@@ -605,9 +616,11 @@ notification, what the ingest pipeline actually admitted this session:
   `secret`, `consonantRun`);
 - the successor-index sample: for the 10 highest-salience words that have
   successors (`SUCCESSOR_SAMPLE_N` in `src/pi/debug.ts`), rows rendered
-  `word → successor ×count` — the tuning signal for chained offers. A
-  store with no successor entries renders `successor index sample` /
-  `(none)`.
+  `word → successor ×count` — series entries first, in their run casing,
+  with a ` (series)` marker (`The → Fed ×3 (series)`); ordinary pairs
+  stay plain (`esk → zendesk ×2`) — count-desc, byte-lex ties, max 3 per
+  word (store.ts h3.9) — the tuning signal for chained offers. A store
+  with no successor entries renders `successor index sample` / `(none)`.
 
 The dump contains stored words and counters only — it never prints
 message bodies.
