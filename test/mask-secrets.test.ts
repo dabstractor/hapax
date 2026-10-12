@@ -287,9 +287,12 @@ describe("bare-run mask floor 32 (BUG-003 h3.2)", () => {
         "deploy to /srv/continuous/integration/deployments/release today",
         true,
       );
+      // BUG-002 (001_140e40041dd1): the insertion form is the VERBATIM
+      // pathDisplay — the leading '/' edge survives resolution (the old
+      // expectation was the trimmed key under the interim resolver).
       expect(
         rankMatches(store, "sr").map((m) => m.display),
-      ).toContain("srv/continuous/integration/deployments/release"); // resolved form = the key ('/'-leading raw classifies "lower"; edges are P1.M2.T2)
+      ).toContain("/srv/continuous/integration/deployments/release");
 
       const leak = makePipeline();
       await leak.pipeline.processText(

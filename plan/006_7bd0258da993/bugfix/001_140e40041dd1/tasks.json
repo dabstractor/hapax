@@ -113,7 +113,7 @@
               "type": "Task",
               "id": "P1.M2.T1",
               "title": "Preserve a verbatim path display: Sighting.path flag, Candidate.pathDisplay, resolver guard",
-              "status": "Ready",
+              "status": "Complete",
               "description": "Thread draft.path through the Sighting build in ingest, seed and maintain a pathDisplay field on the store record, and make resolveCompletionCasing return it before any casing branch so paths always insert verbatim.",
               "subtasks": [
                 {
@@ -135,7 +135,7 @@
                   "type": "Subtask",
                   "id": "P1.M2.T1.S2",
                   "title": "resolveCompletionCasing pathDisplay-first guard + query-level regression battery",
-                  "status": "Ready",
+                  "status": "Complete",
                   "story_points": 2,
                   "dependencies": [
                     "P1.M2.T1.S1"

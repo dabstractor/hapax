@@ -189,6 +189,67 @@ describe("rankMatches — case-insensitive prefix, completion-time display casin
     s.upsert(sighting({ key: "nrel", display: "nrel", ordinal: 2 }));
     expect(rankMatches(s, "nre")[0]!.display).toBe("nrel");
   });
+
+  // ── PATH REGRESSION (BUG-002, bugfix 001_140e40041dd1): path candidates
+  // insert VERBATIM on every resolver branch — the edge-bearing
+  // pathDisplay (sticky-first, rule 4d) outranks tallies AND the
+  // Shift-preserve rule. DRIFT RECORD for P2.M2.T2.S2: spec/04 h2.32's
+  // "paths and technical literals always insert verbatim" needs the
+  // explicit PRECEDENCE over the Shift-preserve rule written into it —
+  // the never-override rule governs LETTERS, and a leading '/', '~' or
+  // '.' is not one. The earlier interim pin ("a typed capital
+  // capitalizes a path key") encoded the wrong reading and is
+  // superseded by case (d) below. spec/*.md stays READ-ONLY.
+
+  it("(a) absolute path: display keeps the leading '/' verbatim; key stays trimmed (rule 4d key≠display)", () => {
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({
+        key: "home/dustin/projects/hapax/src/core/query.ts",
+        display: "/home/dustin/projects/hapax/src/core/query.ts",
+        path: true,
+      }),
+    );
+    const m = rankMatches(s, "ho")[0]!;
+    expect(m.display).toBe("/home/dustin/projects/hapax/src/core/query.ts");
+    expect(m.key).toBe("home/dustin/projects/hapax/src/core/query.ts"); // TRIMMED key — the pair is the contract
+  });
+
+  it("(b) '../'-relative path keeps its dot-dot edge verbatim", () => {
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({ key: "tools/build.mjs", display: "../tools/build.mjs", path: true }),
+    );
+    expect(rankMatches(s, "to")[0]!.display).toBe("../tools/build.mjs");
+    expect(rankMatches(s, "to")[0]!.key).toBe("tools/build.mjs");
+  });
+
+  it("(c) '~'-expanded path keeps its tilde edge verbatim", () => {
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({ key: "dustin/hapax/x", display: "~/dustin/hapax/x", path: true }),
+    );
+    expect(rankMatches(s, "du")[0]!.display).toBe("~/dustin/hapax/x");
+  });
+
+  it("(d) CAPITAL fragment: the path STILL inserts verbatim (supersedes the interim capitalizes-the-key pin)", () => {
+    // rawFirst 'H' is uppercase — under the superseded interim pin this
+    // resolved to the capitalized TRIMMED key 'Home/...' (losing the
+    // edge). Verbatim precedence (spec/04 "paths … insert verbatim")
+    // outranks Shift-preserve, which governs letters only: same display
+    // as case (a).
+    const s = new CandidateStore();
+    s.upsert(
+      sighting({
+        key: "home/dustin/projects/hapax/src/core/query.ts",
+        display: "/home/dustin/projects/hapax/src/core/query.ts",
+        path: true,
+      }),
+    );
+    expect(rankMatches(s, "Ho")[0]!.display).toBe(
+      "/home/dustin/projects/hapax/src/core/query.ts",
+    );
+  });
 });
 
 describe("rankMatches — result shape (work-item contract)", () => {
@@ -1603,4 +1664,17 @@ describe("completion-time display resolution (spec 04 h2.32, plan 006 S2)", () =
     // agree for any pair; cross-check the pure form directly:
     expect(resolveCompletionCasing(s.get("unsaidlock")!, "S")).toBe("Unsaidlock");
     expect(resolveCompletionCasing(s.get("unsaidlock")!, "s")).toBe("unsaidlock");
+  });
+
+  it("(e) tier-0 anchorless display stays VERBATIM for edge-bearing path candidates (BUG-002)", () => {
+    // Anchorless probe 'que' (no key starts with 'que') fires the tier-0
+    // pass; 'query' occurs contiguously in the path candidate. The :671
+    // site passes rawFirst, but the resolver's pathDisplay-first guard
+    // fires before any branch — the verbatim display wins regardless.
+    const s = new CandidateStore();
+    s.upsert(sighting({ key: "src/core/query.ts", display: "src/core/query.ts", path: true }));
+    const m = rankMatches(s, "que")[0]!;
+    expect(m.key).toBe("src/core/query.ts");
+    expect(m.display).toBe("src/core/query.ts"); // verbatim, capital-or-not (guard precedes branches)
+    expect(rankMatches(s, "Que")[0]!.display).toBe("src/core/query.ts"); // uppercase rawFirst: still verbatim
   });

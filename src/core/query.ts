@@ -363,10 +363,12 @@ export interface RankedSortRecord {
  *     word seen only capitalized completes capitalized. All-caps words
  *     ('NREL') complete verbatim (their sightings all count as
  *     capitalized occurrences). Paths/technical literals have no
- *     casing variance — lowercase-only tallies return the key
- *     verbatim. (A typed CAPITAL first letter still capitalizes a path
- *     key — the never-override rule outranks path verbatim-ness, which
- *     holds on the frequency branch; pinned in the battery.)
+ *     casing variance: a candidate carrying pathDisplay (rule-4d edge-
+ *     preserving sticky form) inserts it VERBATIM on every branch —
+ *     including under a typed CAPITAL first letter (spec 04 "paths …
+ *     always insert verbatim" outranks Shift-preserve, which governs
+ *     letters). Lowercase-only tallies otherwise return the key
+ *     verbatim.
  *   - Defensive: a non-letter first letter takes the frequency branch;
  *     capCount > 0 with empty capDisplay falls back to capitalizing
  *     the key (never returns "").
@@ -385,9 +387,21 @@ export interface RankedSortRecord {
  *  @returns the display form to insert
  */
 export function resolveCompletionCasing(
-  c: Pick<Candidate, "key" | "capCount" | "lowerCount" | "capDisplay">,
+  c: Pick<
+    Candidate,
+    "key" | "capCount" | "lowerCount" | "capDisplay" | "pathDisplay"
+  >,
   fragmentFirstLetter: string,
 ): string {
+  // [BUG-002, bugfix 001_140e40041dd1] Paths and technical literals
+  // insert VERBATIM, on every branch — including a typed CAPITAL first
+  // letter. Precedence: spec 04 Case handling's "paths and technical
+  // literals always insert verbatim" outranks the Shift-preserve rule,
+  // which governs LETTERS; a leading '/', '~' or '.' is not one.
+  // pathDisplay is seeded sticky-first by the store on EVERY casing
+  // branch (rule 4d edge preservation). This supersedes the earlier
+  // interim pin that capitalized a path key under uppercase fragments.
+  if (c.pathDisplay !== undefined) return c.pathDisplay;
   const upper = fragmentFirstLetter >= "A" && fragmentFirstLetter <= "Z";
   if (upper) {
     // UPPERCASE fragment: the Shift press is never overridden — the
