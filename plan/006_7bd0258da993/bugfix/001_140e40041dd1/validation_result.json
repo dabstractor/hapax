@@ -1,0 +1,1 @@
+{ "hasIssues": true, "issueCount": 2, "summary": "All 4 PRD bugs verified fixed end-to-end (gauntlet 1315/1316 green, 11/11 independent factory probes); 2 minor open items remain: spec reconciliation D-1..D-4 pending and a stale factory-seam timing pin in test/index.test.ts." }
